@@ -64,7 +64,9 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Events'), findsOneWidget);
+      expect(find.text('Events'), findsNothing);
+      expect(find.text('Home'), findsNothing);
+      expect(find.byType(DesktopTabBar), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

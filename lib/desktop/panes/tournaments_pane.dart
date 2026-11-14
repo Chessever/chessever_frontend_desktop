@@ -274,6 +274,50 @@ class TournamentsPane extends HookConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Keep the discovery shortcuts mounted above all category bodies.
+              DesktopCollectionCards(
+                onCollectionsTap: () {
+                  if (readOnlyPresentation) return;
+                  ref
+                      .read(desktopTabsProvider.notifier)
+                      .open(TabKind.collections);
+                },
+                onFavoritesTap: () {
+                  if (readOnlyPresentation) return;
+                  ref
+                      .read(selectedFavoritesModeProvider.notifier)
+                      .update((_) => FavoritesScreenMode.games);
+                  ref
+                      .read(desktopTabsProvider.notifier)
+                      .navigateActive(TabKind.favorites);
+                },
+                onCountrymenTap: () {
+                  if (readOnlyPresentation) return;
+                  ref
+                      .read(selectedCountrymenModeProvider.notifier)
+                      .update((_) => CountrymenScreenMode.games);
+                  ref
+                      .read(desktopTabsProvider.notifier)
+                      .navigateActive(TabKind.countrymen);
+                },
+                onSmartCollectionTap: (type) {
+                  if (readOnlyPresentation) return;
+                  final tabId = ref
+                      .read(desktopTabsProvider.notifier)
+                      .open(
+                        TabKind.smartGames,
+                        title: _smartCollectionTitle(type),
+                        reuseExisting: false,
+                      );
+                  ref
+                      .read(desktopSmartGamesTypeByTabIdProvider.notifier)
+                      .update((types) => {...types, tabId: type});
+                },
+                onLikesTap: () {
+                  if (readOnlyPresentation) return;
+                  ref.read(desktopTabsProvider.notifier).open(TabKind.likes);
+                },
+              ),
               Row(
                 children: [
                   DesktopSegmentedTabs<ge.GroupEventCategory>(
@@ -3327,11 +3371,6 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
         key == LogicalKeyboardKey.home;
   }
 
-  void _navigateToTab(TabKind kind) {
-    if (widget.readOnlyPresentation) return;
-    ref.read(desktopTabsProvider.notifier).navigateActive(kind);
-  }
-
   @override
   Widget build(BuildContext context) {
     // Sync the selection cursor off-frame so we never mutate state during
@@ -3396,7 +3435,7 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
     // the event for the rest of the session — surviving pull-to-refresh and
     // provider invalidation. `_eventVisibility` still drives selection and
     // keyboard navigation through `visibleEvents`.
-    // +1 for the collection cards header, +1 for the trailing spinner.
+    // +1 for the For You smart-event shelf, +1 for the trailing spinner.
     final itemCount = 1 + events.length + (showTrailingSpinner ? 1 : 0);
     final firstVisibleEventId =
         visibleEvents.isNotEmpty
@@ -3453,51 +3492,9 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
                 addAutomaticKeepAlives: false,
                 itemBuilder: (context, index) {
                   if (index == 0) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        DesktopCollectionCards(
-                          onFavoritesTap: () {
-                            if (widget.readOnlyPresentation) return;
-                            ref
-                                .read(selectedFavoritesModeProvider.notifier)
-                                .update((_) => FavoritesScreenMode.games);
-                            _navigateToTab(TabKind.favorites);
-                          },
-                          onCountrymenTap: () {
-                            if (widget.readOnlyPresentation) return;
-                            ref
-                                .read(selectedCountrymenModeProvider.notifier)
-                                .update((_) => CountrymenScreenMode.games);
-                            _navigateToTab(TabKind.countrymen);
-                          },
-                          onSmartCollectionTap: (type) {
-                            if (widget.readOnlyPresentation) return;
-                            final tabId = ref
-                                .read(desktopTabsProvider.notifier)
-                                .open(
-                                  TabKind.smartGames,
-                                  title: _smartCollectionTitle(type),
-                                  reuseExisting: false,
-                                );
-                            ref
-                                .read(
-                                  desktopSmartGamesTypeByTabIdProvider.notifier,
-                                )
-                                .update((types) => {...types, tabId: type});
-                          },
-                          onLikesTap: () {
-                            if (widget.readOnlyPresentation) return;
-                            ref
-                                .read(desktopTabsProvider.notifier)
-                                .open(TabKind.likes);
-                          },
-                        ),
-                        if (!widget.readOnlyPresentation)
-                          const DesktopSmartEventShelf(),
-                      ],
-                    );
+                    return widget.readOnlyPresentation
+                        ? const SizedBox.shrink()
+                        : const DesktopSmartEventShelf();
                   }
                   final eventIndex = index - 1;
                   if (eventIndex >= events.length) {

@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/state/signed_out_events_presentation.dart';
 import 'package:chessever/desktop/state/tournament_live_first.dart';
@@ -190,10 +191,9 @@ void main() {
       final shortcuts = [
         'Favorites',
         'Countrymen',
-        'Live',
-        'GM',
-        'Miniatures',
+        'Collections',
         'Likes',
+        'Miniatures',
       ];
       final positions =
           shortcuts
@@ -361,7 +361,7 @@ void main() {
   });
 
   testWidgets(
-    'missing supplied data keeps honest loading without collections',
+    'missing supplied data keeps honest loading and persistent discovery shortcuts',
     (tester) async {
       tester.view.physicalSize = const Size(1800, 1000);
       tester.view.devicePixelRatio = 1;
@@ -379,8 +379,8 @@ void main() {
           ),
         ),
       );
-      expect(find.byType(DesktopCollectionCards), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(DesktopCollectionCards), findsOneWidget);
+      expect(find.byType(DesktopSpinner), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },

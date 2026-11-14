@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'support/real_tab_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -89,8 +91,9 @@ void main() {
           overrides: [
             currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(_AwardRepository(rows)),
+            desktopTabsProvider.overrideWith((ref) => realTabFixture()),
             boardTabGameArgsByTabIdProvider.overrideWith(
-              (ref) => {'tournaments-default': args},
+              (ref) => {'fixture-board': args},
             ),
           ],
           child: MaterialApp(
@@ -111,9 +114,7 @@ void main() {
       );
       await tester.pump();
       final opened =
-          widgetRef!.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default']!;
+          widgetRef!.read(boardTabGameArgsByTabIdProvider)['fixture-board']!;
       expect(opened.gameId, summaries[2].id);
       expect(boardPlayerAwardedPoints(isWhite: true, args: opened), 0);
       expect(boardPlayerAwardedPoints(isWhite: false, args: opened), 4);
@@ -132,9 +133,7 @@ void main() {
       );
       await tester.pump();
       final returned =
-          widgetRef!.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default']!;
+          widgetRef!.read(boardTabGameArgsByTabIdProvider)['fixture-board']!;
       expect(returned.gameId, selected.id);
       expect(boardPlayerAwardedPoints(isWhite: true, args: returned), 1);
       expect(boardPlayerAwardedPoints(isWhite: false, args: returned), 1);

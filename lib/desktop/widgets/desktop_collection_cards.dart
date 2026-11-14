@@ -13,7 +13,7 @@ import 'package:chessever/screens/group_event/widget/premium_collection_cards.da
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-/// Top-of-feed collection cards on the desktop For You view.
+/// Persistent discovery cards above the desktop Events category toolbar.
 ///
 /// Mirrors the mobile "Premium Collection Cards" — Favorites (auto-scrolling
 /// player photo mosaic) and Countrymen (federation flag full-bleed) — but
@@ -26,12 +26,14 @@ class DesktopCollectionCards extends StatelessWidget {
     super.key,
     required this.onFavoritesTap,
     required this.onCountrymenTap,
+    required this.onCollectionsTap,
     required this.onSmartCollectionTap,
     required this.onLikesTap,
   });
 
   final VoidCallback onFavoritesTap;
   final VoidCallback onCountrymenTap;
+  final VoidCallback onCollectionsTap;
   final ValueChanged<PremiumGamesType> onSmartCollectionTap;
 
   /// Opens the community Likes ranking (the phone's Discovery › Likes).
@@ -74,23 +76,22 @@ class DesktopCollectionCards extends StatelessWidget {
             _SmartCollectionCard(
               width: _smartCardWidth,
               height: _cardHeight,
-              title: 'Live',
-              hint: 'All live games',
-              icon: Icons.bolt_rounded,
-              // Deep enough that the white subtitle reads (the lighter
-              // sky-to-teal measured about 2.1:1).
-              colors: const [Color(0xFF0369A1), Color(0xFF0F766E)],
-              onTap: () => onSmartCollectionTap(PremiumGamesType.live),
+              title: 'Collections',
+              hint: 'Annotated game collections',
+              icon: Icons.auto_stories_outlined,
+              colors: const [Color(0xFF7C3AED), Color(0xFF0F766E)],
+              onTap: onCollectionsTap,
             ),
             const SizedBox(width: _gap),
             _SmartCollectionCard(
               width: _smartCardWidth,
               height: _cardHeight,
-              title: 'GM',
-              hint: '2500+ avg games',
-              icon: Icons.military_tech_rounded,
-              colors: const [Color(0xFF7C3AED), Color(0xFF0F766E)],
-              onTap: () => onSmartCollectionTap(PremiumGamesType.gm),
+              title: 'Likes',
+              hint: 'Community favorites',
+              icon: Icons.favorite_rounded,
+              // Deep rose into oxblood: white copy stays well above 4.5:1.
+              colors: const [Color(0xFF881337), Color(0xFF581C1C)],
+              onTap: onLikesTap,
             ),
             const SizedBox(width: _gap),
             _SmartCollectionCard(
@@ -108,17 +109,6 @@ class DesktopCollectionCards extends StatelessWidget {
               ],
               stops: const [0, 0.58, 1],
               onTap: () => onSmartCollectionTap(PremiumGamesType.miniatures),
-            ),
-            const SizedBox(width: _gap),
-            _SmartCollectionCard(
-              width: _smartCardWidth,
-              height: _cardHeight,
-              title: 'Likes',
-              hint: 'Community favorites',
-              icon: Icons.favorite_rounded,
-              // Deep rose into oxblood: white copy stays well above 4.5:1.
-              colors: const [Color(0xFF881337), Color(0xFF581C1C)],
-              onTap: onLikesTap,
             ),
           ],
         ),

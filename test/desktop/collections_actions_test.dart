@@ -321,12 +321,12 @@ void main() {
   });
 
   group('routes', () {
-    test('Collections takes its shortcut from its sidebar position', () {
-      expect(desktopMainRouteShortcutNumber(DesktopPane.collections), 3);
+    test('hidden Collections remains routable without a sidebar shortcut', () {
+      expect(desktopMainRouteShortcutNumber(DesktopPane.collections), isNull);
       expect(desktopMainRouteShortcutNumber(DesktopPane.tournaments), 1);
       expect(desktopMainRouteShortcutNumber(DesktopPane.library), 2);
-      expect(desktopMainRouteShortcutNumber(DesktopPane.favorites), 4);
-      expect(desktopMainRouteShortcutNumber(DesktopPane.play), 0);
+      expect(desktopMainRouteShortcutNumber(DesktopPane.favorites), isNull);
+      expect(desktopMainRouteShortcutNumber(DesktopPane.play), 5);
       expect(
         desktopMainRoutes
             .map((route) => route.pane)

@@ -1,11 +1,12 @@
 import 'package:chessever/desktop/panes/desktop_whats_new_home_pane.dart';
+import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('How to use tab resolves to the existing welcome pane', () {
+  test('legacy How to use tab resolves safely to Home', () {
     final pane = resolveDesktopTabContent(
       const DesktopTab(
         id: 'how-to-use-test',
@@ -15,7 +16,7 @@ void main() {
       feedbackScreenshotKey: GlobalKey(),
     );
 
-    expect(pane, isA<DesktopWhatsNewHomePane>());
+    expect(pane, isA<TournamentsPane>());
   });
 
   testWidgets(

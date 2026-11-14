@@ -5,6 +5,12 @@ import 'package:chessever/services/analytics/analytics_service.dart';
 
 const int _maxRouteHistoryEntries = 50;
 
+/// Stable identity for the landing view; never inserted into the tab strip.
+const desktopHomeTabId = 'tournaments-default';
+
+/// Explicit manual help intent, consumed by the shell's dialog host.
+final desktopHelpRequestedProvider = StateProvider<bool>((ref) => false);
+
 /// Identifier for the kind of content a tab hosts. Mapped 1:1 onto the
 /// pre-existing `DesktopPane` enum and extended with the Chrome-style "new
 /// tab" affordances (opening explorer, board editor, watch) the desktop
@@ -86,7 +92,7 @@ extension TabKindLabel on TabKind {
       case TabKind.board:
         return 'Board';
       case TabKind.tournaments:
-        return 'Events';
+        return 'Home';
       case TabKind.tournamentDetail:
         return 'Tournament';
       case TabKind.smartGames:
@@ -245,8 +251,17 @@ class DesktopTabsState {
   /// than picking a strip neighbor that may be visually adjacent but unrelated.
   final List<String> activationHistory;
 
+  bool get isHomeVisible => activeId == null || activeId == desktopHomeTabId;
+
   DesktopTab? get active {
-    if (activeId == null) return null;
+    if (isHomeVisible) {
+      return const DesktopTab(
+        id: desktopHomeTabId,
+        kind: TabKind.tournaments,
+        title: 'Home',
+        closable: false,
+      );
+    }
     for (final t in tabs) {
       if (t.id == activeId) return t;
     }
@@ -259,18 +274,13 @@ class DesktopTabsState {
 
 class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   DesktopTabsNotifier()
-    : super(
-        const DesktopTabsState(
-          tabs: [
-            DesktopTab(
-              id: 'tournaments-default',
-              kind: TabKind.tournaments,
-              title: 'Events',
-            ),
-          ],
-          activeId: 'tournaments-default',
-        ),
-      );
+    : super(const DesktopTabsState(tabs: [], activeId: desktopHomeTabId));
+
+  /// Show the retained landing view without closing or reparenting any work.
+  void showHome() {
+    if (state.isHomeVisible) return;
+    state = _stateWithActive(tabs: state.tabs, activeId: desktopHomeTabId);
+  }
 
   DesktopTabsState get currentState => state;
 
@@ -315,6 +325,12 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     bool reuseExisting = true,
     bool focus = true,
   }) {
+    if (kind == TabKind.tournaments ||
+        kind == TabKind.calendar ||
+        kind == TabKind.howToUse) {
+      if (focus) showHome();
+      return desktopHomeTabId;
+    }
     if (reuseExisting) {
       for (final tab in state.tabs) {
         if (tab.kind == kind) {
@@ -364,6 +380,12 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   /// metadata for other route kinds, and the shell's tab-close listener prunes
   /// those maps when tabs close.
   String? navigateActive(TabKind kind, {String? title, String? subtitle}) {
+    if (kind == TabKind.tournaments ||
+        kind == TabKind.calendar ||
+        kind == TabKind.howToUse) {
+      showHome();
+      return desktopHomeTabId;
+    }
     final activeId = state.activeId;
     final route = DesktopTabRoute(
       kind: kind,
@@ -372,11 +394,25 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     );
     if (activeId == null) {
       // No tab to navigate — fall back to opening one.
-      return open(kind, title: route.title, subtitle: route.subtitle);
+      // Home is not a tab. Allocate a workspace rather than reusing another
+      // tab of this kind and replacing the game or work it already contains.
+      return open(
+        kind,
+        title: route.title,
+        subtitle: route.subtitle,
+        reuseExisting: false,
+      );
     }
     final idx = state.tabs.indexWhere((t) => t.id == activeId);
     if (idx < 0) {
-      return open(kind, title: route.title, subtitle: route.subtitle);
+      // Home is not a tab. Allocate a workspace rather than reusing another
+      // tab of this kind and replacing the game or work it already contains.
+      return open(
+        kind,
+        title: route.title,
+        subtitle: route.subtitle,
+        reuseExisting: false,
+      );
     }
     final old = state.tabs[idx];
     if (old.kind == TabKind.howToUse && kind != TabKind.howToUse) {
@@ -411,6 +447,12 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   /// Restores an exact browser-history route without adding a shell-history
   /// entry. Page-specific providers are restored by the URL coordinator first.
   void restoreBrowserRoute(String tabId, DesktopTabRoute route) {
+    if (route.kind == TabKind.tournaments ||
+        route.kind == TabKind.calendar ||
+        route.kind == TabKind.howToUse) {
+      showHome();
+      return;
+    }
     if (!state.tabs.any((tab) => tab.id == tabId)) return;
     state = DesktopTabsState(
       tabs: [
@@ -525,6 +567,10 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   /// Cycles to the next tab, wrapping at the end. Mirrors `Ctrl+Tab` and
   /// Chrome's bracket shortcuts.
   void activateNext() {
+    if (state.isHomeVisible) {
+      if (state.tabs.isNotEmpty) activate(state.tabs.first.id);
+      return;
+    }
     final activeId = state.activeId;
     if (state.tabs.isEmpty || activeId == null) return;
     final idx = state.tabs.indexWhere((t) => t.id == activeId);
@@ -534,6 +580,10 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
 
   /// Cycles to the previous tab, wrapping at the start.
   void activatePrevious() {
+    if (state.isHomeVisible) {
+      if (state.tabs.isNotEmpty) activate(state.tabs.last.id);
+      return;
+    }
     final activeId = state.activeId;
     if (state.tabs.isEmpty || activeId == null) return;
     final idx = state.tabs.indexWhere((t) => t.id == activeId);
@@ -567,7 +617,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
           return remaining.last.id;
         },
       );
-      if (newActive.isEmpty) newActive = null;
+      if (newActive.isEmpty) newActive = desktopHomeTabId;
     }
 
     state = DesktopTabsState(
@@ -594,7 +644,8 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
         if (t.id == keepId || !t.closable) t,
     ];
     if (keep.length == previousTabs.length) return;
-    final activeStillExists = keep.any((t) => t.id == state.activeId);
+    final activeStillExists =
+        state.isHomeVisible || keep.any((t) => t.id == state.activeId);
     final keptIds = keep.map((tab) => tab.id).toSet();
     final nextActiveId = activeStillExists ? state.activeId : keepId;
     state = DesktopTabsState(
@@ -626,7 +677,8 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
         if (i <= idx || !previousTabs[i].closable) previousTabs[i],
     ];
     if (keep.length == previousTabs.length) return;
-    final activeStillExists = keep.any((t) => t.id == state.activeId);
+    final activeStillExists =
+        state.isHomeVisible || keep.any((t) => t.id == state.activeId);
     final keptIds = keep.map((tab) => tab.id).toSet();
     final nextActiveId = activeStillExists ? state.activeId : pivotId;
     state = DesktopTabsState(

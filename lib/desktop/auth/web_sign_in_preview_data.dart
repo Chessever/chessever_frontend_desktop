@@ -130,7 +130,7 @@ class WebSignInPreviewLocation {
       'board',
     ),
     TabKind.tournaments => const WebSignInPreviewLocation(
-      'Events',
+      'Home',
       DesktopPane.tournaments,
       'events',
     ),
@@ -173,9 +173,9 @@ class WebSignInPreviewLocation {
       'players',
     ),
     TabKind.calendar => const WebSignInPreviewLocation(
-      'Calendar',
-      DesktopPane.calendar,
-      'calendar',
+      'Home',
+      DesktopPane.tournaments,
+      'events',
     ),
     TabKind.countrymen => const WebSignInPreviewLocation(
       'Countrymen',
@@ -213,9 +213,9 @@ class WebSignInPreviewLocation {
       'private',
     ),
     TabKind.howToUse => const WebSignInPreviewLocation(
-      'How to use',
+      'Home',
       DesktopPane.tournaments,
-      'private',
+      'events',
     ),
     TabKind.playerProfile || TabKind.playerScoreCard =>
       const WebSignInPreviewLocation('Player', DesktopPane.players, 'players'),
@@ -285,9 +285,9 @@ class WebSignInPreviewLocation {
     }
     if (first == 'calendar') {
       return const WebSignInPreviewLocation(
-        'Calendar',
-        DesktopPane.calendar,
-        'calendar',
+        'Home',
+        DesktopPane.tournaments,
+        'events',
       );
     }
     if (first == 'collections') {
@@ -347,13 +347,13 @@ class WebSignInPreviewLocation {
     }
     if (first == 'learn') {
       return const WebSignInPreviewLocation(
-        'How to use',
+        'Home',
         DesktopPane.tournaments,
-        'private',
+        'events',
       );
     }
     return const WebSignInPreviewLocation(
-      'Events',
+      'Home',
       DesktopPane.tournaments,
       'events',
     );

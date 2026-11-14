@@ -108,7 +108,11 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
     String? activeId,
     Map<String, double> widths,
   ) {
-    if (activeId == null || !_tabScroll.hasClients) return;
+    if (activeId == null ||
+        !_tabScroll.hasClients ||
+        !tabs.any((tab) => tab.id == activeId)) {
+      return;
+    }
     var start = 6.0;
     for (final tab in tabs) {
       if (tab.id == activeId) break;
@@ -125,12 +129,8 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
       target = end + 6 - position.viewportDimension;
     }
     if (target == null) return;
-    unawaited(
-      _tabScroll.animateTo(
-        target.clamp(position.minScrollExtent, position.maxScrollExtent),
-        duration: const Duration(milliseconds: 160),
-        curve: Curves.easeOutCubic,
-      ),
+    _tabScroll.jumpTo(
+      target.clamp(position.minScrollExtent, position.maxScrollExtent),
     );
   }
 
@@ -311,17 +311,12 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                 itemCount: state.tabs.length,
                                 itemBuilder: (context, i) {
                                   final tab = state.tabs[i];
-                                  // Chrome-style: pointer-down on the chip immediately
-                                  // arms a horizontal drag (`ReorderableDragStartListener`
-                                  // uses ImmediateMultiDragGestureRecognizer). Short
-                                  // taps without movement still bubble through to the
-                                  // chip's GestureDetector so click-to-activate keeps
-                                  // working — only sustained motion past the touch-slop
-                                  // commits to a reorder gesture.
+                                  // Select on press, but start reordering only after
+                                  // deliberate horizontal travel, never click jitter.
                                   return SizedBox(
                                     key: ValueKey(tab.id),
                                     width: widths[tab.id],
-                                    child: ReorderableDragStartListener(
+                                    child: _TabReorderStartListener(
                                       index: i,
                                       child: _TabChip(
                                         readOnlyPresentation:
@@ -374,6 +369,74 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
         );
       },
     );
+  }
+}
+
+// Flutter's immediate mouse drag starts after only precise-pointer slop.
+// A normal click can cross it and briefly replace the tab with a lifted
+// proxy. Require deliberate horizontal travel while preserving real drag,
+// touch slop, middle-click close and the independent vertical tear-off path.
+class _TabReorderStartListener extends ReorderableDragStartListener {
+  const _TabReorderStartListener({required super.child, required super.index});
+
+  @override
+  MultiDragGestureRecognizer createRecognizer() =>
+      _TabReorderGestureRecognizer(debugOwner: this);
+}
+
+class _TabReorderGestureRecognizer extends MultiDragGestureRecognizer {
+  _TabReorderGestureRecognizer({super.debugOwner});
+
+  @override
+  MultiDragPointerState createNewPointerState(PointerDownEvent event) =>
+      _TabReorderPointerState(event.position, event.kind, gestureSettings);
+
+  @override
+  String get debugDescription => 'deliberate tab reorder';
+}
+
+class _TabReorderPointerState extends MultiDragPointerState {
+  _TabReorderPointerState(
+    super.initialPosition,
+    super.kind,
+    super.gestureSettings,
+  );
+
+  GestureMultiDragStartCallback? _starter;
+
+  bool get _hasDeliberateHorizontalTravel {
+    final delta = pendingDelta!;
+    final slop = math.max(8.0, computeHitSlop(kind, gestureSettings));
+    return delta.dx.abs() > slop && delta.dx.abs() > delta.dy.abs();
+  }
+
+  @override
+  void checkForResolutionAfterMove() {
+    if (!_hasDeliberateHorizontalTravel) return;
+    final starter = _starter;
+    if (starter != null) {
+      _starter = null;
+      starter(initialPosition);
+    } else {
+      resolve(GestureDisposition.accepted);
+    }
+  }
+
+  @override
+  void accepted(GestureMultiDragStartCallback starter) {
+    // With no competing mouse recognizer the arena can accept on pointer-down.
+    // Winning the arena is not drag intent: keep the tab in place until travel.
+    if (_hasDeliberateHorizontalTravel) {
+      starter(initialPosition);
+    } else {
+      _starter = starter;
+    }
+  }
+
+  @override
+  void dispose() {
+    _starter = null;
+    super.dispose();
   }
 }
 
@@ -735,10 +798,11 @@ class _TabChipState extends ConsumerState<_TabChip>
     // step *above* the strip (#1A) using `kBlack3Color` (#25) so each
     // chip is a discrete shape rather than dissolving into the strip;
     // hover lifts another step to `kDividerColor` (#2C).
-    //
-    // Fill, foreground and lift all ride ONE hover spring (see the
-    // SingleMotionBuilder below) so they move together; a fast fill fade
-    // next to an instant label swap and a slower lift read as flicker.
+    final Color color =
+        widget.active
+            ? kBackgroundColor
+            : (_hovered ? kDividerColor : kBlack3Color);
+    const fg = kWhiteColor;
 
     // Game-bearing Board tabs carry a `BoardTabGameArgs` (white/black
     // names, federations, ELOs) we can render in the chip in place of
@@ -778,12 +842,7 @@ class _TabChipState extends ConsumerState<_TabChip>
     //   chip horizontal gap: 4 px on each side → real 8 px gap between chips
     //   inner padding: 14 px h / 8 px v so the icon + label + close button
     //   are not glued to the chip edges.
-    // Inactive-tab hover gets a tiny upward lift (1.5 px) — the chip
-    // floats toward the cursor before settling back when it leaves.
-    // Active tabs sit flush; lifting them would break the merge with
-    // the content area. The lift goes through MotionTranslate so the
-    // label glides instead of stepping between pixel rows.
-    final double hoverTarget = (!widget.active && _hovered) ? 1.0 : 0.0;
+    // Tab buttons stay fixed on hover and activation; selection uses color only.
     return Padding(
       padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
       child: ClickCursor(
@@ -826,123 +885,80 @@ class _TabChipState extends ConsumerState<_TabChip>
             },
             onPointerUp: (_) => _primaryDragStart = null,
             onPointerCancel: (_) => _primaryDragStart = null,
-            child: SingleMotionBuilder(
-              value: hoverTarget,
-              motion: DesktopMotion.hover,
-              builder: (context, h, _) {
-                final t = h.clamp(0.0, 1.0);
-                // Active tabs merge into the pane (kBackgroundColor);
-                // inactive ones blend #25 -> #2C and 70% -> 100% white.
-                final Color color =
-                    widget.active
-                        ? kBackgroundColor
-                        : Color.lerp(kBlack3Color, kDividerColor, t)!;
-                final Color fg =
-                    widget.active
-                        ? kWhiteColor
-                        : Color.lerp(kWhiteColor70, kWhiteColor, t)!;
-                return MotionTranslate(
-                  offset: Offset(0, -1.5 * t),
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 40),
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(10),
-                        topRight: Radius.circular(10),
-                      ),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 40),
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(10),
+                  topRight: Radius.circular(10),
+                ),
+              ),
+              // Chip body. Game tabs stack a title row + flush-bottom
+              // eval strip; everything else is a single padded row.
+              // Selection changes only the background fill. The content keeps
+              // the same geometry, typography and visibility in both states.
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(10),
+                      topRight: Radius.circular(10),
                     ),
-                    // Chip body. Game tabs stack a title row + flush-bottom
-                    // eval strip; everything else is a single padded row.
-                    // The active tab gets a 2px primary-color accent painted
-                    // over the top edge — overlaid via Stack so inactive and
-                    // active tabs share the same inner content geometry
-                    // (a Border.top would shove the content down 2px on the
-                    // active tab only).
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ClipRRect(
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(10),
-                            topRight: Radius.circular(10),
-                          ),
-                          child:
-                              gameArgs != null
-                                  ? Column(
-                                    mainAxisSize: MainAxisSize.max,
-                                    children: [
-                                      Expanded(
-                                        child: Padding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            12,
-                                            6,
-                                            8,
-                                            4,
-                                          ),
-                                          child: _GameTabChipContent(
-                                            args: gameArgs,
-                                            active: widget.active,
-                                            fg: fg,
-                                            muted: soundMuted,
-                                            onClose: widget.onClose,
-                                            showClose:
-                                                _hovered || widget.active,
-                                            closeReveal:
-                                                widget.active ? 1.0 : t,
-                                          ),
-                                        ),
-                                      ),
-                                      if (showGameCardEvalBar)
-                                        // Eval strip pinned to the chip's bottom edge —
-                                        // full bleed, Chrome-style indicator under the
-                                        // tab title.
-                                        SizedBox(
-                                          height: 3,
-                                          child: _HorizontalEvalBar(
-                                            fen:
-                                                (boardFen != null &&
-                                                        boardFen.isNotEmpty)
-                                                    ? boardFen
-                                                    : (gameArgs.fenSeed ?? ''),
-                                          ),
-                                        ),
-                                    ],
-                                  )
-                                  : _RegularTabChipContent(
-                                    tab: widget.tab,
-                                    active: widget.active,
-                                    fg: fg,
-                                    hovered: _hovered,
-                                    closeReveal: widget.active ? 1.0 : t,
-                                    boardFen: boardFen,
-                                    hasGameFen: hasGameFen,
-                                    showGameCardEvalBar: showGameCardEvalBar,
-                                    playerProfileArgs: playerProfileArgs,
-                                    onClose: widget.onClose,
+                    child:
+                        gameArgs != null
+                            ? Column(
+                              mainAxisSize: MainAxisSize.max,
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      6,
+                                      8,
+                                      4,
+                                    ),
+                                    child: _GameTabChipContent(
+                                      args: gameArgs,
+                                      fg: fg,
+                                      muted: soundMuted,
+                                      onClose: widget.onClose,
+                                      showClose: _hovered,
+                                      closeReveal: _hovered ? 1.0 : 0.0,
+                                    ),
                                   ),
-                        ),
-                        if (widget.active)
-                          const Positioned(
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            height: 2,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: kPrimaryColor,
-                                borderRadius: BorderRadius.only(
-                                  topLeft: Radius.circular(10),
-                                  topRight: Radius.circular(10),
                                 ),
-                              ),
+                                if (showGameCardEvalBar)
+                                  // Eval strip pinned to the chip's bottom edge —
+                                  // full bleed, Chrome-style indicator under the
+                                  // tab title.
+                                  SizedBox(
+                                    height: 3,
+                                    child: _HorizontalEvalBar(
+                                      fen:
+                                          (boardFen != null &&
+                                                  boardFen.isNotEmpty)
+                                              ? boardFen
+                                              : (gameArgs.fenSeed ?? ''),
+                                    ),
+                                  ),
+                              ],
+                            )
+                            : _RegularTabChipContent(
+                              tab: widget.tab,
+                              fg: fg,
+                              hovered: _hovered,
+                              closeReveal: _hovered ? 1.0 : 0.0,
+                              boardFen: boardFen,
+                              hasGameFen: hasGameFen,
+                              showGameCardEvalBar: showGameCardEvalBar,
+                              playerProfileArgs: playerProfileArgs,
+                              onClose: widget.onClose,
                             ),
-                          ),
-                      ],
-                    ),
                   ),
-                );
-              },
+                ],
+              ),
             ),
           ),
         ),
@@ -963,7 +979,6 @@ class _TabChipState extends ConsumerState<_TabChip>
 class _GameTabChipContent extends StatelessWidget {
   const _GameTabChipContent({
     required this.args,
-    required this.active,
     required this.fg,
     required this.muted,
     required this.onClose,
@@ -972,15 +987,12 @@ class _GameTabChipContent extends StatelessWidget {
   });
 
   final BoardTabGameArgs args;
-  final bool active;
   final Color fg;
   final bool muted;
   final VoidCallback? onClose;
   final bool showClose;
 
-  /// 0..1 from the chip's hover spring (1 on the active tab). Fades the
-  /// close button and, on narrow chips, opens its slot in step with the
-  /// chip fill, so hovering never snaps the title sideways.
+  /// Hover-only close-button visibility; never changes the reserved slot.
   final double closeReveal;
 
   /// Pull a "last name" out of "Last, First" or "First Last" — game
@@ -1035,7 +1047,7 @@ class _GameTabChipContent extends StatelessWidget {
     final nameStyle = TextStyle(
       color: fg,
       fontSize: 13,
-      fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+      fontWeight: FontWeight.w500,
       letterSpacing: 0.1,
       height: 1.2,
     );
@@ -1046,7 +1058,7 @@ class _GameTabChipContent extends StatelessWidget {
       height: 1.2,
     );
     final titleStyle = TextStyle(
-      color: kPrimaryColor.withValues(alpha: active ? 1.0 : 0.85),
+      color: kPrimaryColor,
       fontSize: 10.5,
       fontWeight: FontWeight.w700,
       letterSpacing: 0.3,
@@ -1073,10 +1085,9 @@ class _GameTabChipContent extends StatelessWidget {
         final showResult = hasResult && w >= 170;
         final showTitles = w >= 210 && (whiteHasTitle || blackHasTitle);
         final useFullNames = w >= 280;
-        final double closeSlot =
-            onClose == null ? 0.0 : (w >= 150 ? 1.0 : closeReveal);
-        final reserveClose = closeSlot > 0;
-        final rightInset = (muted ? 18.0 : 0.0) + 22.0 * closeSlot;
+        final reserveClose = onClose != null;
+        final rightInset =
+            reserveClose ? (muted ? 40.0 : 22.0) : (muted ? 18.0 : 0.0);
 
         if (!hasNamedSides || args.eventPlayerScope != null) {
           final label = args.label.trim().isEmpty ? 'Board' : args.label.trim();
@@ -1085,11 +1096,7 @@ class _GameTabChipContent extends StatelessWidget {
             mainAxisSize: MainAxisSize.max,
             children: [
               if (w >= 100) ...[
-                Icon(
-                  _iconFor(TabKind.board),
-                  size: 16,
-                  color: active ? kPrimaryColor : fg,
-                ),
+                Icon(_iconFor(TabKind.board), size: 16, color: fg),
                 const SizedBox(width: 8),
               ],
               Flexible(
@@ -1221,7 +1228,7 @@ class _GameTabChipContent extends StatelessWidget {
             ),
             if (muted)
               Positioned(
-                right: 22 * closeSlot,
+                right: reserveClose ? 22 : 0,
                 top: 0,
                 bottom: 0,
                 child: Center(
@@ -1281,7 +1288,6 @@ class _ResultChip extends StatelessWidget {
 class _RegularTabChipContent extends StatelessWidget {
   const _RegularTabChipContent({
     required this.tab,
-    required this.active,
     required this.fg,
     required this.hovered,
     required this.closeReveal,
@@ -1293,11 +1299,10 @@ class _RegularTabChipContent extends StatelessWidget {
   });
 
   final DesktopTab tab;
-  final bool active;
   final Color fg;
   final bool hovered;
 
-  /// 0..1 from the chip's hover spring (1 on the active tab); see
+  /// Hover-only close-button visibility; see
   /// [_GameTabChipContent.closeReveal].
   final double closeReveal;
   final String? boardFen;
@@ -1311,15 +1316,13 @@ class _RegularTabChipContent extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth;
-        final double closeSlot =
-            onClose == null ? 0.0 : ((active || w >= 140) ? 1.0 : closeReveal);
-        final reserveClose = closeSlot > 0;
-        final double closeInset = 12 + 16 * closeSlot;
+        final reserveClose = onClose != null;
+        final closeInset = reserveClose ? 28.0 : 12.0;
 
         final titleStyle = TextStyle(
           color: fg,
           fontSize: 13,
-          fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          fontWeight: FontWeight.w500,
           height: 1.2,
         );
         final profileArgs = playerProfileArgs;
@@ -1352,7 +1355,7 @@ class _RegularTabChipContent extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   softWrap: false,
                   style: titleStyle.copyWith(
-                    color: kPrimaryColor.withValues(alpha: active ? 1.0 : 0.85),
+                    color: kPrimaryColor,
                     fontSize: 10.5,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -1388,7 +1391,7 @@ class _RegularTabChipContent extends StatelessWidget {
                   bottom: 0,
                   child: Center(
                     child: _CloseButton(
-                      enabled: hovered || active,
+                      enabled: hovered,
                       opacity: closeReveal,
                       onTap: onClose!,
                     ),
@@ -1423,11 +1426,7 @@ class _RegularTabChipContent extends StatelessWidget {
               const SizedBox(width: 8),
             ],
             if (w >= 100) ...[
-              Icon(
-                _iconFor(tab.kind),
-                size: 16,
-                color: active ? kPrimaryColor : fg,
-              ),
+              Icon(_iconFor(tab.kind), size: 16, color: fg),
               const SizedBox(width: 8),
             ],
             Flexible(
@@ -1458,7 +1457,7 @@ class _RegularTabChipContent extends StatelessWidget {
                 bottom: 0,
                 child: Center(
                   child: _CloseButton(
-                    enabled: hovered || active,
+                    enabled: hovered,
                     opacity: closeReveal,
                     onTap: onClose!,
                   ),

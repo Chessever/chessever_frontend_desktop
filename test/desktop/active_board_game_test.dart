@@ -19,6 +19,42 @@ import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
 void main() {
+  test('Home game A then Home game B preserves A in its own tab', () {
+    final container = ProviderContainer(overrides: [currentBroadcastGames]);
+    addTearDown(container.dispose);
+    final tabs = container.read(desktopTabsProvider.notifier);
+    expect(tabs.state.isHomeVisible, isTrue);
+    final first = openBoardGameTabFromContainer(
+      container,
+      _args('game-1'),
+      replaceActive: true,
+    );
+    final original = container.read(boardTabGameArgsByTabIdProvider)[first];
+    const savedFen = '8/8/8/8/8/8/8/K6k w - - 0 1';
+    container.read(boardTabFenProvider.notifier).setFen(first, savedFen);
+    tabs.showHome();
+    final second = openBoardGameTabFromContainer(
+      container,
+      _args('game-2'),
+      replaceActive: true,
+    );
+    expect(second, isNot(first));
+    expect(tabs.state.tabs.map((tab) => tab.id), [first, second]);
+    expect(
+      container.read(boardTabGameArgsByTabIdProvider)[first],
+      same(original),
+    );
+    expect(container.read(boardTabFenProvider)[first], savedFen);
+    expect(
+      container.read(boardTabGameArgsByTabIdProvider)[second]?.gameId,
+      'game-2',
+    );
+    tabs.activate(first);
+    expect(
+      container.read(boardTabGameArgsByTabIdProvider)[first]?.gameId,
+      'game-1',
+    );
+  });
   test('scratch board keeps the local PGN identity after its first save', () {
     final container = ProviderContainer(overrides: [currentBroadcastGames]);
     addTearDown(container.dispose);

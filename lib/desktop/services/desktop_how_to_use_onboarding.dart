@@ -8,15 +8,12 @@ bool shouldOpenDesktopHowToUse({
   required String currentVersion,
   required String? dismissedVersion,
 }) {
-  return currentVersion.trim().isNotEmpty && dismissedVersion != currentVersion;
+  // Help is manual-only; neither install nor update may interrupt the workspace.
+  return false;
 }
 
 bool shouldFocusDesktopHowToUse(DesktopTabsState tabs, {bool isWeb = kIsWeb}) {
-  // Browser startup keeps Events (or the arrival URL's page) in front.
-  if (isWeb) return false;
-  return tabs.tabs.length == 1 &&
-      tabs.activeId == 'tournaments-default' &&
-      tabs.active?.kind == TabKind.tournaments;
+  return false;
 }
 
 String autoOpenDesktopHowToUseTab(

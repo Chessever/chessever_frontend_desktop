@@ -7,39 +7,24 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 
 void main() {
   group('DesktopTabsNotifier', () {
-    test('starts on the Events tab', () {
+    test('starts on tabless Home', () {
       final tabs = DesktopTabsNotifier();
 
-      expect(tabs.state.tabs, hasLength(1));
-      expect(tabs.state.activeId, 'tournaments-default');
+      expect(tabs.state.tabs, isEmpty);
+      expect(tabs.state.activeId, desktopHomeTabId);
       expect(tabs.state.active?.kind, TabKind.tournaments);
-      expect(tabs.state.active?.title, 'Events');
+      expect(tabs.state.active?.title, 'Home');
     });
 
-    test('opens a closable How to use tab with the requested label', () {
+    test('legacy How to use cannot create a workspace tab', () {
       final tabs = DesktopTabsNotifier();
-
-      final tabId = tabs.open(TabKind.howToUse);
-      final tab = tabs.state.tabs.singleWhere((tab) => tab.id == tabId);
-
-      expect(tab.title, 'How to use');
-      expect(tab.closable, isTrue);
-      expect(tabs.state.activeId, tabId);
+      tabs.open(TabKind.howToUse);
+      expect(tabs.state.tabs, isEmpty);
+      expect(tabs.state.isHomeVisible, isTrue);
+      final library = tabs.navigateActive(TabKind.library);
+      expect(tabs.state.activeId, library);
+      expect(tabs.state.tabs.single.kind, TabKind.library);
     });
-
-    test(
-      'How to use stays open when another route replaces the active view',
-      () {
-        final tabs = DesktopTabsNotifier();
-        final howToUseTabId = tabs.open(TabKind.howToUse);
-
-        final libraryTabId = tabs.navigateActive(TabKind.library);
-
-        expect(libraryTabId, isNot(howToUseTabId));
-        expect(tabs.state.tabs.any((tab) => tab.id == howToUseTabId), isTrue);
-        expect(tabs.state.active?.kind, TabKind.library);
-      },
-    );
 
     test('opens background tabs without changing the active tab', () {
       final tabs = DesktopTabsNotifier();
@@ -61,13 +46,13 @@ void main() {
       final library = tabs.open(TabKind.library, reuseExisting: false);
       final players = tabs.open(TabKind.players, reuseExisting: false);
 
-      tabs.activateAt(1);
+      tabs.activateAt(0);
       expect(tabs.state.activeId, board);
 
       tabs.activateLast();
       expect(tabs.state.activeId, players);
 
-      tabs.activateAt(2);
+      tabs.activateAt(1);
       expect(tabs.state.activeId, library);
     });
 
@@ -126,7 +111,7 @@ void main() {
       tabs.navigateActive(TabKind.library);
       tabs.navigateActive(TabKind.players);
       final firstTab = tabs.state.activeId!;
-      final secondTab = tabs.open(TabKind.calendar, reuseExisting: false);
+      final secondTab = tabs.open(TabKind.settings, reuseExisting: false);
       tabs.navigateActive(TabKind.countrymen);
 
       tabs.activate(firstTab);
@@ -141,7 +126,7 @@ void main() {
       tabs.activate(secondTab);
       expect(tabs.state.active?.kind, TabKind.countrymen);
       tabs.goBack();
-      expect(tabs.state.active?.kind, TabKind.calendar);
+      expect(tabs.state.active?.kind, TabKind.settings);
     });
 
     test('route back and forward preserve browser stack semantics', () {
@@ -149,7 +134,7 @@ void main() {
 
       tabs.navigateActive(TabKind.library);
       tabs.navigateActive(TabKind.players);
-      tabs.navigateActive(TabKind.calendar);
+      tabs.navigateActive(TabKind.settings);
 
       tabs.goBack();
       expect(tabs.state.active?.kind, TabKind.players);
@@ -158,7 +143,7 @@ void main() {
 
       tabs.goBack();
       expect(tabs.state.active?.kind, TabKind.library);
-      expect(tabs.state.canGoBack, isTrue);
+      expect(tabs.state.canGoBack, isFalse);
 
       tabs.goForward();
       expect(tabs.state.active?.kind, TabKind.players);
@@ -210,22 +195,12 @@ void main() {
       final players = tabs.open(TabKind.players, reuseExisting: false);
 
       // ReorderableListView.onReorder reports the destination before the old
-      // item is removed, so moving board after library reports 3.
-      tabs.reorder(1, 3);
-      expect(tabs.state.tabs.map((t) => t.id), [
-        'tournaments-default',
-        library,
-        board,
-        players,
-      ]);
+      // item is removed, so moving board after library reports 2.
+      tabs.reorder(0, 2);
+      expect(tabs.state.tabs.map((t) => t.id), [library, board, players]);
 
-      tabs.reorder(3, 1);
-      expect(tabs.state.tabs.map((t) => t.id), [
-        'tournaments-default',
-        players,
-        library,
-        board,
-      ]);
+      tabs.reorder(2, 0);
+      expect(tabs.state.tabs.map((t) => t.id), [players, library, board]);
     });
 
     test('opens database workspace tabs as separate database routes', () {

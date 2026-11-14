@@ -15,6 +15,7 @@ void main() {
     var favoritesTaps = 0;
     var countrymenTaps = 0;
     var likesTaps = 0;
+    var collectionsTaps = 0;
 
     await tester.pumpWidget(
       ProviderScope(
@@ -36,6 +37,7 @@ void main() {
                     onCountrymenTap: () => countrymenTaps++,
                     onSmartCollectionTap: (type) => selectedType = type,
                     onLikesTap: () => likesTaps++,
+                    onCollectionsTap: () => collectionsTaps++,
                   ),
                 ),
               );
@@ -47,13 +49,33 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 400));
 
+    const titles = [
+      'Favorites',
+      'Countrymen',
+      'Collections',
+      'Likes',
+      'Miniatures',
+    ];
+    for (final title in titles) {
+      expect(find.text(title), findsOneWidget);
+    }
+    expect(find.text('Live'), findsNothing);
+    expect(find.text('GM'), findsNothing);
+    expect(find.text('Reports'), findsNothing);
+    for (var i = 1; i < titles.length; i++) {
+      expect(
+        tester.getTopLeft(find.text(titles[i])).dx,
+        greaterThan(tester.getTopLeft(find.text(titles[i - 1])).dx),
+      );
+    }
+
     final miniatureSize = tester.getSize(
       find.ancestor(
         of: find.text('Miniatures'),
         matching: find.byType(DesktopTappable),
       ),
     );
-    for (final title in ['Live', 'GM', 'Likes']) {
+    for (final title in ['Collections', 'Likes']) {
       expect(
         tester.getSize(
           find.ancestor(
@@ -70,7 +92,7 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
-    expect(selectedType, PremiumGamesType.live);
+    expect(collectionsTaps, 1);
 
     await tester.tap(find.text('Favorites'));
     await tester.pump();
@@ -80,12 +102,7 @@ void main() {
     await tester.pump();
     expect(countrymenTaps, 1);
 
-    for (final entry
-        in {
-          'Live': PremiumGamesType.live,
-          'GM': PremiumGamesType.gm,
-          'Miniatures': PremiumGamesType.miniatures,
-        }.entries) {
+    for (final entry in {'Miniatures': PremiumGamesType.miniatures}.entries) {
       await tester.ensureVisible(find.text(entry.key));
       await tester.pump();
       await tester.tap(find.text(entry.key));

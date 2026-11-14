@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'support/real_tab_fixture.dart';
 import 'support/current_broadcast_games.dart';
 
 import 'package:flutter/material.dart';
@@ -2134,7 +2136,7 @@ void main() {
     ];
 
     final keys = eventRailLiveBatchKeysForTesting(
-      activeTabId: 'tournaments-default',
+      activeTabId: 'fixture-board',
       games: games,
       isEventRail: true,
       isDatabaseRail: false,
@@ -2149,7 +2151,7 @@ void main() {
 
   test('database rail does not subscribe to live tournament updates', () {
     final keys = eventRailLiveBatchKeysForTesting(
-      activeTabId: 'tournaments-default',
+      activeTabId: 'fixture-board',
       games: [_summary(id: 'local-game-1', roundLabel: '2026')],
       isEventRail: false,
       isDatabaseRail: true,
@@ -2170,7 +2172,7 @@ void main() {
     ];
 
     final keys = eventRailLiveBatchKeysForTesting(
-      activeTabId: 'tournaments-default',
+      activeTabId: 'fixture-board',
       games: games,
       isEventRail: true,
       isDatabaseRail: false,
@@ -2765,7 +2767,7 @@ void main() {
         tester.element(find.byType(EventGamesTable)),
       );
       container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
-        'tournaments-default': initialArgs.copyWith(
+        'fixture-board': initialArgs.copyWith(
           gameId: 'source-game-2',
           gameListSelectedId: 'source-game-2',
         ),
@@ -2832,7 +2834,7 @@ void main() {
         tester.element(find.byType(EventGamesTable)),
       );
       container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
-        'tournaments-default': initialArgs.copyWith(
+        'fixture-board': initialArgs.copyWith(
           gameId: 'event-game-2',
           gameListSelectedId: 'event-game-2',
         ),
@@ -3674,8 +3676,9 @@ Widget _wrap(
     overrides: [
       currentBroadcastGames,
       ...overrides,
+      desktopTabsProvider.overrideWith((ref) => realTabFixture()),
       boardTabGameArgsByTabIdProvider.overrideWith(
-        (ref) => {'tournaments-default': args},
+        (ref) => {'fixture-board': args},
       ),
       if (legacy != null)
         tournamentGamesProvider.overrideWith((ref) {
@@ -3701,7 +3704,7 @@ Widget _wrap(
       home: Scaffold(
         body: SizedBox(
           width: railWidth,
-          child: const EventGamesTable(tabId: 'tournaments-default'),
+          child: const EventGamesTable(tabId: 'fixture-board'),
         ),
       ),
     ),

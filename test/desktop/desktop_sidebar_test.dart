@@ -58,8 +58,13 @@ void main() {
     expect(debugDesktopSidebarPaneForLabel('Prepare'), DesktopPane.players);
   });
 
-  test('Rankings sidebar entry keeps the old player index route', () {
-    expect(debugDesktopSidebarPaneForLabel('Rankings'), DesktopPane.rankings);
+  test('discovery destinations are hidden only from the sidebar', () {
+    for (final name in ['Countrymen', 'Favorites', 'Collections', 'Rankings']) {
+      expect(debugDesktopSidebarLabelsInOrder(), isNot(contains(name)));
+      expect(debugDesktopSidebarPaneForLabel(name), isNull);
+      expect(desktopMainRoutes.map((route) => route.label), contains(name));
+      expect(debugDesktopSidebarShortcutForLabel(name, isMacOS: false), isNull);
+    }
   });
 
   test('player detail tabs leave Prepare available in the sidebar', () {
@@ -73,19 +78,11 @@ void main() {
   });
 
   test('primary sidebar route shortcuts follow the visual route order', () {
-    const labels = [
-      'Events',
-      'Library',
-      'Collections',
-      'Favorites',
-      'Prepare',
-      'Rankings',
-      'Calendar',
-      'Countrymen',
-      'Board',
-      'Play',
-    ];
-    expect(debugDesktopSidebarLabelsInOrder().take(labels.length), labels);
+    const labels = ['Home', 'Library', 'Prepare', 'Board', 'Play'];
+    expect(
+      debugDesktopSidebarLabelsInOrder().skip(1).take(labels.length),
+      labels,
+    );
     for (var index = 0; index < labels.length; index++) {
       final digit = (index + 1) % 10;
       expect(
@@ -99,29 +96,17 @@ void main() {
     }
   });
 
-  test('Collections sits under Library and takes the third shortcut', () {
+  test('Prepare follows Library after discovery shortcuts move to cards', () {
     final labels = debugDesktopSidebarLabelsInOrder();
-
-    expect(labels[labels.indexOf('Library') + 1], 'Collections');
+    expect(labels[labels.indexOf('Library') + 1], 'Prepare');
     expect(
-      debugDesktopSidebarPaneForLabel('Collections'),
-      DesktopPane.collections,
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Collections', isMacOS: false),
+      debugDesktopSidebarShortcutForLabel('Prepare', isMacOS: false),
       'Ctrl+3',
     );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Collections', isMacOS: true),
-      '⌘3',
-    );
-    expect(
-      debugDesktopSidebarShortcutForLabel('Favorites', isMacOS: false),
-      'Ctrl+4',
-    );
+    expect(debugDesktopSidebarShortcutForLabel('Prepare', isMacOS: true), '⌘3');
   });
 
-  test('an opened collection keeps Collections highlighted', () {
+  test('hidden collection tabs retain their existing pane mapping', () {
     expect(
       sidebarPaneForActiveTabKind(TabKind.collections),
       DesktopPane.collections,
@@ -138,12 +123,9 @@ void main() {
     expect(bindings.map((binding) => binding.pane), [
       DesktopPane.tournaments,
       DesktopPane.library,
-      DesktopPane.collections,
-      DesktopPane.favorites,
+
       DesktopPane.players,
-      DesktopPane.rankings,
-      DesktopPane.calendar,
-      DesktopPane.countrymen,
+
       DesktopPane.board,
       DesktopPane.play,
     ]);
@@ -153,14 +135,9 @@ void main() {
       LogicalKeyboardKey.digit3,
       LogicalKeyboardKey.digit4,
       LogicalKeyboardKey.digit5,
-      LogicalKeyboardKey.digit6,
-      LogicalKeyboardKey.digit7,
-      LogicalKeyboardKey.digit8,
-      LogicalKeyboardKey.digit9,
-      LogicalKeyboardKey.digit0,
     ]);
     for (var index = 0; index < bindings.length; index++) {
-      final label = debugDesktopSidebarLabelsInOrder()[index];
+      final label = debugDesktopSidebarLabelsInOrder()[index + 1];
       expect(bindings[index].pane, debugDesktopSidebarPaneForLabel(label));
     }
   });
@@ -168,16 +145,17 @@ void main() {
   test('Board Editor is launched from board context, not the sidebar', () {
     expect(debugDesktopSidebarPaneForLabel('Board Editor'), isNull);
   });
-  test('Search appears directly under Play', () {
+  test('Search appears first above Home', () {
     final labels = debugDesktopSidebarLabelsInOrder();
 
-    expect(labels[labels.indexOf('Play') + 1], 'Search');
+    expect(labels.first, 'Search');
+    expect(labels[1], 'Home');
   });
 
-  test('How to use and Feedback appear directly under Search', () {
+  test('How to use and Feedback remain below primary navigation', () {
     final labels = debugDesktopSidebarLabelsInOrder();
 
-    expect(labels[labels.indexOf('Search') + 1], 'How to use');
+    expect(labels[labels.indexOf('Play') + 1], 'How to use');
     expect(labels[labels.indexOf('How to use') + 1], 'Feedback');
     expect(labels, isNot(contains('Feedback / Report issue')));
     expect(labels, isNot(contains('Tournaments')));

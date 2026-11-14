@@ -182,10 +182,11 @@ class WebUrlSync {
       if (index is num) _index = index.toInt();
       final exists =
           page != null &&
-          container
-              .read(desktopTabsProvider)
-              .tabs
-              .any((tab) => tab.id == page.tabId);
+          (page.tabId == desktopHomeTabId ||
+              container
+                  .read(desktopTabsProvider)
+                  .tabs
+                  .any((tab) => tab.id == page.tabId));
       if (exists) {
         page.restore();
       } else {

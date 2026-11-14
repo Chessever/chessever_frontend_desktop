@@ -27,6 +27,14 @@ Future<bool> openDesktopWebLocation(
   ProviderContainer container,
 ) async {
   final segments = current.pathSegments;
+  if (segments.isNotEmpty && segments.first == 'calendar') {
+    container.read(desktopTabsProvider.notifier).showHome();
+    return true;
+  }
+  if (desktopWebListKind(current) == TabKind.howToUse) {
+    container.read(desktopHelpRequestedProvider.notifier).state = true;
+    return true;
+  }
   if (current.path == '/app/likes' || current.path == '/likes') {
     container.read(desktopTabsProvider.notifier).open(TabKind.likes);
     container.read(communityLikesSectionProvider.notifier).state =
