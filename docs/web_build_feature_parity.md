@@ -36,9 +36,14 @@ front of `chessever.com`, or `/webapp` after it.
   OAuth return, the release check and the `/_img`, `/_broadcast` and
   `/api/signin-preview` relays. Code that touches its own origin's paths goes
   through those helpers, never a root-absolute `/...`.
-- The two addresses are separate browser origins. Sign-in, settings, the
-  IndexedDB file system and local databases are not shared between them; the
-  account itself (Supabase) is the same.
+- The two addresses are separate browser origins. Sign-in is still the same
+  at both: the Supabase session lives in `chessever-app-session*` cookies on
+  `Domain=chessever.com` (`lib/web/shared_auth_session.dart`), each origin's
+  localStorage keeps a copy for when the cookie is missing, and an open page
+  picks up a sign-in, sign-out or token refresh from the other address within
+  two seconds or on focus. Settings, the IndexedDB file system and local
+  databases are not shared between them yet. The chessever.com website's own
+  sign-in is separate.
 - Supabase Auth must list `https://chessever.com/webapp/` (and `/webapp/**`)
   as an allowed redirect URL, or OAuth on the mount falls back to the site URL.
 - Deploying `chessever-app` updates both addresses. The chessever.com Worker

@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/repository/local_storage/supabase_safe_storage.dart';
+import 'package:chessever/web/shared_auth_cookie_jar.dart';
+import 'package:chessever/web/shared_auth_session.dart';
 
 /// Initializes Supabase for the desktop build.
 ///
@@ -35,6 +37,22 @@ class DesktopSupabaseInit {
     return 'sb-$host-auth-token';
   }
 
+  static Timer? _sharedSessionTimer;
+
+  /// Keeps this page's session in step with the other browser address.
+  static void _followSharedSession(SharedAuthSessionStorage storage) {
+    final sync = SharedAuthSessionSync(
+      storage: storage,
+      auth: Supabase.instance.client.auth,
+    );
+    _sharedSessionTimer?.cancel();
+    _sharedSessionTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(sync.check()),
+    );
+    onPageShown(() => unawaited(sync.check()));
+  }
+
   static Future<bool> initialize() async {
     if (isInitialized) return true;
 
@@ -50,8 +68,16 @@ class DesktopSupabaseInit {
     }
 
     final sessionKey = persistSessionKey(url);
+    final ownStorage = SafeSupabaseLocalStorage(persistSessionKey: sessionKey);
+    // In the browser, app.chessever.com and chessever.com/webapp share one
+    // sign-in through a chessever.com cookie (lib/web/shared_auth_session.dart).
+    final jar = sharedAuthCookieJar();
+    final sharedStorage =
+        jar == null
+            ? null
+            : SharedAuthSessionStorage(jar: jar, mirror: ownStorage);
     final authOptions = FlutterAuthClientOptions(
-      localStorage: SafeSupabaseLocalStorage(persistSessionKey: sessionKey),
+      localStorage: sharedStorage ?? ownStorage,
       pkceAsyncStorage: SafeGotrueAsyncStorage(),
     );
 
@@ -66,6 +92,9 @@ class DesktopSupabaseInit {
             () => throw TimeoutException('Supabase.initialize timed out'),
       );
       _initialized = isInitialized;
+      if (_initialized && sharedStorage != null) {
+        _followSharedSession(sharedStorage);
+      }
       return _initialized;
     } catch (e) {
       debugPrint('⚠️ Supabase init failed on desktop: $e');
