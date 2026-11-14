@@ -276,7 +276,8 @@ void main() {
   );
 
   test(
-    'initial Combined paint shows anchor while a sibling catalog is pending',
+    'Combined waits for every category schedule instead of painting one '
+    'category and regrouping when the next arrives',
     () async {
       final c = _container(pendingB: true);
       addTearDown(c.dispose);
@@ -284,8 +285,9 @@ void main() {
       addTearDown(sub.close);
       await _settleHall();
       final data = c.read(combinedTournamentDataProvider('tab'));
-      expect(data.grouped.isLoading, isFalse);
-      expect(data.grouped.allGames, hasLength(3));
+      expect(data.grouped.isLoading, isTrue);
+      expect(data.buckets, isEmpty);
+      expect(data.grouped.allGames, isEmpty);
     },
   );
 

@@ -17,7 +17,12 @@ class CombinedHallLoader<R, G> {
     this.publishDelay = const Duration(milliseconds: 200),
     this.refreshInterval = const Duration(seconds: 20),
   }) {
-    if (sourceIds.isNotEmpty) _enqueueSource(sourceIds.first, urgent: true);
+    // Every source's schedule at once: they are small, and Combined must
+    // paint already combined, as a category does. A source that arrives
+    // later would regroup every round card in front of the viewer.
+    for (final id in sourceIds) {
+      _enqueueSource(id, urgent: true);
+    }
     scheduleMicrotask(_pump);
   }
   final List<String> sourceIds;
@@ -39,7 +44,12 @@ class CombinedHallLoader<R, G> {
   bool _active = true, _disposed = false, _backgroundReady = false;
   bool _seeded = false;
   Timer? _backgroundTimer, _publishTimer, _refreshTimer;
-  bool get isLoading => !_seeded && catalogs.isEmpty && failures.isEmpty;
+  final Set<String> _previewed = {};
+
+  /// True until every source has its schedule (or failed to load it).
+  bool get isLoading => !sourceIds.every(
+    (id) => catalogs.containsKey(id) || failures.contains('source:$id'),
+  );
 
   void demand(Iterable<String> ids) {
     _demand = ids.toSet();
@@ -106,9 +116,13 @@ class CombinedHallLoader<R, G> {
         _queue.removeWhere((job) => removed.contains(job.round));
         catalogs[id] = List.unmodifiable(rounds);
         final ordered = orderRounds(rounds);
+        // Each source's newest round right away, so the top round card
+        // fills for every source together.
+        if (ordered.isNotEmpty && _previewed.add(id)) {
+          _enqueueRound(ordered.first, preview: true);
+        }
         if (!_seeded) {
           _seeded = true;
-          if (ordered.isNotEmpty) _enqueueRound(ordered.first, preview: true);
           _startBackground();
         }
         for (final round in ordered) {
@@ -189,6 +203,14 @@ class CombinedHallLoader<R, G> {
 
   void _pump() {
     if (!_active || _disposed) return;
+    // Schedules never wait for a lane: until they are all in, nothing shows.
+    for (final job in [
+      for (final job in _queue)
+        if (job.urgent && job.key.startsWith('source:')) job,
+    ]) {
+      _queue.remove(job);
+      _launch(job);
+    }
     while (_running < 3) {
       var index = _queue.indexWhere(
         (j) => j.urgent || _demand.contains(j.round),
@@ -199,46 +221,49 @@ class CombinedHallLoader<R, G> {
         if (index < 0) index = _queue.isEmpty ? -1 : 0;
       }
       if (index < 0) return;
-      final job = _queue.removeAt(index);
-      final urgent = job.urgent || _demand.contains(job.round);
-      _running++;
-      if (!urgent) _backgroundRunning++;
-      _runningKeys.add(job.key);
-      final epoch = _epoch;
-      () async {
-        var accepted = false;
-        try {
-          accepted = await job.run();
-          if (accepted) failures.remove(job.key);
-        } catch (_) {
-          if (_accept(epoch)) {
-            failures.add(job.key);
-            if (job.key.startsWith('source:')) _startBackground();
-            accepted = true;
-          }
-        } finally {
-          _running--;
-          if (!urgent) _backgroundRunning--;
-          _runningKeys.remove(job.key);
-          if (_accept(epoch) && accepted) {
-            if (!failures.contains(job.key)) job.after?.call();
-            if (urgent || _demand.contains(job.round)) {
-              _publishTimer?.cancel();
-              _publishTimer = null;
-              onChange();
-            } else {
-              _publishTimer ??= Timer(publishDelay, () {
-                _publishTimer = null;
-                if (_active && !_disposed) onChange();
-              });
-            }
-          } else if (!_disposed) {
-            _queue.add(job);
-          }
-          _pump();
-        }
-      }();
+      _launch(_queue.removeAt(index));
     }
+  }
+
+  void _launch(_HallJob job) {
+    final urgent = job.urgent || _demand.contains(job.round);
+    _running++;
+    if (!urgent) _backgroundRunning++;
+    _runningKeys.add(job.key);
+    final epoch = _epoch;
+    () async {
+      var accepted = false;
+      try {
+        accepted = await job.run();
+        if (accepted) failures.remove(job.key);
+      } catch (_) {
+        if (_accept(epoch)) {
+          failures.add(job.key);
+          if (job.key.startsWith('source:')) _startBackground();
+          accepted = true;
+        }
+      } finally {
+        _running--;
+        if (!urgent) _backgroundRunning--;
+        _runningKeys.remove(job.key);
+        if (_accept(epoch) && accepted) {
+          if (!failures.contains(job.key)) job.after?.call();
+          if (urgent || _demand.contains(job.round)) {
+            _publishTimer?.cancel();
+            _publishTimer = null;
+            onChange();
+          } else {
+            _publishTimer ??= Timer(publishDelay, () {
+              _publishTimer = null;
+              if (_active && !_disposed) onChange();
+            });
+          }
+        } else if (!_disposed) {
+          _queue.add(job);
+        }
+        _pump();
+      }
+    }();
   }
 
   void dispose() {

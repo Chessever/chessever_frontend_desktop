@@ -2684,6 +2684,12 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                               )
                               .state = !liveFirst
                       : null,
+              // The first row carries the rail's controls; the others keep
+              // their room so every date ends at the same point.
+              reservedControlSlots:
+                  isEventRail && groupIndex > 0
+                      ? 1 + (allMatchupIds.isNotEmpty ? 1 : 0)
+                      : 0,
               onToggle: () {
                 if (isEventRail) {
                   final nextExpandedRoundIds = <String>{...expandedRoundIds};
@@ -6768,6 +6774,7 @@ class _EventRoundHeaderItem extends StatelessWidget {
     this.onToggleAllMatchups,
     required this.liveFirst,
     this.onLiveFirstToggle,
+    this.reservedControlSlots = 0,
     required this.onToggle,
   });
 
@@ -6777,6 +6784,10 @@ class _EventRoundHeaderItem extends StatelessWidget {
   final VoidCallback? onToggleAllMatchups;
   final bool liveFirst;
   final VoidCallback? onLiveFirstToggle;
+
+  /// Empty control slots, so this row's date lines up with the first row's,
+  /// which carries the rail's controls.
+  final int reservedControlSlots;
   final VoidCallback onToggle;
 
   @override
@@ -6788,6 +6799,7 @@ class _EventRoundHeaderItem extends StatelessWidget {
       onToggleAllMatchups: onToggleAllMatchups,
       liveFirst: liveFirst,
       onLiveFirstToggle: onLiveFirstToggle,
+      reservedControlSlots: reservedControlSlots,
       onToggle: onToggle,
     );
   }
@@ -7088,6 +7100,7 @@ class _EventRoundHeader extends StatefulWidget {
     this.onToggleAllMatchups,
     required this.liveFirst,
     this.onLiveFirstToggle,
+    this.reservedControlSlots = 0,
     required this.onToggle,
   });
 
@@ -7097,6 +7110,10 @@ class _EventRoundHeader extends StatefulWidget {
   final VoidCallback? onToggleAllMatchups;
   final bool liveFirst;
   final VoidCallback? onLiveFirstToggle;
+
+  /// Empty control slots, so this row's date lines up with the first row's,
+  /// which carries the rail's controls.
+  final int reservedControlSlots;
   final VoidCallback onToggle;
 
   @override
@@ -7195,6 +7212,8 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                         color: kLightGreyColor,
                         fontSize: 9.5,
                         fontWeight: FontWeight.w500,
+                        // Every digit the same width, so the times line up.
+                        fontFeatures: [FontFeature.tabularFigures()],
                       ),
                     ),
                   ],
@@ -7297,6 +7316,8 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                       ),
                     ),
                   ],
+                  for (var i = 0; i < widget.reservedControlSlots; i++)
+                    const SizedBox(width: 6 + 28),
                   const SizedBox(width: 6),
                   SingleMotionBuilder(
                     value: widget.expanded ? 1.0 : 0.0,

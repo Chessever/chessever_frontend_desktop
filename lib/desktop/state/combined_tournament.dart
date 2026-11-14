@@ -134,10 +134,12 @@ final combinedTournamentCatalogProvider =
                 'Combined rounds could not be loaded. Retry to continue.',
               )
               : null;
+      // Nothing until every category's schedule is in: a schedule that
+      // arrives later would regroup every round card in front of the viewer.
       final sections = buildCombinedRoundSections(
         categories: categories.items,
-        gamesByTourId: raw,
-        roundsByTourId: hall.loader.catalogs,
+        gamesByTourId: loading ? const {} : raw,
+        roundsByTourId: loading ? const {} : hall.loader.catalogs,
         includeEmptyRounds: true,
         liveRoundIds: ref.watch(liveRoundsIdProvider).valueOrNull ?? const [],
       );

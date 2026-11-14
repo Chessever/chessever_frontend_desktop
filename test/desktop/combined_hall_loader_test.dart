@@ -116,6 +116,42 @@ void main() {
       loader.dispose();
     });
   });
+  test('every source schedule is requested at once and the hall loads until '
+      'all are in', () {
+    fakeAsync((clock) {
+      final pending = {
+        for (final id in ['a', 'b', 'c', 'd', 'e']) id: Completer<List<R>>(),
+      };
+      final asked = <String>[];
+      final pages = <String>[];
+      final loader = hall(
+        sources: pending.keys.toList(),
+        source: (id) {
+          asked.add(id);
+          return pending[id]!.future;
+        },
+        page: (round, _, __) async {
+          pages.add(round.id);
+          return [1];
+        },
+      );
+      clock.flushMicrotasks();
+      // Five sources, no lane limit, no background delay.
+      expect(asked, ['a', 'b', 'c', 'd', 'e']);
+      expect(loader.isLoading, isTrue);
+      for (final id in ['a', 'b', 'c', 'd']) {
+        pending[id]!.complete([(id: '${id}1', source: id)]);
+      }
+      clock.flushMicrotasks();
+      expect(loader.isLoading, isTrue, reason: 'e is still out');
+      pending['e']!.completeError(StateError('offline'));
+      clock.flushMicrotasks();
+      expect(loader.isLoading, isFalse, reason: 'a failed source ends it');
+      // Each source's newest round is fetched right away, not one source's.
+      expect(pages.toSet(), {'a1', 'b1', 'c1', 'd1'});
+      loader.dispose();
+    });
+  });
   test('metadata owns all round headers before their games load', () {
     fakeAsync((clock) {
       final loader = hall(source: (_) async => [r1, r2, r3]);
