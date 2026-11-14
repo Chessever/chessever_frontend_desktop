@@ -67,7 +67,6 @@ import 'package:chessever/screens/premium_games/providers/premium_games_provider
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
-import 'package:chessever/screens/tour_detail/games_tour/providers/round_ordering.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/live_game_position_resolver.dart';
 import 'package:chessever/screens/tour_detail/games_tour/widgets/game_card_wrapper/live_game_card_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -83,7 +82,7 @@ final _eventRoundExpandedProvider = StateProvider.autoDispose
     .family<bool, _EventRoundExpansionKey>((ref, key) => key.initiallyExpanded);
 
 /// Independently expanded Event-rail rounds, scoped per Board tab and event.
-/// `null` means first use, when only the top-most round opens by default; an
+/// `null` means first use, when the selected game's round opens by default; an
 /// empty set means the user explicitly collapsed every round.
 final _eventRailExpandedRoundsProvider = StateProvider.autoDispose
     .family<Set<String>?, String>((ref, scope) => null);
@@ -105,8 +104,12 @@ final _eventRailMatchupExpansionProvider = StateProvider.autoDispose.family<
 Set<String> _resolveExpandedEventRoundIds({
   required Set<String>? stored,
   required List<String> orderedRoundIds,
+  String? initialRoundId,
 }) {
   if (stored == null) {
+    if (initialRoundId != null && orderedRoundIds.contains(initialRoundId)) {
+      return <String>{initialRoundId};
+    }
     return orderedRoundIds.isEmpty
         ? const <String>{}
         : <String>{orderedRoundIds.first};
@@ -1907,9 +1910,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
               resolved.kind == _GameListKind.event,
         ),
     };
-    // Start with the top-most round only, then preserve each user-controlled
-    // expansion independently. The event window still bounds how many rows can
-    // be built and streamed at once for large broadcasts.
+    // Open the selected game's round without moving its header out of sequence,
+    // then preserve each user-controlled expansion. The event window bounds
+    // how many rows are built and streamed at once for large broadcasts.
     final expandedRoundScope =
         '$activeTabId:${eventRailProviderKey?.eventKey.tourId.trim() ?? eventTourId ?? resolved.title}';
     final matchupExpansionState =
@@ -1924,6 +1927,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
         isEventRail
             ? _resolveExpandedEventRoundIds(
               stored: storedExpandedRoundIds,
+              initialRoundId:
+                  roundGroups
+                      .where(
+                        (group) => group.games.any(
+                          (game) => game.id == activeSelectedGameId,
+                        ),
+                      )
+                      .firstOrNull
+                      ?.id,
               orderedRoundIds: <String>[
                 for (final group in roundGroups) group.id,
               ],
@@ -3484,7 +3496,7 @@ _navigationOrdering(
       preserveInputOrder: true,
     ),
     // Prev/next follows the same flattened order the user sees in the Event
-    // rail, including the catalog's started-then-upcoming partition.
+    // rail, including the catalog's newest-first sequence.
     _GameListKind.event => _buildRoundGroups(
       resolved.games,
       groupByRound: true,
@@ -3666,7 +3678,9 @@ String _eventTourIdForArgs(BoardTabGameArgs? args) {
     return '';
   }
 
-  if (hasCombinedTournamentSources(args.eventGames.map((game) => game.tourId))) {
+  if (hasCombinedTournamentSources(
+    args.eventGames.map((game) => game.tourId),
+  )) {
     return '';
   }
   final sourceTourId = args.sourceGame?.tourId.trim() ?? '';
@@ -4216,8 +4230,7 @@ List<_EventRoundGroup> _buildRoundGroups(
     ];
   }
 
-  // Mobile Games-tab parity (mobile `gamesTourGroupedProvider` +
-  // `sortRoundsForDisplay`):
+  // Keep the mobile Games tab's visibility rules (`gamesTourGroupedProvider`):
   //  - a round shows its board-visible games (resolved players + a played
   //    position);
   //  - upcoming rounds with published pairings surface those pairings;
@@ -4243,43 +4256,14 @@ List<_EventRoundGroup> _buildRoundGroups(
     pairingGroups.add(group);
   }
 
-  // Use the same ordering as the mobile Games tab for every visible round,
-  // including rounds whose pairings were published before play begins. This
-  // keeps the active/latest round first and prevents advance pairings from
-  // displacing it. The rail keeps the schedule gate the Games tab dropped: the
-  // next round moves up only inside the promotion window, once all started
-  // rounds are done, so it never folds away the round of the open game early.
-  // Rounds the catalog knows about but that have no rows yet still get a
-  // heading. Without this the rail only showed rounds whose games happened to
-  // be loaded, so rounds appeared (and the list re-ordered) as rows streamed in.
+  // Match the web games rail: one newest-first sequence, independent of
+  // live status, schedule time, and the order in which game pages arrive.
   final groups = [...playedGroups, ...pairingGroups];
-  final groupsById = <String, _EventRoundGroup>{
-    for (final group in groups) group.id: group,
-  };
-  final models = [
-    for (final group in groups)
-      GamesAppBarModel(
-        id: group.id,
-        name: group.title,
-        startsAt: group.startsAt,
-        roundStatus: group.status,
-      ),
-  ];
-  final sortedModels = sortRoundsForDisplay(
-    models,
-    resolveDate: (model) => model.startsAt,
-    promotionWindow: upcomingRoundPromotionWindow,
-    isRoundFullyPlayed: (model) {
-      final group = groupsById[model.id];
-      return group != null &&
-          group.games.isNotEmpty &&
-          group.games.every((game) => game.status.isFinished);
-    },
+  return _orderEventRailRounds(
+    groups,
+    name: (group) => group.title,
+    date: (group) => group.startsAt,
   );
-  return [
-    for (final model in sortedModels)
-      if (groupsById[model.id] case final group?) group,
-  ];
 }
 
 _EventRoundExpansionKey _eventRoundExpansionKey(
@@ -4337,22 +4321,40 @@ String _catalogRoundKey(EventRailRoundMetadata round) =>
         ? 'round-id:${round.id.trim()}'
         : 'round-name:${round.name.trim().toLowerCase()}';
 
-int? _catalogGenericRoundNumber(EventRailRoundMetadata round) {
+int? _eventRailRoundNumber(String name) {
   final match = RegExp(
-    r'^round\s+(\d+)$',
+    r'^\s*(?:(?:round|rd\.?|r)\s*)?(\d+)(?=$|[\s.|:()-])',
     caseSensitive: false,
-  ).firstMatch(round.name.trim());
+  ).firstMatch(name.trim());
   return match == null ? null : int.tryParse(match.group(1)!);
 }
 
-/// Builds one group per catalog round in an order independent from loaded rows.
-///
-/// Started rounds come first and follow the shared tournament ordering contract.
-/// For sequential `Round N` catalogs, the newest playable round proves every
-/// lower number has also started, even when those older rows are outside the
-/// retained metadata window. Higher empty rounds stay below that started block.
-/// Named stages require their own loaded rows. A round with no rows yet is
-/// marked [_EventRoundGroup.catalogOnly] and renders as a collapsed heading.
+/// Same ordering as the Next.js games rail's `orderRoundsForRail`:
+/// numbered rounds descend numerically; named stages descend by start time.
+/// Loading boards or advancing the schedule must not move headers.
+List<T> _orderEventRailRounds<T>(
+  List<T> rounds, {
+  required String Function(T) name,
+  required DateTime? Function(T) date,
+}) {
+  final numbered = rounds.every(
+    (round) => _eventRailRoundNumber(name(round)) != null,
+  );
+  return List<T>.of(rounds)..sort((a, b) {
+    if (numbered) {
+      return _eventRailRoundNumber(
+        name(b),
+      )!.compareTo(_eventRailRoundNumber(name(a))!);
+    }
+    final aAt = date(a);
+    final bAt = date(b);
+    return (bAt?.millisecondsSinceEpoch ?? 0).compareTo(
+      aAt?.millisecondsSinceEpoch ?? 0,
+    );
+  });
+}
+
+/// Builds catalog headings independently from loaded game rows.
 List<_EventRoundGroup> _catalogOrderedRoundGroups({
   required List<EventRailRoundMetadata> roundCatalog,
   required Map<String, List<TournamentGameSummary>> gamesByRoundKey,
@@ -4361,99 +4363,19 @@ List<_EventRoundGroup> _catalogOrderedRoundGroups({
   final effectiveNow = now ?? DateTime.now();
   final seen = <String>{};
   final catalogRounds = <EventRailRoundMetadata>[];
-  final confirmedStartedKeys = <String>{};
   for (final round in roundCatalog) {
     if (round.id.trim().isEmpty) continue;
-    final key = _catalogRoundKey(round);
-    if (!seen.add(key)) continue;
+    if (!seen.add(_catalogRoundKey(round))) continue;
     catalogRounds.add(round);
-    final startsAt = round.startsAt;
-    final hasGames = gamesByRoundKey[key]?.isNotEmpty == true;
-    if (hasGames && (startsAt == null || !startsAt.isAfter(effectiveNow))) {
-      confirmedStartedKeys.add(key);
-    }
   }
-
-  final allGeneric = catalogRounds.every(
-    (round) => _catalogGenericRoundNumber(round) != null,
+  final orderedRounds = _orderEventRailRounds(
+    catalogRounds,
+    name: (round) => round.name,
+    date: (round) => round.startsAt ?? round.createdAt,
   );
-  int? newestPlayableRoundNumber;
-  if (allGeneric) {
-    for (final round in catalogRounds) {
-      if (!confirmedStartedKeys.contains(_catalogRoundKey(round))) continue;
-      final number = _catalogGenericRoundNumber(round)!;
-      if (newestPlayableRoundNumber == null ||
-          number > newestPlayableRoundNumber) {
-        newestPlayableRoundNumber = number;
-      }
-    }
-  }
-
-  final started = <EventRailRoundMetadata>[];
-  final remaining = <EventRailRoundMetadata>[];
-  for (final round in catalogRounds) {
-    final startedSequentialRound =
-        newestPlayableRoundNumber != null &&
-        _catalogGenericRoundNumber(round)! <= newestPlayableRoundNumber;
-    if (startedSequentialRound ||
-        confirmedStartedKeys.contains(_catalogRoundKey(round))) {
-      started.add(round);
-    } else {
-      remaining.add(round);
-    }
-  }
-
-  int byStart(EventRailRoundMetadata a, EventRailRoundMetadata b, bool asc) {
-    final aAt = a.startsAt ?? a.createdAt;
-    final bAt = b.startsAt ?? b.createdAt;
-    int result;
-    if (aAt == null && bAt == null) {
-      result = a.name.compareTo(b.name);
-    } else if (aAt == null) {
-      result = 1;
-    } else if (bAt == null) {
-      result = -1;
-    } else {
-      result = aAt.compareTo(bAt);
-      if (result == 0) result = a.name.compareTo(b.name);
-    }
-    return asc ? result : -result;
-  }
-
-  final startedById = <String, EventRailRoundMetadata>{
-    for (final round in started) round.id: round,
-  };
-  final orderedStarted = sortRoundsForDisplay(
-    <GamesAppBarModel>[
-      for (final round in started)
-        GamesAppBarModel(
-          id: round.id,
-          name: round.name,
-          startsAt: round.startsAt ?? round.createdAt,
-          roundStatus: RoundStatus.completed,
-        ),
-    ],
-    resolveDate: (round) => round.startsAt,
-    // Catalog ordering changes only when schedule time advances. It must not
-    // pre-promote a future round based on partially loaded game rows.
-    isRoundFullyPlayed: (_) => false,
-    now: effectiveNow,
-  ).map((model) => startedById[model.id]!).toList(growable: false);
-  if (newestPlayableRoundNumber == null) {
-    remaining.sort((a, b) => byStart(a, b, true));
-  } else {
-    remaining.sort(
-      (a, b) => _catalogGenericRoundNumber(
-        b,
-      )!.compareTo(_catalogGenericRoundNumber(a)!),
-    );
-  }
 
   final ordered = <_EventRoundGroup>[];
-  for (final round in <EventRailRoundMetadata>[
-    ...orderedStarted,
-    ...remaining,
-  ]) {
+  for (final round in orderedRounds) {
     final key = _catalogRoundKey(round);
     final rows = gamesByRoundKey[key] ?? const <TournamentGameSummary>[];
     if (rows.isEmpty) {
