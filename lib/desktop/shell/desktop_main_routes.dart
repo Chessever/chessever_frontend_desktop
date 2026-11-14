@@ -12,6 +12,7 @@ class DesktopMainRoute {
     required this.paletteTitle,
     required this.icon,
     this.paletteSubtitle,
+    this.showInSidebar = true,
   });
 
   final DesktopPane pane;
@@ -19,15 +20,18 @@ class DesktopMainRoute {
   final String paletteTitle;
   final String? paletteSubtitle;
   final IconData icon;
+
+  /// Hidden discovery routes remain available to the command palette and URLs.
+  final bool showInSidebar;
 }
 
 const List<DesktopMainRoute> desktopMainRoutes = [
   DesktopMainRoute(
     pane: DesktopPane.tournaments,
-    label: 'Events',
-    paletteTitle: 'Open Events',
+    label: 'Home',
+    paletteTitle: 'Open Home',
     paletteSubtitle: 'Live broadcasts and recent events',
-    icon: Icons.emoji_events_outlined,
+    icon: Icons.home_outlined,
   ),
   DesktopMainRoute(
     pane: DesktopPane.library,
@@ -38,6 +42,7 @@ const List<DesktopMainRoute> desktopMainRoutes = [
   ),
   DesktopMainRoute(
     pane: DesktopPane.collections,
+    showInSidebar: false,
     label: 'Collections',
     paletteTitle: 'Open Collections',
     paletteSubtitle: 'Annotated game collections by their authors',
@@ -45,6 +50,7 @@ const List<DesktopMainRoute> desktopMainRoutes = [
   ),
   DesktopMainRoute(
     pane: DesktopPane.favorites,
+    showInSidebar: false,
     label: 'Favorites',
     paletteTitle: 'Open Favorites',
     icon: Icons.favorite_outline,
@@ -58,19 +64,16 @@ const List<DesktopMainRoute> desktopMainRoutes = [
   ),
   DesktopMainRoute(
     pane: DesktopPane.rankings,
+    showInSidebar: false,
     label: 'Rankings',
     paletteTitle: 'Open Rankings',
     paletteSubtitle: 'Search the ChessEver player index',
     icon: Icons.groups_outlined,
   ),
-  DesktopMainRoute(
-    pane: DesktopPane.calendar,
-    label: 'Calendar',
-    paletteTitle: 'Open Calendar',
-    icon: Icons.calendar_today_outlined,
-  ),
+
   DesktopMainRoute(
     pane: DesktopPane.countrymen,
+    showInSidebar: false,
     label: 'Countrymen',
     paletteTitle: 'Open Countrymen',
     icon: Icons.public_outlined,
@@ -115,7 +118,7 @@ const List<LogicalKeyboardKey> desktopMainRouteShortcutKeys = [
 /// auxiliary action below the primary routes and has no number shortcut.
 List<DesktopMainRoute> get _routesInShortcutOrder => [
   for (final route in desktopMainRoutes)
-    if (route.pane != DesktopPane.inbox) route,
+    if (route.showInSidebar && route.pane != DesktopPane.inbox) route,
 ];
 
 String desktopPrimaryShortcutLabel(String key, {bool? isMacOS}) {

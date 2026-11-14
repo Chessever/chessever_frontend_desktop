@@ -17,7 +17,7 @@ import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/panes/desktop_likes_pane.dart';
 import 'package:chessever/desktop/panes/desktop_whats_new_home_pane.dart';
-import 'package:chessever/desktop/panes/calendar_pane.dart';
+
 import 'package:chessever/desktop/panes/opening_explorer_pane.dart';
 import 'package:chessever/desktop/panes/countrymen_pane.dart';
 import 'package:chessever/desktop/panes/favorites_pane.dart';
@@ -38,7 +38,8 @@ import 'package:chessever/desktop/panes/team_score_card_pane.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/panes/tournaments_pane.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
-import 'package:chessever/desktop/services/desktop_how_to_use_onboarding.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_dialog_button.dart';
 import 'package:chessever/desktop/services/local_chess_drop_zone.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
     show LocalChessScanProgress, localChessDatabaseDisplayNameForPaths;
@@ -78,7 +79,7 @@ import 'package:chessever/desktop/state/player_workspace.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
-import 'package:chessever/providers/app_version_provider.dart';
+
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
@@ -110,10 +111,15 @@ class DesktopShell extends HookConsumerWidget {
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
     final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);
-    final activeSidebarPane = sidebarPaneForActiveTab(
+    final derivedSidebarPane = sidebarPaneForActiveTab(
       tabsState.active,
       boardArgsByTabId: boardArgsByTabId,
     );
+    final activeSidebarPane =
+        !tabsState.isHomeVisible &&
+                derivedSidebarPane == DesktopPane.tournaments
+            ? null
+            : derivedSidebarPane;
     final shellDropZoneEnabled =
         activeSidebarPane != DesktopPane.library &&
         activeSidebarPane != DesktopPane.boardEditor;
@@ -148,8 +154,6 @@ class DesktopShell extends HookConsumerWidget {
     final tabPageStorageBucket = useMemoized(PageStorageBucket.new);
     final feedbackScreenshotKey = useMemoized(GlobalKey.new);
     final closeConfirmationOpen = useRef<bool>(false);
-    final howToUseDismissed = useRef<bool>(false);
-    final appVersion = ref.watch(appVersionProvider).valueOrNull;
 
     useEffect(() {
       var disposed = false;
@@ -162,26 +166,28 @@ class DesktopShell extends HookConsumerWidget {
       return () => disposed = true;
     }, const []);
 
+    final helpRequested = ref.watch(desktopHelpRequestedProvider);
+    final helpDialogOpen = useRef(false);
     useEffect(() {
-      final currentVersion = appVersion?.trim();
-      if (currentVersion == null || currentVersion.isEmpty) {
-        return null;
+      if (helpRequested && !helpDialogOpen.value) {
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (!context.mounted || helpDialogOpen.value) return;
+          helpDialogOpen.value = true;
+          try {
+            await showDesktopHowToUseDialog(
+              context,
+              feedbackScreenshotKey: feedbackScreenshotKey,
+            );
+          } finally {
+            helpDialogOpen.value = false;
+            if (context.mounted) {
+              ref.read(desktopHelpRequestedProvider.notifier).state = false;
+            }
+          }
+        });
       }
-      var active = true;
-      unawaited(
-        maybeAutoOpenDesktopHowToUse(
-          tabs: tabsNotifier,
-          currentVersion: currentVersion,
-          loadDismissedVersion:
-              () => AppDatabase.instance.getString(
-                desktopHowToUseDismissedVersionKey,
-              ),
-          isStillActive: () => active,
-          wasDismissed: () => howToUseDismissed.value,
-        ),
-      );
-      return () => active = false;
-    }, [appVersion]);
+      return null;
+    }, [helpRequested]);
 
     void setSidebarExpandedPreference(bool expanded) {
       sidebarPreferenceTouched.value = true;
@@ -196,26 +202,7 @@ class DesktopShell extends HookConsumerWidget {
     // args don't accumulate forever.
     ref.listen<DesktopTabsState>(desktopTabsProvider, (prev, next) {
       if (prev == null) return;
-      if (didCloseDesktopHowToUse(prev, next)) {
-        howToUseDismissed.value = true;
-        unawaited(() async {
-          try {
-            final currentVersion = await ref.read(appVersionProvider.future);
-            await persistDesktopHowToUseDismissalIfClosed(
-              previous: prev,
-              next: next,
-              currentVersion: currentVersion,
-              persistDismissedVersion:
-                  (version) => AppDatabase.instance.setString(
-                    desktopHowToUseDismissedVersionKey,
-                    version,
-                  ),
-            );
-          } catch (_) {
-            // Onboarding persistence must never interrupt normal tab closing.
-          }
-        }());
-      }
+
       final liveIds = <String>{for (final t in next.tabs) t.id};
       for (final t in prev.tabs) {
         if (!liveIds.contains(t.id)) {
@@ -391,7 +378,9 @@ class DesktopShell extends HookConsumerWidget {
           // manual desktop-width preference; compact widths still collapse after
           // navigation because the rail behaves like a temporary drawer.
           void handleSidebarSelect(DesktopPane pane, {required bool inNewTab}) {
-            if (!inNewTab && pane == activeSidebarPane) {
+            if (!inNewTab &&
+                pane == activeSidebarPane &&
+                pane != DesktopPane.tournaments) {
               toggleSidebar();
               return;
             }
@@ -813,7 +802,13 @@ class DesktopShell extends HookConsumerWidget {
                                 onToggleExpanded: toggleSidebar,
                                 onSearch: () => unawaited(openCommandPalette()),
                                 onHowToUse:
-                                    () => tabsNotifier.open(TabKind.howToUse),
+                                    () =>
+                                        ref
+                                            .read(
+                                              desktopHelpRequestedProvider
+                                                  .notifier,
+                                            )
+                                            .state = true,
                                 onSelect: handleSidebarSelect,
                                 feedbackScreenshotKey: feedbackScreenshotKey,
                               ),
@@ -842,7 +837,7 @@ class DesktopShell extends HookConsumerWidget {
                                       Expanded(
                                         child: PageStorage(
                                           bucket: tabPageStorageBucket,
-                                          child: _DesktopTabStack(
+                                          child: DesktopWorkspaceStack(
                                             tabs: tabsState.tabs,
                                             activeId: tabsState.activeId,
                                             feedbackScreenshotKey:
@@ -996,50 +991,101 @@ String _localProgressTitle(String? phase) {
   return 'Loading PGN...';
 }
 
-class _DesktopTabStack extends StatelessWidget {
-  const _DesktopTabStack({
+/// Home is a retained sibling of real tabs, never an item in their strip.
+class DesktopWorkspaceStack extends StatelessWidget {
+  const DesktopWorkspaceStack({
+    super.key,
     required this.tabs,
     required this.activeId,
     required this.feedbackScreenshotKey,
+    this.contentBuilder,
   });
-
   final List<DesktopTab> tabs;
   final String? activeId;
   final GlobalKey feedbackScreenshotKey;
+  final Widget Function(DesktopTab tab)? contentBuilder;
 
   @override
   Widget build(BuildContext context) {
-    if (tabs.isEmpty || activeId == null) {
-      return DesktopWhatsNewHomePane(
-        feedbackScreenshotKey: feedbackScreenshotKey,
-      );
-    }
-
     final activeIndex = tabs.indexWhere((tab) => tab.id == activeId);
-    if (activeIndex < 0) {
-      return const PlaceholderPane(
-        title: 'No tab',
-        description: 'Open a tab from the sidebar to start.',
-      );
-    }
-
+    Widget content(DesktopTab tab) =>
+        contentBuilder?.call(tab) ??
+        resolveDesktopTabContent(
+          tab,
+          feedbackScreenshotKey: feedbackScreenshotKey,
+        );
+    const home = DesktopTab(
+      id: desktopHomeTabId,
+      kind: TabKind.tournaments,
+      title: 'Home',
+      closable: false,
+    );
+    final pages = [home, ...tabs];
     return PersistentIndexedStack(
-      index: activeIndex,
+      index: activeIndex < 0 ? 0 : activeIndex + 1,
       sizing: StackFit.expand,
       children: [
-        for (final tab in tabs)
+        for (final tab in pages)
           KeyedSubtree(
             key: ValueKey<String>('desktop-tab:${tab.id}:${tab.kind.name}'),
-            child: PaneKeyboardScroll(
-              child: resolveDesktopTabContent(
-                tab,
-                feedbackScreenshotKey: feedbackScreenshotKey,
-              ),
-            ),
+            child: PaneKeyboardScroll(child: content(tab)),
           ),
       ],
     );
   }
+}
+
+Future<void> showDesktopHowToUseDialog(
+  BuildContext context, {
+  required GlobalKey feedbackScreenshotKey,
+}) {
+  final size = MediaQuery.sizeOf(context);
+  return showDesktopDialog<void>(
+    context,
+    builder:
+        (dialogContext) => Center(
+          child: Container(
+            width: size.width > 1000 ? 1000 : size.width - 32,
+            height: size.height * 0.88,
+            decoration: BoxDecoration(
+              color: kBlack2Color,
+              border: Border.all(color: kDividerColor),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'How to use',
+                          style: TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      DesktopDialogButton(
+                        label: 'Close',
+                        onPress: () => Navigator.of(dialogContext).pop(),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: DesktopWhatsNewHomePane(
+                    feedbackScreenshotKey: feedbackScreenshotKey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+  );
 }
 
 Widget resolveDesktopTabContent(
@@ -1047,10 +1093,7 @@ Widget resolveDesktopTabContent(
   GlobalKey? feedbackScreenshotKey,
 }) {
   if (tab == null) {
-    return const PlaceholderPane(
-      title: 'No tab',
-      description: 'Open a tab from the sidebar to start.',
-    );
+    return const TournamentsPane(tabId: desktopHomeTabId);
   }
   switch (tab.kind) {
     case TabKind.inbox:
@@ -1090,15 +1133,14 @@ Widget resolveDesktopTabContent(
     case TabKind.rankings:
       return const RankingsPane();
     case TabKind.calendar:
-      return const CalendarPane();
+      // Compatibility-only route: Calendar is disabled in the workspace.
+      return const TournamentsPane(tabId: desktopHomeTabId);
     case TabKind.countrymen:
       return const CountrymenPane();
     case TabKind.settings:
       return const SettingsPane();
     case TabKind.howToUse:
-      return DesktopWhatsNewHomePane(
-        feedbackScreenshotKey: feedbackScreenshotKey ?? GlobalKey(),
-      );
+      return const TournamentsPane(tabId: desktopHomeTabId);
     case TabKind.openingExplorer:
       // Desktop-native master/detail layout — board on the left,
       // move-stats table in the middle, persistent filter panel on the

@@ -84,8 +84,8 @@ void main() {
         expect(tabs.tabs.map((tab) => tab.kind), [
           TabKind.players,
           TabKind.library,
-          TabKind.tournaments,
         ]);
+        expect(tabs.isHomeVisible, isTrue);
       },
     );
   });

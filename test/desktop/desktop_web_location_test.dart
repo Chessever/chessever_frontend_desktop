@@ -1,7 +1,7 @@
+import 'package:chessever/desktop/state/desktop_calendar_location.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/state/desktop_web_board_position.dart';
-import 'package:chessever/desktop/state/desktop_calendar_location.dart';
-import 'package:chessever/repository/supabase/calendar_event/calendar_event.dart';
+
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -121,7 +121,7 @@ void main() {
       '/databases',
       '/favorites',
       '/rankings',
-      '/learn',
+
       '/account',
       '/play',
       '/broadcast/settings',
@@ -258,29 +258,32 @@ void main() {
     );
   });
 
+  test('disabled Calendar URLs return to Home without creating tabs', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final tabs = container.read(desktopTabsProvider.notifier);
+    final board = tabs.open(TabKind.board);
+    for (final path in [
+      '/calendar?mode=fide&month=2026-10',
+      '/calendar?mode=major&month=2026-11',
+    ]) {
+      expect(await openDesktopWebLocation(Uri.parse(path), container), isTrue);
+      expect(tabs.state.isHomeVisible, isTrue);
+      expect(tabs.state.tabs.map((tab) => tab.id), [board]);
+    }
+  });
+
   test(
-    'calendar mode and month survive direct navigation and history restoration',
+    'manual help URL requests an overlay while preserving the active tab',
     () async {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      await openDesktopWebLocation(
-        Uri.parse('/calendar?mode=fide&month=2026-10'),
-        container,
-      );
-      expect(
-        container.read(desktopWebLocationProvider),
-        '/calendar?mode=fide&month=2026-10',
-      );
-      final october = captureDesktopWebPage(container);
-      await openDesktopWebLocation(
-        Uri.parse('/calendar?mode=major&month=2026-11'),
-        container,
-      );
-      october();
-      expect(
-        container.read(desktopWebLocationProvider),
-        '/calendar?mode=fide&month=2026-10',
-      );
+      final tabs = container.read(desktopTabsProvider.notifier);
+      final board = tabs.open(TabKind.board);
+      await openDesktopWebLocation(Uri.parse('/learn'), container);
+      expect(container.read(desktopHelpRequestedProvider), isTrue);
+      expect(tabs.state.activeId, board);
+      expect(tabs.state.tabs, hasLength(1));
     },
   );
   test('public player section suffixes keep the player identity', () {
@@ -369,35 +372,27 @@ void main() {
     );
   });
 
-  test(
-    'calendar details have the same FIDE path as Next.js and restore from history',
-    () async {
-      final event = CalendarEvent(
-        name: 'European Team Championship',
-        fideEventId: '54321',
-        createdAt: DateTime(2026),
-      );
-      final container = ProviderContainer(
-        overrides: [
-          desktopCalendarWebEventLoaderProvider.overrideWithValue(
-            (_) async => event,
-          ),
-        ],
-      );
-      addTearDown(container.dispose);
-      const path = '/calendar/european-team-championship/fide-54321';
-      expect(await openDesktopWebLocation(Uri.parse(path), container), true);
-      expect(container.read(desktopWebLocationProvider), path);
-      final detail = captureDesktopWebPage(container);
-      await openDesktopWebLocation(Uri.parse('/calendar'), container);
-      expect(
-        container.read(desktopWebLocationProvider),
-        startsWith('/calendar?'),
-      );
-      detail();
-      expect(container.read(desktopWebLocationProvider), path);
-    },
-  );
+  test('disabled Calendar detail links do not call the event loader', () async {
+    var calls = 0;
+    final container = ProviderContainer(
+      overrides: [
+        desktopCalendarWebEventLoaderProvider.overrideWithValue((_) async {
+          calls++;
+          throw StateError('disabled Calendar must not fetch');
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    const path = '/calendar/european-team-championship/fide-54321';
+    expect(await openDesktopWebLocation(Uri.parse(path), container), isTrue);
+    expect(container.read(desktopTabsProvider).tabs, isEmpty);
+    expect(container.read(desktopTabsProvider).isHomeVisible, isTrue);
+    expect(
+      container.read(desktopWebLocationProvider),
+      startsWith('/broadcast'),
+    );
+    expect(calls, 0);
+  });
 
   test('the Likes About surface has its own public URL', () async {
     final container = ProviderContainer();

@@ -209,7 +209,10 @@ void main() {
             final fitsWithoutScrolling =
                 bodyHeight >=
                 DesktopSidebarDensity.tightest.bodyExtent(
-                  navRows: navRows,
+                  navRows:
+                      debugDesktopSidebarLabelsInOrder()
+                          .where((label) => label != 'Settings')
+                          .length,
                   showPremium: !pro,
                   showDownload: web,
                 );
@@ -239,7 +242,7 @@ void main() {
   testWidgets('a pane selected off-screen scrolls into view', (tester) async {
     await _pumpSidebar(
       tester,
-      height: 560,
+      height: 400,
       expanded: true,
       pro: false,
       onSelect: (_) {},
@@ -254,7 +257,7 @@ void main() {
 
     await _pumpSidebar(
       tester,
-      height: 560,
+      height: 400,
       expanded: true,
       pro: false,
       current: DesktopPane.inbox,

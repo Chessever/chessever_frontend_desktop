@@ -1,3 +1,4 @@
+import 'support/real_tab_fixture.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -1023,7 +1024,7 @@ void main() {
     final streamRepository = _TestGameStreamRepository(railUpdates.stream);
     addTearDown(activeUpdates.close);
     addTearDown(railUpdates.close);
-    final tabs = DesktopTabsNotifier();
+    final tabs = realTabFixture();
     final moveTime = DateTime.utc(2026, 7, 14, 18);
     final sourceGame = _forYouSourceGame(moveTime);
     final games = <TournamentGameSummary>[
@@ -1054,7 +1055,7 @@ void main() {
           currentBroadcastGames,
           desktopTabsProvider.overrideWith((ref) => tabs),
           boardTabGameArgsByTabIdProvider.overrideWith(
-            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
           ),
           boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
           engineSettingsProviderNew.overrideWith(
@@ -1072,7 +1073,7 @@ void main() {
           ),
         ],
         child: const MaterialApp(
-          home: Scaffold(body: BoardPane(tabId: 'tournaments-default')),
+          home: Scaffold(body: BoardPane(tabId: 'fixture-board')),
         ),
       ),
     );
@@ -1081,13 +1082,13 @@ void main() {
     expect(railListenCount, 1);
 
     tabs.open(TabKind.library, title: 'Library', reuseExisting: false);
-    expect(tabs.state.activeId, isNot('tournaments-default'));
+    expect(tabs.state.activeId, isNot('fixture-board'));
     for (var attempt = 0; attempt < 10 && railCancelCount == 0; attempt++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(railCancelCount, 1);
 
-    tabs.activate('tournaments-default');
+    tabs.activate('fixture-board');
     for (var attempt = 0; attempt < 10 && railListenCount < 2; attempt++) {
       await tester.pump(const Duration(milliseconds: 16));
     }

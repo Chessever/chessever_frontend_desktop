@@ -425,10 +425,10 @@ class _SidebarBodyState extends ConsumerState<_SidebarBody> {
 /// Nav rows top to bottom. Settings is not here: it lives in the pinned
 /// footer.
 List<_NavEntry> _navEntriesInOrder({required bool botvinnikVisible}) => [
+  _searchEntry,
   for (final entry in _primaryNav) ...[
     entry,
     if (entry.pane == DesktopPane.play) ...[
-      _searchEntry,
       _howToUseEntry,
       _feedbackEntry,
       _inboxEntry,
@@ -940,7 +940,7 @@ const _NavEntry _searchEntry = _NavEntry(
 );
 
 final List<_NavEntry> _primaryNav = desktopMainRoutes
-    .where((route) => route.pane != DesktopPane.inbox)
+    .where((route) => route.showInSidebar && route.pane != DesktopPane.inbox)
     .map(_NavEntry.fromMainRoute)
     .toList(growable: false);
 

@@ -101,6 +101,29 @@ void main() {
     },
   );
 
+  test('Home and disabled legacy destinations use the Home preview', () {
+    for (final kind in [
+      TabKind.tournaments,
+      TabKind.calendar,
+      TabKind.howToUse,
+    ]) {
+      final location = WebSignInPreviewLocation.fromKind(kind);
+      expect(location.title, 'Home', reason: kind.name);
+      expect(location.kind, 'events', reason: kind.name);
+    }
+    for (final path in [
+      '/',
+      '/broadcast',
+      '/calendar',
+      '/calendar/2026-11/example',
+      '/how-to-use',
+    ]) {
+      final location = WebSignInPreviewLocation.fromUri(Uri.parse(path));
+      expect(location.title, 'Home', reason: path);
+      expect(location.kind, 'events', reason: path);
+    }
+  });
+
   test(
     'every shell kind and canonical entry route has a preview presentation',
     () {

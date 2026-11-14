@@ -11,47 +11,44 @@ import 'package:chessever/screens/tour_detail/provider/tour_detail_mode_provider
 import 'package:chessever/widgets/persistent_tab_state.dart';
 
 void main() {
-  testWidgets(
-    'plain tournament activation navigates the current tab to games',
-    (tester) async {
-      late DesktopTabsState tabsState;
-      late Map<String, GroupEventCardModel> tournamentByTab;
-      late TournamentDetailSegment selectedSegment;
+  testWidgets('plain activation from tabless Home opens an event tab', (
+    tester,
+  ) async {
+    late DesktopTabsState tabsState;
+    late Map<String, GroupEventCardModel> tournamentByTab;
+    late TournamentDetailSegment selectedSegment;
 
-      await tester.pumpWidget(
-        ProviderScope(
-          child: MaterialApp(
-            home: Consumer(
-              builder: (context, ref, _) {
-                return TextButton(
-                  onPressed: () {
-                    setActiveTournament(ref, _event());
-                    tabsState = ref.read(desktopTabsProvider);
-                    tournamentByTab = ref.read(tournamentByTabIdProvider);
-                    selectedSegment = ref.read(
-                      tournamentDetailSegmentByTabIdProvider(
-                        tabsState.activeId!,
-                      ),
-                    );
-                  },
-                  child: const Text('run'),
-                );
-              },
-            ),
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Consumer(
+            builder: (context, ref, _) {
+              return TextButton(
+                onPressed: () {
+                  setActiveTournament(ref, _event());
+                  tabsState = ref.read(desktopTabsProvider);
+                  tournamentByTab = ref.read(tournamentByTabIdProvider);
+                  selectedSegment = ref.read(
+                    tournamentDetailSegmentByTabIdProvider(tabsState.activeId!),
+                  );
+                },
+                child: const Text('run'),
+              );
+            },
           ),
         ),
-      );
+      ),
+    );
 
-      await tester.tap(find.text('run'));
-      await tester.pump();
+    await tester.tap(find.text('run'));
+    await tester.pump();
 
-      expect(tabsState.activeId, 'tournaments-default');
-      expect(tabsState.active?.kind, TabKind.tournamentDetail);
-      expect(tabsState.active?.title, '12th Serbian Cup');
-      expect(tournamentByTab['tournaments-default']?.id, 'event-1');
-      expect(selectedSegment, TournamentDetailSegment.games);
-    },
-  );
+    expect(tabsState.activeId, isNot(desktopHomeTabId));
+    expect(tabsState.active?.kind, TabKind.tournamentDetail);
+    expect(tabsState.active?.title, '12th Serbian Cup');
+    expect(tournamentByTab[tabsState.activeId]?.id, 'event-1');
+    expect(selectedSegment, TournamentDetailSegment.games);
+  });
 
   testWidgets(
     'event activation ignores stale tournament metadata on board tabs',
@@ -103,12 +100,14 @@ void main() {
       await tester.tap(find.text('run'));
       await tester.pump();
 
-      expect(boardTabId, 'tournaments-default');
+      expect(boardTabId, isNot(desktopHomeTabId));
       expect(overviewTabId, isNot(boardTabId));
-      expect(tabsState.activeId, overviewTabId);
+      expect(overviewTabId, desktopHomeTabId);
+      expect(tabsState.activeId, isNot(boardTabId));
+      expect(tabsState.activeId, isNot(desktopHomeTabId));
       expect(tabsState.active?.kind, TabKind.tournamentDetail);
       expect(tournamentByTab[boardTabId]?.id, 'event-1');
-      expect(tournamentByTab[overviewTabId]?.id, 'event-1');
+      expect(tournamentByTab[tabsState.activeId]?.id, 'event-1');
       expect(
         tabsState.tabs.firstWhere((tab) => tab.id == boardTabId).kind,
         TabKind.board,
@@ -144,13 +143,13 @@ void main() {
     await tester.tap(find.text('run'));
     await tester.pump();
 
-    expect(tabsState.tabs, hasLength(2));
+    expect(tabsState.tabs, hasLength(1));
     expect(tabsState.activeId, isNot('tournaments-default'));
     expect(tabsState.active?.kind, TabKind.tournamentDetail);
     expect(tournamentByTab[tabsState.activeId]?.id, 'event-1');
     expect(
-      tabsState.tabs.firstWhere((tab) => tab.id == 'tournaments-default').kind,
-      TabKind.tournaments,
+      tabsState.tabs.where((tab) => tab.kind == TabKind.tournaments),
+      isEmpty,
     );
   });
 

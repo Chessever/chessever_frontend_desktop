@@ -1,3 +1,4 @@
+import 'package:chessever/utils/responsive_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -130,7 +131,12 @@ void main() {
             textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Geist'),
           ),
           builder: (_, child) => FTheme(data: FThemes.zinc.dark, child: child!),
-          home: Scaffold(backgroundColor: kBackgroundColor, body: child),
+          home: Builder(
+            builder: (context) {
+              ResponsiveHelper.init(context);
+              return Scaffold(backgroundColor: kBackgroundColor, body: child);
+            },
+          ),
         ),
       );
 

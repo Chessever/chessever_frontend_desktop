@@ -1,3 +1,5 @@
+import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'support/real_tab_fixture.dart';
 import 'support/current_broadcast_games.dart';
 
 import 'package:chessever/widgets/game_filter/game_filter_model.dart';
@@ -133,8 +135,9 @@ void main() {
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
+          desktopTabsProvider.overrideWith((ref) => realTabFixture()),
           boardTabGameArgsByTabIdProvider.overrideWith(
-            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
           ),
           gameUpdatesBatchStreamProvider.overrideWith(
             (ref, key) => const Stream<Map<String, LiveGameUpdate>>.empty(),
@@ -144,7 +147,7 @@ void main() {
           home: SizedBox(
             width: EventGamesTable.width,
             height: 700,
-            child: EventGamesTable(tabId: 'tournaments-default'),
+            child: EventGamesTable(tabId: 'fixture-board'),
           ),
         ),
       ),
@@ -230,8 +233,9 @@ void main() {
           // Stepping through a smart collection's games is Premium content.
           ...desktopPremiumTestOverrides,
           gameRepositoryProvider.overrideWithValue(repository),
+          desktopTabsProvider.overrideWith((ref) => realTabFixture()),
           boardTabGameArgsByTabIdProvider.overrideWith(
-            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
           ),
         ],
         child: MaterialApp(
@@ -264,12 +268,12 @@ void main() {
     );
     await tester.pump();
     var opened =
-        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+        container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
     expect(opened?.gameId, 'next-costa-muthaiah');
     expect(opened?.eventGamesKey, isNull);
 
     container.read(boardTabGameArgsByTabIdProvider.notifier).state = {
-      'tournaments-default': args,
+      'fixture-board': args,
     };
     await navigateActiveEventGame(
       capturedRef!,
@@ -277,8 +281,7 @@ void main() {
       delta: -1,
     );
     await tester.pump();
-    opened =
-        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+    opened = container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
     expect(opened?.gameId, 'previous-chasin-sargsyan');
     expect(opened?.eventGamesKey, isNull);
   });
@@ -334,8 +337,9 @@ void main() {
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
+          desktopTabsProvider.overrideWith((ref) => realTabFixture()),
           boardTabGameArgsByTabIdProvider.overrideWith(
-            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
           ),
         ],
         child: MaterialApp(
@@ -353,7 +357,7 @@ void main() {
     final container = ProviderScope.containerOf(capturedContext!);
     final provider = eventRailGamesProvider(
       EventRailGamesProviderKey(
-        ownerId: 'tournaments-default',
+        ownerId: 'fixture-board',
         eventKey: args.eventGamesKey!,
       ),
     );
@@ -373,7 +377,7 @@ void main() {
     await tester.pump();
 
     final opened =
-        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+        container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
     expect(opened?.gameId, 'second-0');
     expect(repository.legacyFullTourCalls, 0);
     expect(repository.tourPageCalls, <_PageCall>[
@@ -429,8 +433,9 @@ void main() {
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
+          desktopTabsProvider.overrideWith((ref) => realTabFixture()),
           boardTabGameArgsByTabIdProvider.overrideWith(
-            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
           ),
         ],
         child: MaterialApp(
@@ -448,7 +453,7 @@ void main() {
     final container = ProviderScope.containerOf(capturedContext!);
     final provider = eventRailGamesProvider(
       EventRailGamesProviderKey(
-        ownerId: 'tournaments-default',
+        ownerId: 'fixture-board',
         eventKey: args.eventGamesKey!,
       ),
     );
@@ -474,7 +479,7 @@ void main() {
     await tester.pump();
 
     final opened =
-        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+        container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
     expect(opened?.gameId, 'game-3');
     expect(opened?.gameListSelectedId, 'game-3');
     expect(repository.tourPageCalls, <_PageCall>[
@@ -537,8 +542,9 @@ void main() {
           overrides: [
             currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(repository),
+            desktopTabsProvider.overrideWith((ref) => realTabFixture()),
             boardTabGameArgsByTabIdProvider.overrideWith(
-              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+              (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
             ),
           ],
           child: MaterialApp(
@@ -556,7 +562,7 @@ void main() {
       final container = ProviderScope.containerOf(capturedContext!);
       final provider = eventRailGamesProvider(
         EventRailGamesProviderKey(
-          ownerId: 'tournaments-default',
+          ownerId: 'fixture-board',
           eventKey: args.eventGamesKey!,
         ),
       );
@@ -584,9 +590,7 @@ void main() {
       await tester.pump();
 
       var opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+          container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       expect(opened?.gameId, 'nav-game-2');
       expect(opened?.gameListSelectedId, 'nav-game-2');
 
@@ -596,10 +600,7 @@ void main() {
         delta: 1,
       );
       await tester.pump();
-      opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+      opened = container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       expect(opened?.gameId, 'nav-game-3');
 
       await navigateActiveEventGame(
@@ -608,10 +609,7 @@ void main() {
         delta: -1,
       );
       await tester.pump();
-      opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+      opened = container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       expect(opened?.gameId, 'nav-game-2');
       expect(opened?.gameListSelectedId, 'nav-game-2');
 
@@ -622,10 +620,7 @@ void main() {
         delta: 1,
       );
       await tester.pump();
-      opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+      opened = container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       expect(opened?.gameId, 'nav-game-3');
       await navigateActiveEventGame(
         capturedRef!,
@@ -633,10 +628,7 @@ void main() {
         delta: 1,
       );
       await tester.pump();
-      opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+      opened = container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       expect(opened?.gameId, 'nav-game-3');
     },
   );
@@ -690,8 +682,9 @@ void main() {
           overrides: [
             currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(repository),
+            desktopTabsProvider.overrideWith((ref) => realTabFixture()),
             boardTabGameArgsByTabIdProvider.overrideWith(
-              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+              (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
             ),
           ],
           child: MaterialApp(
@@ -716,9 +709,7 @@ void main() {
       await tester.pump();
 
       final opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+          container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       expect(opened?.gameId, 'seed-game-2');
       expect(opened?.gameListSelectedId, 'seed-game-2');
 
@@ -729,9 +720,7 @@ void main() {
       );
       await tester.pump();
       final retreated =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+          container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       expect(retreated?.gameId, 'seed-game-1');
       expect(retreated?.gameListSelectedId, 'seed-game-1');
     },
@@ -873,8 +862,9 @@ void main() {
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
+          desktopTabsProvider.overrideWith((ref) => realTabFixture()),
           boardTabGameArgsByTabIdProvider.overrideWith(
-            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
           ),
         ],
         child: MaterialApp(
@@ -892,7 +882,7 @@ void main() {
     final container = ProviderScope.containerOf(capturedContext!);
     final provider = eventRailGamesProvider(
       EventRailGamesProviderKey(
-        ownerId: 'tournaments-default',
+        ownerId: 'fixture-board',
         eventKey: args.eventGamesKey!,
       ),
     );
@@ -915,9 +905,7 @@ void main() {
 
     expect(navigationCompleted, isFalse);
     expect(
-      container
-          .read(boardTabGameArgsByTabIdProvider)['tournaments-default']
-          ?.gameId,
+      container.read(boardTabGameArgsByTabIdProvider)['fixture-board']?.gameId,
       selected.id,
     );
     expect(container.read(provider).requireValue.isLoadingMore, isTrue);
@@ -929,7 +917,7 @@ void main() {
     await tester.pump();
 
     final opened =
-        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+        container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
     expect(opened?.gameId, 'second-0');
     expect(opened?.gameListSelectedId, 'second-0');
     expect(repository.tourPageCalls, <_PageCall>[
@@ -991,8 +979,9 @@ void main() {
           currentBroadcastGames,
           gameRepositoryProvider.overrideWithValue(repository),
           gamesTourProvider.overrideWith((ref, tourId) => _IdleGames()),
+          desktopTabsProvider.overrideWith((ref) => realTabFixture()),
           boardTabGameArgsByTabIdProvider.overrideWith(
-            (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+            (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
           ),
         ],
         child: MaterialApp(
@@ -1010,7 +999,7 @@ void main() {
     final container = ProviderScope.containerOf(capturedContext!);
     final provider = eventRailGamesProvider(
       EventRailGamesProviderKey(
-        ownerId: 'tournaments-default',
+        ownerId: 'fixture-board',
         eventKey: args.eventGamesKey!,
       ),
     );
@@ -1032,7 +1021,7 @@ void main() {
     container.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
       return <String, BoardTabGameArgs>{
         ...tabs,
-        'tournaments-default': args.copyWith(
+        'fixture-board': args.copyWith(
           gameId: boundary.id,
           gameListSelectedId: boundary.id,
           eventGamesKey: boundaryKey,
@@ -1048,7 +1037,7 @@ void main() {
     await tester.pump();
 
     final opened =
-        container.read(boardTabGameArgsByTabIdProvider)['tournaments-default'];
+        container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
     expect(opened?.gameId, 'game-467');
     expect(repository.legacyFullTourCalls, 0);
     expect(repository.roundPageCalls, <_PageCall>[
@@ -1138,8 +1127,9 @@ void main() {
           overrides: [
             currentBroadcastGames,
             gameRepositoryProvider.overrideWithValue(repository),
+            desktopTabsProvider.overrideWith((ref) => realTabFixture()),
             boardTabGameArgsByTabIdProvider.overrideWith(
-              (ref) => <String, BoardTabGameArgs>{'tournaments-default': args},
+              (ref) => <String, BoardTabGameArgs>{'fixture-board': args},
             ),
           ],
           child: MaterialApp(
@@ -1157,7 +1147,7 @@ void main() {
       final container = ProviderScope.containerOf(capturedContext!);
       final provider = eventRailGamesProvider(
         EventRailGamesProviderKey(
-          ownerId: 'tournaments-default',
+          ownerId: 'fixture-board',
           eventKey: args.eventGamesKey!,
         ),
       );
@@ -1177,9 +1167,7 @@ void main() {
       await tester.pump();
 
       var opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+          container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       // The visible rail is Round 3, Round 2, Round 1, then future rounds.
       expect(opened?.gameId, 'round-3-board-40');
       expect(repository.legacyFullTourCalls, 0);
@@ -1205,7 +1193,7 @@ void main() {
       container.read(boardTabGameArgsByTabIdProvider.notifier).update((tabs) {
         return <String, BoardTabGameArgs>{
           ...tabs,
-          'tournaments-default': args.copyWith(
+          'fixture-board': args.copyWith(
             gameId: lastRoundTwo.id,
             gameListSelectedId: lastRoundTwo.id,
             eventGamesKey: lastRoundTwoKey,
@@ -1220,10 +1208,7 @@ void main() {
       );
       await tester.pump();
 
-      opened =
-          container.read(
-            boardTabGameArgsByTabIdProvider,
-          )['tournaments-default'];
+      opened = container.read(boardTabGameArgsByTabIdProvider)['fixture-board'];
       // The next visible heading after Round 2 is Round 1, not future Round 4.
       expect(opened?.gameId, 'round-1-board-1');
       expect(repository.tourPageCalls, hasLength(1));

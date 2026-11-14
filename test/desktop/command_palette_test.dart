@@ -3,8 +3,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/shell/command_palette.dart';
+import 'package:chessever/desktop/shell/desktop_pane.dart';
 
 void main() {
+  testWidgets(
+    'hidden Rankings route still activates from the command palette',
+    (tester) async {
+      DesktopPane? opened;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: CommandPalette(
+                onSelectPane: (pane) => opened = pane,
+                onAction: (_) {},
+                onDismiss: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final rankings = find.text('Open Rankings');
+      await tester.ensureVisible(rankings);
+      await tester.pump();
+      await tester.tap(rankings);
+      await tester.pump();
+      expect(opened, DesktopPane.rankings);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
+
   testWidgets('command palette scrollbar thumb is attached to its list', (
     tester,
   ) async {
@@ -56,36 +87,52 @@ void main() {
     );
   });
 
-  test('command palette route shortcuts match sidebar numbering', () {
-    expect(
-      debugCommandPaletteShortcutForTitle('Open Events', isMacOS: false),
-      'Ctrl+1',
-    );
-    expect(
-      debugCommandPaletteShortcutForTitle('Open Prepare', isMacOS: false),
-      'Ctrl+4',
-    );
-    expect(
-      debugCommandPaletteShortcutForTitle('Open Rankings', isMacOS: false),
-      'Ctrl+5',
-    );
-    expect(
-      debugCommandPaletteShortcutForTitle('Open Calendar', isMacOS: false),
-      'Ctrl+6',
-    );
-    expect(
-      debugCommandPaletteShortcutForTitle('Open Board', isMacOS: false),
-      'Ctrl+8',
-    );
-    expect(
-      debugCommandPaletteShortcutForTitle('Open Play', isMacOS: false),
-      'Ctrl+9',
-    );
-    expect(
-      debugCommandPaletteShortcutForTitle('Open Board Editor', isMacOS: false),
-      isNull,
-    );
-  });
+  test(
+    'command palette retains hidden destinations without number shortcuts',
+    () {
+      for (final title in [
+        'Open Countrymen',
+        'Open Favorites',
+        'Open Collections',
+        'Open Rankings',
+      ]) {
+        expect(debugCommandPaletteEntryTitles(), contains(title));
+        expect(
+          debugCommandPaletteShortcutForTitle(title, isMacOS: false),
+          isNull,
+        );
+        expect(
+          debugCommandPaletteShortcutForTitle(title, isMacOS: true),
+          isNull,
+        );
+      }
+      const expected = {
+        'Open Home': 1,
+        'Open Library': 2,
+        'Open Prepare': 3,
+
+        'Open Board': 4,
+        'Open Play': 5,
+      };
+      for (final entry in expected.entries) {
+        expect(
+          debugCommandPaletteShortcutForTitle(entry.key, isMacOS: false),
+          'Ctrl+${entry.value}',
+        );
+        expect(
+          debugCommandPaletteShortcutForTitle(entry.key, isMacOS: true),
+          '⌘${entry.value}',
+        );
+      }
+      expect(
+        debugCommandPaletteShortcutForTitle(
+          'Open Board Editor',
+          isMacOS: false,
+        ),
+        isNull,
+      );
+    },
+  );
 
   test('command palette arrow navigation wraps one row at a time', () {
     expect(
