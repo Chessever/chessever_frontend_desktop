@@ -1111,12 +1111,11 @@ class TournamentGamesCountLabel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final tabId =
-        ref.watch(desktopTabsProvider.select((state) => state.activeId)) ?? '';
-    final grouped =
-        ref.watch(combinedTournamentSelectedProvider)
-            ? ref.watch(combinedTournamentDataProvider(tabId)).grouped
-            : ref.watch(gamesTourGroupedProvider);
+    // Combined shows no tally: it counts only the boards loaded so far.
+    if (ref.watch(combinedTournamentSelectedProvider)) {
+      return const SizedBox.shrink();
+    }
+    final grouped = ref.watch(gamesTourGroupedProvider);
     final totalGames = grouped.allGames.length;
     if (grouped.loadError != null) {
       return const Text(
@@ -1146,11 +1145,7 @@ class TournamentGamesCountLabel extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     return Text(
-      ref.watch(combinedTournamentSelectedProvider)
-          ? '$totalGames games loaded'
-          : totalGames == 1
-          ? '1 game'
-          : '$totalGames games',
+      totalGames == 1 ? '1 game' : '$totalGames games',
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: const TextStyle(
