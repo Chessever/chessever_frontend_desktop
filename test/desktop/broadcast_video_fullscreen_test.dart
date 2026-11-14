@@ -86,14 +86,56 @@ void main() {
     });
   });
 
-  // WebView2 already has the Fullscreen API on, but sizes a full-screen
-  // element to the WebView's own bounds, so on Windows the player fills its
-  // rail slot. Enlarging it would mean moving the player into an overlay,
-  // and moving or remounting the host restarts the stream in later Board
-  // tabs (see "Keep broadcast video mounted across Board tabs").
-  test('the player is never lifted out of its stable mount', () {
-    final panel = read('lib/desktop/widgets/broadcast_video_panel.dart');
-    expect(panel, isNot(contains('rootOverlay: true')));
-    expect(panel, isNot(contains('OverlayEntry(')));
+  // WebView2 is drawn into a Flutter texture, so a full-screen element only
+  // fills the WebView's widget box (the rail slot). The panel hears the
+  // native signal through the patched Windows package and moves the same
+  // player into a window-filling overlay. The move must go through a
+  // GlobalKey: an unkeyed remount builds a new player State, which is what
+  // restarted streams in later Board tabs.
+  group('WebView2 fullscreen element on Windows', () {
+    test('pubspec overrides the Windows package to third_party', () {
+      final pubspec = read('pubspec.yaml');
+      final overrides = pubspec.substring(
+        pubspec.indexOf('dependency_overrides:'),
+      );
+      expect(
+        overrides,
+        contains(
+          'webview_all_windows:\n    path: third_party/webview_all_windows',
+        ),
+      );
+      expect(
+        File('third_party/webview_all_windows/CHESSEVER_PATCH.md').existsSync(),
+        isTrue,
+      );
+    });
+
+    test('the controller exposes the native fullscreen-element stream', () {
+      expect(
+        read(
+          'third_party/webview_all_windows/lib/src/windows_webview_controller.dart',
+        ),
+        contains(
+          'Stream<bool> get containsFullScreenElementChanged =>\n'
+          '      _webviewController.containsFullScreenElementChanged;',
+        ),
+      );
+    });
+
+    test('the panel listens and moves the player only by its GlobalKey', () {
+      final panel = read('lib/desktop/widgets/broadcast_video_panel.dart');
+      expect(panel, contains('platform.containsFullScreenElementChanged'));
+      expect(panel, contains('rootOverlay: true'));
+      expect(panel, contains('KeyedSubtree(key: _playerKey, child: view)'));
+      // Both mounts build the player through the keyed helper, never a
+      // bare WebViewWidget that would remount it.
+      expect(
+        RegExp(r'WebViewWidget\(').allMatches(panel).length,
+        1,
+        reason: 'only _playerView may build the WebViewWidget',
+      );
+      expect(panel, contains('child: _playerView(controller),'));
+      expect(panel, contains(': _playerView(_ensureController()),'));
+    });
   });
 }

@@ -7,15 +7,18 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_windows/webview_all_windows.dart'
     show WindowsWebViewController;
 import 'package:webview_all_wkwebview/webview_all_wkwebview.dart'
     show PlaybackMediaTypes, WebKitWebViewControllerCreationParams;
+import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/services/broadcast_video_streams.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
+import 'package:chessever/desktop/state/board_picture_in_picture_mode.dart';
 import 'package:chessever/desktop/state/broadcast_video_streams_provider.dart';
 import 'package:chessever/desktop/state/broadcast_video_visibility_provider.dart';
 import 'package:chessever/desktop/widgets/broadcast_video_player_retention.dart';
@@ -117,6 +120,27 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   static const Duration _stopGrace = Duration(seconds: 20);
   Timer? _stopTimer;
 
+  /// Windows only. WebView2 is drawn into a Flutter texture, so when the
+  /// player's own fullscreen button puts an element in full screen, WebView2
+  /// can only size it to the WebView's widget box: the rail slot. While
+  /// `ContainsFullScreenElementChanged` is set, the panel moves the same
+  /// player into a window-filling root overlay and takes the main window
+  /// full screen. macOS needs none of this: WebKit opens a full-screen
+  /// window of its own once the preference is on.
+  ///
+  /// The move goes through [_playerKey], so Flutter carries the player's
+  /// element, State and texture across in one frame: nothing is disposed,
+  /// the WebView2 controller is untouched, and the stream keeps playing. Only
+  /// the reported surface size changes. An unkeyed remount (a new player
+  /// State) is what restarted streams in later Board tabs, and is never
+  /// used here.
+  final GlobalKey _playerKey = GlobalKey(
+    debugLabel: 'desktop-broadcast-video-player',
+  );
+  StreamSubscription<bool>? _windowsFullscreenSubscription;
+  OverlayEntry? _fullscreenEntry;
+  bool _restoreWindowFromFullscreen = false;
+
   void _markFrameFailed() {
     if (!mounted || _frameFailed) return;
     setState(() => _frameFailed = true);
@@ -154,6 +178,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   void _stopPlaybackNow() {
     if (_loadedEmbedUrl == null) return;
     _loadedEmbedUrl = null;
+    _exitWindowsFullscreen(leavePage: false);
     final controller = _controller;
     if (controller != null) {
       unawaited(
@@ -219,6 +244,11 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     final existing = _controller;
     if (existing != null) return existing;
     final controller = _createController();
+    final platform = controller.platform;
+    if (platform is WindowsWebViewController) {
+      _windowsFullscreenSubscription = platform.containsFullScreenElementChanged
+          .listen(_onWindowsFullscreenChanged, onError: (Object _) {});
+    }
     // Each setter awaits the native WebView. Without the WebView2 runtime, or
     // once the controller is torn down, that future fails, and a discarded
     // failure reached the zone as fatal (CHESSEVER-1ZW/1Z4). The load below
@@ -324,6 +354,119 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     return WebViewController();
   }
 
+  void _onWindowsFullscreenChanged(bool fullscreen) {
+    if (!mounted) return;
+    if (fullscreen) {
+      _enterWindowsFullscreen();
+    } else {
+      // The player left full screen itself (its exit button or Esc).
+      _exitWindowsFullscreen(leavePage: false);
+    }
+  }
+
+  void _enterWindowsFullscreen() {
+    if (_fullscreenEntry != null) return;
+    final controller = _controller;
+    // Only the foreground tab's playing player may take the window.
+    if (controller == null || _loadedEmbedUrl == null || !widget.active) {
+      return;
+    }
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final entry = OverlayEntry(
+      builder:
+          (_) => Positioned.fill(
+            child: Focus(
+              autofocus: true,
+              // Esc normally reaches WebView2 and the page exits on its own;
+              // this covers the case where Flutter holds keyboard focus.
+              onKeyEvent: (node, event) {
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.escape) {
+                  _askPageToLeaveFullscreen();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: ColoredBox(
+                color: kBlackColor,
+                child: _playerView(controller),
+              ),
+            ),
+          ),
+    );
+    _fullscreenEntry = entry;
+    overlay.insert(entry);
+    // The rail drops its keyed player in the same frame the overlay builds
+    // it, so the GlobalKey moves the player instead of duplicating it.
+    setState(() {});
+    // A detached board window is not the main window: the overlay already
+    // fills it, and window_manager only drives the main window.
+    if (!ref.read(boardPictureInPictureModeProvider)) {
+      unawaited(_takeWindowFullscreen());
+    }
+  }
+
+  /// Returns the player to the rail and restores the window. [leavePage]
+  /// also tells our embed page to leave full screen, for exits the player
+  /// did not start (tab switch, hidden window, stop), so the provider's
+  /// control does not stay in its "exit" state inside the rail.
+  void _exitWindowsFullscreen({bool leavePage = true, bool rebuild = true}) {
+    final entry = _fullscreenEntry;
+    if (entry == null) return;
+    _fullscreenEntry = null;
+    entry.remove();
+    if (rebuild && mounted) setState(() {});
+    if (leavePage) _askPageToLeaveFullscreen();
+    if (_restoreWindowFromFullscreen) {
+      _restoreWindowFromFullscreen = false;
+      unawaited(windowManager.setFullScreen(false).catchError((Object _) {}));
+    }
+  }
+
+  /// Exit requested from inside a build: the overlay cannot be touched until
+  /// this frame is out.
+  void _scheduleExitWindowsFullscreen() {
+    if (_fullscreenEntry == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _exitWindowsFullscreen();
+    });
+  }
+
+  /// Runs in our own chessever.com embed document only (the top frame),
+  /// never in the provider's frame.
+  void _askPageToLeaveFullscreen() {
+    final controller = _controller;
+    if (controller == null) return;
+    _ignoreWebViewFailure(
+      controller.runJavaScript(
+        'if (document.fullscreenElement) document.exitFullscreen();',
+      ),
+    );
+  }
+
+  Future<void> _takeWindowFullscreen() async {
+    try {
+      // Already full screen (the user's choice): leave it as it is on exit.
+      if (await windowManager.isFullScreen()) return;
+      // The element may already have left full screen while we asked.
+      if (_fullscreenEntry == null) return;
+      _restoreWindowFromFullscreen = true;
+      await windowManager.setFullScreen(true);
+    } catch (_) {
+      // The overlay already fills the window; OS full screen is the extra.
+    }
+  }
+
+  /// The one player widget. On Windows it carries [_playerKey] so it can move
+  /// between the rail and the fullscreen overlay without a remount; macOS
+  /// never moves it and keeps it unkeyed.
+  Widget _playerView(WebViewController controller) {
+    final view = WebViewWidget(controller: controller);
+    if (!hostIsWindows) return view;
+    return KeyedSubtree(key: _playerKey, child: view);
+  }
+
   static bool _isGoogleSignInFrame(Uri uri) {
     final host = uri.host.toLowerCase();
     return host == 'accounts.google.com' ||
@@ -425,6 +568,7 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   void _scheduleStopPlayback() {
     if (_loadedEmbedUrl == null) return;
     _loadedEmbedUrl = null;
+    _scheduleExitWindowsFullscreen();
     final controller = _controller;
     if (controller == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -438,6 +582,8 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
   void dispose() {
     _retryTimer?.cancel();
     _stopTimer?.cancel();
+    unawaited(_windowsFullscreenSubscription?.cancel());
+    _exitWindowsFullscreen(leavePage: false, rebuild: false);
     final controller = _controller;
     if (controller != null) {
       final platform = controller.platform;
@@ -591,6 +737,9 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
     // return that skipped the watch used to drop the listener, refetch on
     // return, and blank the player because `data` looked empty.
     final windowVisible = ref.watch(liveGameStreamingLifecycleProvider);
+    // A tab switch or a hidden window ends the Windows fullscreen overlay
+    // at once; the stop grace below still applies to playback.
+    if (!widget.active || !windowVisible) _scheduleExitWindowsFullscreen();
     final streamsState =
         widget.tourId.isEmpty
             ? const AsyncValue<ResolvedBroadcastVideoStreams>.data(
@@ -913,7 +1062,12 @@ class _BroadcastVideoPanelState extends ConsumerState<BroadcastVideoPanel> {
                 width: double.infinity,
                 child: ColoredBox(
                   color: kBlackColor,
-                  child: WebViewWidget(controller: _ensureController()),
+                  // While the Windows fullscreen overlay holds the player,
+                  // the slot stays black so the rail keeps its layout.
+                  child:
+                      _fullscreenEntry != null
+                          ? null
+                          : _playerView(_ensureController()),
                 ),
               ),
             ),

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 22.46.17+637
+version: 22.46.18+638
 environment:
   sdk: ^3.7.2
 
@@ -237,6 +237,8 @@ dependency_overrides:
     path: third_party/desktop_updater
   webview_all_wkwebview:
     path: third_party/webview_all_wkwebview
+  webview_all_windows:
+    path: third_party/webview_all_windows
   # 1.1.31 stops re-setting Path.fillType on every paint, which frees a
   # native path still in use under the web renderer (skwasm) and crashes the
   # browser build. It declares xml ^7 only for a dependency refresh;
