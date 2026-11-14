@@ -242,25 +242,28 @@ class _WebSignInPreviewGateState extends State<WebSignInPreviewGate> {
 
 /// In-memory destination tabs only. Never restores or mutates a previous
 /// account's tabs, and never calls navigation/analytics admission methods.
+DesktopTabsState publicSignInPreviewTabsState(
+  WebSignInPreviewLocation location,
+) {
+  final kind = location.kind == 'likes' ? TabKind.likes : TabKind.tournaments;
+  if (kind == TabKind.tournaments) {
+    return const DesktopTabsState(tabs: [], activeId: desktopHomeTabId);
+  }
+  return DesktopTabsState(
+    tabs: [
+      DesktopTab(
+        id: 'public-signin-destination',
+        kind: kind,
+        title: location.title,
+      ),
+    ],
+    activeId: 'public-signin-destination',
+  );
+}
+
 class _PublicDestinationTabs extends DesktopTabsNotifier {
   _PublicDestinationTabs(WebSignInPreviewLocation location) {
-    final kind = location.kind == 'likes' ? TabKind.likes : TabKind.tournaments;
-    state = DesktopTabsState(
-      tabs: [
-        if (kind != TabKind.tournaments)
-          const DesktopTab(
-            id: 'public-signin-events',
-            kind: TabKind.tournaments,
-            title: 'Events',
-          ),
-        DesktopTab(
-          id: 'public-signin-destination',
-          kind: kind,
-          title: location.title,
-        ),
-      ],
-      activeId: 'public-signin-destination',
-    );
+    state = publicSignInPreviewTabsState(location);
   }
 }
 
