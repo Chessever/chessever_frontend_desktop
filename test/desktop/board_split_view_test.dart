@@ -202,6 +202,52 @@ void main() {
   });
 
   group('geometry', () {
+    test('an area thinner than the gutter never yields negative cells', () {
+      final layout = BoardSplitLayout(
+        id: 'g',
+        columns: [
+          ['a', 'c'],
+          ['b'],
+        ],
+      );
+      for (final size in const [Size(4, 4), Size(0, 600), Size(900, 6)]) {
+        for (final rect in layout.cellRects(size).values) {
+          expect(rect.width, greaterThanOrEqualTo(0), reason: '$size');
+          expect(rect.height, greaterThanOrEqualTo(0), reason: '$size');
+        }
+      }
+    });
+
+    test('the cell to focus after a close stays inside the split', () {
+      final layout = BoardSplitLayout(
+        id: 'g',
+        columns: [
+          ['a', 'c'],
+          ['b', 'd'],
+        ],
+      );
+      final all = {'a', 'b', 'c', 'd'};
+      expect(splitNeighbourAfterClose(layout, 'c', openTabIds: all), 'a');
+      expect(
+        splitNeighbourAfterClose(
+          BoardSplitLayout(
+            id: 'g',
+            columns: [
+              ['a'],
+              ['b', 'd'],
+            ],
+          ),
+          'a',
+          openTabIds: all,
+        ),
+        'b',
+      );
+      expect(
+        splitNeighbourAfterClose(layout, 'd', openTabIds: {'a', 'c'}),
+        'c',
+      );
+    });
+
     const size = Size(1208, 808);
 
     test('cells share the area around an 8 px gutter', () {
@@ -370,6 +416,144 @@ void main() {
   });
 
   group('boardSplitProvider', () {
+    group('closing the focused board keeps tab history', () {
+      late ProviderContainer container;
+      late DesktopTabsNotifier tabs;
+      late String other, a, b, c;
+      setUp(() {
+        container = ProviderContainer();
+        tabs = container.read(desktopTabsProvider.notifier);
+        other = tabs.open(TabKind.library);
+        a = tabs.open(TabKind.board, reuseExisting: false);
+        b = tabs.open(TabKind.board, reuseExisting: false);
+        c = tabs.open(TabKind.board, reuseExisting: false);
+        final split = container.read(boardSplitProvider.notifier);
+        split.place(
+          targetTabId: a,
+          incomingTabId: b,
+          zone: BoardSplitZone.right,
+        );
+        split.place(
+          targetTabId: b,
+          incomingTabId: c,
+          zone: BoardSplitZone.bottom,
+        );
+      });
+      tearDown(() {
+        container.dispose();
+      });
+
+      test('when history already picks a board of the split', () async {
+        tabs.activate(a);
+        tabs.activate(c);
+        tabs.close(c);
+        await Future<void>.delayed(Duration.zero);
+        expect(container.read(desktopTabsProvider).activeId, a);
+      });
+
+      test('for close to the right, which names its tab', () async {
+        // Strip order [x, pivot, y] with x and y split, y focused.
+        final local = ProviderContainer();
+        addTearDown(local.dispose);
+        final strip = local.read(desktopTabsProvider.notifier);
+        final x = strip.open(TabKind.board, reuseExisting: false);
+        final pivot = strip.open(TabKind.library);
+        final y = strip.open(TabKind.board, reuseExisting: false);
+        local
+            .read(boardSplitProvider.notifier)
+            .place(
+              targetTabId: x,
+              incomingTabId: y,
+              zone: BoardSplitZone.right,
+            );
+        strip.activate(y);
+        strip.closeToTheRight(pivot);
+        await Future<void>.delayed(Duration.zero);
+        expect(local.read(desktopTabsProvider).activeId, pivot);
+      });
+
+      test('the press mark lapses once the tab is left open', () async {
+        tabs.activate(other);
+        tabs.activate(c);
+        container.read(boardSplitProvider.notifier).keepHistoryOnClose(c);
+        // The close was cancelled; the user moved on and came back later.
+        tabs.activate(b);
+        tabs.activate(other);
+        tabs.activate(c);
+        tabs.close(c);
+        await Future<void>.delayed(Duration.zero);
+        expect(container.read(desktopTabsProvider).activeId, b);
+      });
+
+      test('in focus mode, where the split is not shown', () async {
+        container.read(boardFocusModeProvider.notifier).state = true;
+        tabs.activate(other);
+        tabs.activate(c);
+        tabs.close(c);
+        await Future<void>.delayed(Duration.zero);
+        expect(container.read(desktopTabsProvider).activeId, other);
+      });
+
+      test('when the same press selected and closed the tab', () async {
+        tabs.activate(other);
+        // The strip marks a close from the button of a tab its press
+        // selected.
+        tabs.activate(c);
+        container.read(boardSplitProvider.notifier).keepHistoryOnClose(c);
+        tabs.close(c);
+        await Future<void>.delayed(Duration.zero);
+        expect(container.read(desktopTabsProvider).activeId, other);
+      });
+    });
+
+    test('closing the focused board focuses the cell beside it', () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final tabs = container.read(desktopTabsProvider.notifier);
+      String board() => tabs.open(TabKind.board, reuseExisting: false);
+      final other = tabs.open(TabKind.library);
+      final a = board(), b = board(), c = board();
+      final split = container.read(boardSplitProvider.notifier);
+      split.place(targetTabId: a, incomingTabId: b, zone: BoardSplitZone.right);
+      split.place(
+        targetTabId: b,
+        incomingTabId: c,
+        zone: BoardSplitZone.bottom,
+      );
+      // History says Library came last before c; c is focused.
+      tabs.activate(other);
+      tabs.activate(c);
+      tabs.close(c);
+      await Future<void>.delayed(Duration.zero);
+      // c's column neighbour, not the Library tab.
+      expect(container.read(desktopTabsProvider).activeId, b);
+      expect(container.read(visibleBoardSplitProvider)!.columns, [
+        [a],
+        [b],
+      ]);
+    });
+
+    test('a press on another tab keeps the board on screen until it ends', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final tabs = container.read(desktopTabsProvider.notifier);
+      final a = tabs.open(TabKind.board, reuseExisting: false);
+      final b = tabs.open(TabKind.board, reuseExisting: false);
+      final c = tabs.open(TabKind.board, reuseExisting: false);
+      container
+          .read(boardSplitProvider.notifier)
+          .place(targetTabId: a, incomingTabId: b, zone: BoardSplitZone.right);
+      tabs.activate(a);
+      // Press on c: it is selected at once, the split stays held.
+      container.read(boardPressHeldTabProvider.notifier).state = a;
+      tabs.activate(c);
+      expect(container.read(boardTabOnScreenProvider(a)), isTrue);
+      expect(container.read(boardTabOnScreenProvider(b)), isTrue);
+      container.read(boardPressHeldTabProvider.notifier).state = null;
+      expect(container.read(boardTabOnScreenProvider(a)), isFalse);
+      expect(container.read(boardTabOnScreenProvider(b)), isFalse);
+    });
+
     test('each split keeps its own id after its boards change', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);

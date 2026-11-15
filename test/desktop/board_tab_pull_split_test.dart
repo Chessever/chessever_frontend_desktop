@@ -107,6 +107,11 @@ void main() {
       fixture.container.read(desktopTabsProvider).activeId,
       fixture.carlsen,
     );
+    // The board being viewed still counts as on screen during the press.
+    expect(
+      fixture.container.read(boardTabOnScreenProvider(fixture.anand)),
+      isTrue,
+    );
 
     await mouse.moveBy(const Offset(0, 30));
     await tester.pump();
@@ -209,6 +214,60 @@ void main() {
       fixture.carlsen,
     );
     expect(fixture.container.read(boardSplitProvider).groups, isEmpty);
+    // A plain click: the previous board leaves the screen on release.
+    expect(
+      fixture.container.read(boardTabOnScreenProvider(fixture.anand)),
+      isFalse,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('closing a background tab from its close button returns to '
+      'the board being viewed, not into its hidden split', (tester) async {
+    final fixture = await _pump(tester);
+    final tabs = fixture.container.read(desktopTabsProvider.notifier);
+    final partner = tabs.open(
+      TabKind.board,
+      reuseExisting: false,
+      focus: false,
+    );
+    fixture.container
+        .read(boardSplitProvider.notifier)
+        .place(
+          targetTabId: fixture.carlsen,
+          incomingTabId: partner,
+          zone: BoardSplitZone.right,
+        );
+    expect(fixture.container.read(desktopTabsProvider).activeId, fixture.anand);
+    await tester.pumpAndSettle();
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(1000, 600));
+    await mouse.moveTo(tester.getCenter(find.textContaining('Carlsen')));
+    await tester.pumpAndSettle();
+    final close =
+        find
+            .descendant(
+              of: find.byType(DesktopTabBar),
+              matching: find.byIcon(Icons.close_rounded),
+            )
+            .first;
+    await mouse.moveTo(tester.getCenter(close));
+    await tester.pumpAndSettle();
+    await mouse.down(tester.getCenter(close));
+    await tester.pump();
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(
+      fixture.container
+          .read(desktopTabsProvider)
+          .tabs
+          .any((t) => t.id == fixture.carlsen),
+      isFalse,
+    );
+    expect(fixture.container.read(desktopTabsProvider).activeId, fixture.anand);
+    await mouse.removePointer();
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });

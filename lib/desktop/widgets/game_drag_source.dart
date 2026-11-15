@@ -26,6 +26,8 @@ class GameDragSource extends Draggable<GameTabDragPayload> {
          data: payload,
          maxSimultaneousDrags: 1,
          dragAnchorStrategy: pointerDragAnchorStrategy,
+         // The whole row lifts, padding and gaps included, not only its text.
+         hitTestBehavior: HitTestBehavior.opaque,
          feedback: GameDragChip(label: payload.label),
        );
 

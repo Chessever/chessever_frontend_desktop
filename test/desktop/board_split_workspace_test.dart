@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/shell/board_split_workspace.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/game_drag_source.dart';
@@ -405,6 +408,227 @@ void main() {
     expect(tester.getSize(page).width, lessThan(480));
     expect(builds, buildsBefore, reason: 'a divider drag only lays out');
     // Let the divider's double-click window close.
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a row lifts from its padding, not only from its text', (
+    tester,
+  ) async {
+    _sizeWindow(tester);
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    container
+        .read(desktopTabsProvider.notifier)
+        .open(TabKind.board, reuseExisting: false);
+    await tester.pumpWidget(
+      _harness(
+        container,
+        sources: [
+          GameDragSource(
+            payload: GameTabDragPayload(
+              id: 'g',
+              label: 'A vs B',
+              spawn: (ref, {required focus}) async {},
+            ),
+            child: const SizedBox(
+              key: ValueKey('row'),
+              height: 40,
+              width: 200,
+              child: Align(alignment: Alignment.centerLeft, child: Text('A')),
+            ),
+          ),
+        ],
+      ),
+    );
+    // Press well right of the text, on the row's empty space.
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(find.byKey(const ValueKey('row'))) +
+          const Offset(180, 20),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveBy(const Offset(0, 30));
+    await tester.pump();
+    expect(find.byType(GameDragChip), findsOneWidget);
+    await gesture.up();
+    await tester.pump();
+  });
+
+  testWidgets('while a dropped game opens, the workspace shows it and '
+      'takes no other split drop', (tester) async {
+    _sizeWindow(tester);
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final tabs = container.read(desktopTabsProvider.notifier);
+    final a = tabs.open(TabKind.board, reuseExisting: false);
+    final firstFetch = Completer<void>();
+    var g2Spawns = 0;
+    GameTabDragPayload payload(String id, {Completer<void>? wait}) =>
+        GameTabDragPayload(
+          id: id,
+          label: id,
+          spawn: (ref, {required focus}) async {
+            if (id == 'g2') g2Spawns++;
+            if (wait != null) await wait.future;
+            openBoardGameTabFromContainer(
+              container,
+              BoardTabGameArgs(
+                gameId: id,
+                pgn: '1. e4 *',
+                label: id,
+                whiteName: id,
+                blackName: id,
+              ),
+              reuseExisting: false,
+              focus: focus,
+            );
+          },
+        );
+    Widget row(String id, GameTabDragPayload p) => GameDragSource(
+      payload: p,
+      child: SizedBox(
+        key: ValueKey('row:$id'),
+        height: 40,
+        width: 200,
+        child: Text(id),
+      ),
+    );
+    await tester.pumpWidget(
+      _harness(
+        container,
+        sources: [
+          row('g1', payload('g1', wait: firstFetch)),
+          row('g2', payload('g2')),
+        ],
+      ),
+    );
+    final origin = tester.getTopLeft(find.byKey(_workspaceKey));
+    Future<void> dragTo(String id, Offset target, {String? expectLabel}) async {
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(ValueKey('row:$id'))),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveTo(origin + const Offset(400, 300));
+      await tester.pump();
+      await gesture.moveTo(origin + target);
+      await tester.pump();
+      if (expectLabel != null) expect(find.text(expectLabel), findsOneWidget);
+      await gesture.up();
+      await tester.pump();
+    }
+
+    await dragTo('g1', const Offset(1150, 400), expectLabel: 'Split right');
+    expect(find.text('Opening…'), findsOneWidget);
+    // An unrelated board opens meanwhile; it must not be adopted.
+    final unrelated = tabs.open(
+      TabKind.board,
+      reuseExisting: false,
+      focus: false,
+    );
+    // A second drop while g1 opens shows the busy marker, not a zone, and
+    // does nothing.
+    await dragTo('g2', const Offset(300, 790), expectLabel: 'Opening…');
+    expect(find.text('Split down'), findsNothing);
+    expect(g2Spawns, 0);
+
+    // The user moves on to another board before g1 lands.
+    tabs.activate(unrelated);
+    firstFetch.complete();
+    await tester.pump();
+    await tester.pump();
+    var layout = container.read(visibleBoardSplitProvider);
+    // g1 is placed beside A without yanking focus back.
+    expect(container.read(desktopTabsProvider).activeId, unrelated);
+    expect(container.read(boardSplitProvider).groupOf(a)!.cellCount, 2);
+    expect(container.read(boardSplitProvider).groupOf(unrelated), isNull);
+
+    // Back on A, g2 now drops normally.
+    tabs.activate(a);
+    await tester.pump();
+    await dragTo('g2', const Offset(300, 790), expectLabel: 'Split down');
+    await tester.pump();
+    layout = container.read(visibleBoardSplitProvider)!;
+    expect(layout.cellCount, 3);
+    final args = container.read(boardTabGameArgsByTabIdProvider);
+    expect(
+      {
+        for (final id in layout.tabIds)
+          if (id != a) args[id]?.gameId,
+      },
+      {'g1', 'g2'},
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the preview follows the boards when they change under a '
+      'still pointer', (tester) async {
+    _sizeWindow(tester);
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final tabs = container.read(desktopTabsProvider.notifier);
+    final a = tabs.open(TabKind.board, reuseExisting: false);
+    final b = tabs.open(TabKind.board, reuseExisting: false, focus: false);
+    var spawned = 0;
+    await tester.pumpWidget(
+      _harness(
+        container,
+        sources: [
+          GameDragSource(
+            payload: GameTabDragPayload(
+              id: 'g',
+              label: 'g',
+              spawn: (ref, {required focus}) async {
+                spawned++;
+                ref
+                    .read(desktopTabsProvider.notifier)
+                    .open(TabKind.board, reuseExisting: false, focus: focus);
+              },
+            ),
+            child: const SizedBox(
+              key: ValueKey('row'),
+              height: 40,
+              width: 200,
+              child: Text('g'),
+            ),
+          ),
+        ],
+      ),
+    );
+    final origin = tester.getTopLeft(find.byKey(_workspaceKey));
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('row'))),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveBy(const Offset(30, 0));
+    await tester.pump();
+    await gesture.moveTo(origin + const Offset(400, 300));
+    await tester.pump();
+    await gesture.moveTo(origin + const Offset(1150, 400));
+    await tester.pump();
+    expect(find.text('Split right'), findsOneWidget);
+
+    // Something else splits A while the pointer rests: B lands on the right.
+    container
+        .read(boardSplitProvider.notifier)
+        .place(targetTabId: a, incomingTabId: b, zone: BoardSplitZone.right);
+    await tester.pump();
+    await tester.pump();
+    // Past the label cross-fade.
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Split right'), findsNothing);
+    expect(find.text('Replace this board'), findsOneWidget);
+
+    // Letting go does what is now shown.
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
+    expect(spawned, 1);
+    final layout = container.read(visibleBoardSplitProvider)!;
+    expect(layout.contains(a), isTrue);
+    expect(layout.contains(b), isFalse);
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.takeException(), isNull);
   });

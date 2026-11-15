@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
+import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_focus_mode.dart';
 import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -672,6 +673,9 @@ class _DropPlan {
     required this.zone,
     required this.rect,
     required this.label,
+    required this.layoutKey,
+    required this.groupId,
+    this.busy = false,
   });
 
   final String targetTabId;
@@ -679,16 +683,42 @@ class _DropPlan {
   final Rect rect;
   final String label;
 
+  /// The visible layout this plan was made against (see `_layoutKey`).
+  final String layoutKey;
+
+  /// The split the drop is aimed at, or the single board's own id.
+  final String groupId;
+
+  /// Shown while a dropped game is still opening: marks the workspace busy
+  /// and is never acted on.
+  final bool busy;
+
+  /// [layoutKey] without the focused board: which boards are where.
+  String get boardsKey => layoutKey.substring(layoutKey.indexOf('|') + 1);
+
+  _DropPlan asBusy() => _DropPlan(
+    targetTabId: targetTabId,
+    zone: zone,
+    rect: rect,
+    label: 'Opening\u2026',
+    layoutKey: layoutKey,
+    groupId: groupId,
+    busy: true,
+  );
+
   @override
   bool operator ==(Object other) =>
       other is _DropPlan &&
       other.targetTabId == targetTabId &&
       other.zone == zone &&
       other.rect == rect &&
-      other.label == label;
+      other.label == label &&
+      other.layoutKey == layoutKey &&
+      other.busy == busy;
 
   @override
-  int get hashCode => Object.hash(targetTabId, zone, rect, label);
+  int get hashCode =>
+      Object.hash(targetTabId, zone, rect, label, layoutKey, busy);
 }
 
 /// Accepts game rows and Board tabs dropped on the Board workspace and
@@ -729,10 +759,6 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
     _armed = false;
   }
 
-  /// Set while a dropped game is being opened, so the landing area stays
-  /// marked until its board appears.
-  bool _opening = false;
-
   String? get _activeBoardTabId {
     final tabs = ref.read(desktopTabsProvider);
     final active = tabs.active;
@@ -742,9 +768,56 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
     return active.id;
   }
 
-  bool _accepts(Object? data) {
-    if (_opening || _activeBoardTabId == null) return false;
-    return data is GameTabDragPayload || data is BoardTabDragPayload;
+  bool _accepts(Object? data) =>
+      data is GameTabDragPayload || data is BoardTabDragPayload;
+
+  /// Which boards are shown where, and which one is focused.
+  static String _layoutKey(String activeId, BoardSplitLayout layout) =>
+      '$activeId|${layout.id}|'
+      '${layout.columns.map((c) => c.join(',')).join(';')}';
+
+  String? get _currentLayoutKey {
+    final activeId = _activeBoardTabId;
+    if (activeId == null) return null;
+    return _layoutKey(
+      activeId,
+      ref.read(visibleBoardSplitProvider) ?? BoardSplitLayout.single(activeId),
+    );
+  }
+
+  /// The drag hovering the workspace, kept so the preview can be planned
+  /// again when the layout changes under a pointer that is not moving.
+  Object? _hoverData;
+  Offset? _hoverPointer;
+
+  @override
+  void initState() {
+    super.initState();
+    // After the frame: the cells have their new sizes by then, and the
+    // provider change is not still being delivered.
+    void replan() {
+      if (_hoverData == null && _pendingPlan == null) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final data = _hoverData;
+        final pointer = _hoverPointer;
+        if (data != null && pointer != null) {
+          _hover(data, pointer);
+        } else {
+          // Redraw the "Opening…" marker against the boards now shown.
+          setState(() {});
+        }
+      });
+    }
+
+    ref.listenManual<BoardSplitLayout?>(
+      visibleBoardSplitProvider,
+      (_, __) => replan(),
+    );
+    ref.listenManual<String?>(
+      desktopTabsProvider.select((s) => s.activeId),
+      (_, __) => replan(),
+    );
   }
 
   _DropPlan? _planFor(Object? data, Offset globalPointer) {
@@ -793,6 +866,8 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
       zone: zone,
       rect: rect,
       label: _labelFor(zone, layout, incoming),
+      layoutKey: _layoutKey(activeId, layout),
+      groupId: layout.id,
     );
   }
 
@@ -818,107 +893,253 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
   }
 
   void _hover(Object? data, Offset globalPointer) {
+    _hoverData = data;
+    _hoverPointer = globalPointer;
     _track(globalPointer);
-    final plan = _armed ? _planFor(data, globalPointer) : null;
+    // While a dropped game is opening, the workspace is busy: say so where
+    // the pointer is, instead of offering a landing area a drop would not
+    // honour.
+    var plan = _armed ? _planFor(data, globalPointer) : null;
+    if (plan != null && _pendingPlan != null) plan = plan.asBusy();
     if (plan != _plan) setState(() => _plan = plan);
   }
 
-  Future<void> _drop(Object? data, Offset globalPointer) async {
-    final armed = _armed;
+  void _endHover() {
+    _hoverData = null;
+    _hoverPointer = null;
     _resetTracking();
-    final plan = armed ? _planFor(data, globalPointer) : null;
-    if (plan == null) {
-      setState(() => _plan = null);
-      // A tab let go before the drop armed was a click on it.
-      if (!armed && data is BoardTabDragPayload) {
-        ref.read(desktopTabsProvider.notifier).activate(data.tabId);
-      }
-      return;
-    }
+    if (_plan != null) setState(() => _plan = null);
+  }
+
+  void _drop(Object? data) {
+    final armed = _armed;
+    // Act on the landing area the user saw, and only if the boards have not
+    // moved since it was planned.
+    final shown = _plan;
+    _endHover();
     final split = ref.read(boardSplitProvider.notifier);
     final tabs = ref.read(desktopTabsProvider.notifier);
+    if (!armed) {
+      // A tab let go before the drop armed was a click on it.
+      if (data is BoardTabDragPayload) tabs.activate(data.tabId);
+      return;
+    }
+    if (shown == null || shown.busy || shown.layoutKey != _currentLayoutKey) {
+      return;
+    }
     if (data is BoardTabDragPayload) {
-      setState(() => _plan = null);
-      if (split.place(
-        targetTabId: plan.targetTabId,
-        incomingTabId: data.tabId,
-        zone: plan.zone,
-      )) {
+      final open = tabs.currentState.tabs.any(
+        (t) => t.id == data.tabId && t.kind == TabKind.board,
+      );
+      if (open &&
+          split.place(
+            targetTabId: shown.targetTabId,
+            incomingTabId: data.tabId,
+            zone: shown.zone,
+          )) {
         tabs.activate(data.tabId);
       }
       return;
     }
     if (data is! GameTabDragPayload) return;
-    final layout = split.layoutFor(plan.targetTabId);
-    if (!layout.isSplit && plan.zone == BoardSplitZone.replace) {
+    if (!split.layoutFor(shown.targetTabId).isSplit &&
+        shown.zone == BoardSplitZone.replace) {
       // Nothing to split: open the game the way the tab strip does.
-      setState(() => _plan = null);
-      await data.spawnAdmitted(ref, focus: true, surface: 'board_drop');
+      unawaited(
+        data
+            .spawnAdmitted(ref, focus: true, surface: 'board_drop')
+            .catchError(_reportDropError),
+      );
       return;
     }
-    setState(() {
-      _plan = plan;
-      _opening = true;
-    });
-    final before = {for (final t in ref.read(desktopTabsProvider).tabs) t.id};
+    unawaited(_openInSplit(data, shown).catchError(_reportDropError));
+  }
+
+  void _reportDropError(Object error, StackTrace stack) {
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stack,
+        library: 'board split view',
+        context: ErrorDescription('while opening a game dropped into a split'),
+      ),
+    );
+  }
+
+  /// The drop being opened. One at a time: until its board lands (or the
+  /// marker gives up), the workspace takes no other split drop.
+  _DropPlan? _pendingPlan;
+  int _pendingToken = 0;
+
+  Future<void> _openInSplit(GameTabDragPayload data, _DropPlan plan) async {
+    if (!mounted) return;
+    final tabs = ref.read(desktopTabsProvider.notifier);
+    final token = ++_pendingToken;
+    setState(() => _pendingPlan = plan);
     void settle() {
-      if (!mounted || !_opening) return;
-      setState(() {
-        _plan = null;
-        _opening = false;
-      });
+      if (mounted && token == _pendingToken && _pendingPlan != null) {
+        setState(() => _pendingPlan = null);
+      }
     }
 
-    // A slow fetch must not hold the workspace hostage: the marker lets go
-    // after a few seconds, and the board still lands when the fetch ends.
+    final before = {for (final t in tabs.currentState.tabs) t.id};
+    var finished = false;
+    // A slow fetch must not hold the workspace hostage: after a few seconds
+    // the marker lets go and drops are taken again. A board that opens
+    // later still lands if its split is still there.
     final release = Timer(const Duration(seconds: 6), settle);
     try {
-      await data.spawnAdmitted(ref, focus: false, surface: 'board_split_drop');
+      await data
+          .spawnAdmitted(ref, focus: false, surface: 'board_split_drop')
+          .then<void>((_) {
+            finished = true;
+          });
     } finally {
       release.cancel();
       settle();
     }
     if (!mounted) return;
-    final opened = [
+    final opened = _openedBoardFor(data, before, spawnFinished: finished);
+    if (opened == null) return;
+    // Show the new board only to someone still on a board of the split it
+    // lands in (judged before placing: a replace takes the focused board
+    // itself out of the split).
+    final activeBoard = _activeBoardTabId;
+    final landedIn = _landInSplit(opened, plan);
+    if (landedIn != null &&
+        activeBoard != null &&
+        landedIn.contains(activeBoard)) {
+      tabs.activate(opened);
+    }
+  }
+
+  /// Places [opened] where [plan] aimed, inside the split it was aimed at.
+  /// If that zone is gone, beside a board still in that split. Never builds
+  /// a new split around a board that has left it or stopped being a Board.
+  /// Returns that split as it was before [opened] joined it, or null when
+  /// nothing was placed.
+  BoardSplitLayout? _landInSplit(String opened, _DropPlan plan) {
+    final split = ref.read(boardSplitProvider.notifier);
+    final targetIsBoard = ref
+        .read(desktopTabsProvider)
+        .tabs
+        .any((t) => t.id == plan.targetTabId && t.kind == TabKind.board);
+    final targetLayout = split.layoutFor(plan.targetTabId);
+    final sameSplit = targetIsBoard && targetLayout.id == plan.groupId;
+    if (sameSplit &&
+        split.place(
+          targetTabId: plan.targetTabId,
+          incomingTabId: opened,
+          zone: plan.zone,
+        )) {
+      return targetLayout;
+    }
+    // The split the drop was aimed at, wherever its boards are now.
+    BoardSplitLayout? aimed;
+    for (final group in split.current.groups) {
+      if (group.id == plan.groupId) aimed = group;
+    }
+    // Aimed at a board shown on its own that has since joined a split:
+    // that split is what the user now sees around it.
+    aimed ??=
+        sameSplit
+            ? targetLayout
+            : targetIsBoard &&
+                plan.groupId == BoardSplitLayout.single(plan.targetTabId).id
+            ? split.current.groupOf(plan.targetTabId)
+            : null;
+    if (aimed == null) return null;
+    final anchor =
+        aimed.contains(plan.targetTabId)
+            ? plan.targetTabId
+            : aimed.tabIds.first;
+    final beside = besideBoardPlacement(aimed, anchor);
+    if (beside == null) return null;
+    final placed = split.place(
+      targetTabId: beside.targetTabId,
+      incomingTabId: opened,
+      zone: beside.zone,
+    );
+    return placed ? aimed : null;
+  }
+
+  /// The Board tab [payload] opened: a tab that appeared since [before]
+  /// showing that game. When the spawn finished and exactly one Board tab
+  /// appeared that names no other game, that one (some sources key their
+  /// tabs differently). Anything else adopts nothing.
+  String? _openedBoardFor(
+    GameTabDragPayload payload,
+    Set<String> before, {
+    required bool spawnFinished,
+  }) {
+    final args = ref.read(boardTabGameArgsByTabIdProvider);
+    final fresh = [
       for (final t in ref.read(desktopTabsProvider).tabs)
         if (t.kind == TabKind.board && !before.contains(t.id)) t.id,
     ];
-    if (opened.isEmpty) return;
-    final newTabId = opened.last;
-    split.place(
-      targetTabId: plan.targetTabId,
-      incomingTabId: newTabId,
-      zone: plan.zone,
-    );
-    tabs.activate(newTabId);
+    for (final id in fresh) {
+      final a = args[id];
+      if (a != null &&
+          (a.gameId == payload.id || a.gameListSelectedId == payload.id)) {
+        return id;
+      }
+    }
+    if (!spawnFinished || fresh.length != 1) return null;
+    // A tab the user opened and is looking at is theirs, not the drop's.
+    if (fresh.single == ref.read(desktopTabsProvider).activeId) return null;
+    final a = args[fresh.single];
+    final namesOtherGame =
+        a != null &&
+        ((a.gameId != null && a.gameId != payload.id) ||
+            (a.gameListSelectedId != null &&
+                a.gameListSelectedId != payload.id));
+    return namesOtherGame ? null : fresh.single;
+  }
+
+  /// The "Opening…" marker, drawn only while the board it waits on is on
+  /// screen and the boards have not moved since.
+  _DropPlan? get _visiblePending {
+    final pending = _pendingPlan;
+    final current = _currentLayoutKey;
+    if (pending == null || current == null) return null;
+    // Moving focus between the boards does not move them; only a change of
+    // which boards are where hides the marker.
+    final boards = current.substring(current.indexOf('|') + 1);
+    return pending.boardsKey == boards ? pending : null;
   }
 
   @override
   Widget build(BuildContext context) {
     return DragTarget<Object>(
+      // Accept on payload type alone. A target that rejects a drag on entry
+      // never becomes its drop target, yet keeps receiving its moves; the
+      // board state is checked while hovering and at the drop instead.
       onWillAcceptWithDetails: (details) {
         if (!_accepts(details.data)) return false;
         _hover(details.data, details.offset);
         return true;
       },
       onMove: (details) {
-        if (_opening || !_accepts(details.data)) return;
+        if (!_accepts(details.data)) return;
         _hover(details.data, details.offset);
       },
-      onLeave: (_) {
-        _resetTracking();
-        if (_opening) return;
-        if (_plan != null) setState(() => _plan = null);
-      },
-      onAcceptWithDetails:
-          (details) => unawaited(_drop(details.data, details.offset)),
+      onLeave: (_) => _endHover(),
+      onAcceptWithDetails: (details) => _drop(details.data),
       builder: (context, candidates, rejected) {
-        final plan = _plan;
+        final pending = _visiblePending;
+        final plan = _plan ?? pending;
         return Stack(
           fit: StackFit.expand,
           children: [
             widget.child,
-            IgnorePointer(child: _DropPreview(plan: plan, opening: _opening)),
+            IgnorePointer(
+              child: _DropPreview(
+                plan: plan,
+                opening:
+                    (_plan?.busy ?? false) ||
+                    (_plan == null && pending != null),
+              ),
+            ),
           ],
         );
       },

@@ -858,6 +858,7 @@ class _BoardPaneSplitView extends StatelessWidget {
     required this.analysisToolbarWidth,
     required this.boardColumnFitWidth,
     this.inSplitCell = false,
+    this.stackedFlag,
   });
 
   final ResizableSplitViewController controller;
@@ -869,6 +870,9 @@ class _BoardPaneSplitView extends StatelessWidget {
   /// between side by side and stacked follows the cell's shape, not a fixed
   /// width: a short wide cell keeps the board beside its notation.
   final bool inSplitCell;
+
+  /// Told after each layout whether the panes are stacked.
+  final _StackedFlag? stackedFlag;
 
   /// Width at which the Analysis rail's bottom strip shows every control.
   final ValueListenable<double?> analysisToolbarWidth;
@@ -892,11 +896,13 @@ class _BoardPaneSplitView extends StatelessWidget {
         // Too narrow for the panes side by side (their minimums alone are
         // ~660 px), as in a phone-width browser window: stack the board over
         // the notation and engine, and leave the games list out.
-        if (shouldStackBoardPane(
+        final stack = shouldStackBoardPane(
           width: constraints.maxWidth,
           height: constraints.maxHeight,
           inSplitCell: inSplitCell,
-        )) {
+        );
+        stackedFlag?.value = stack;
+        if (stack) {
           final stacked = [
             for (final child in children)
               if (child.label != 'Games') child,
@@ -953,6 +959,12 @@ class _BoardPaneSplitView extends StatelessWidget {
 
 const double _kBoardPaneStackedWidth = 660;
 
+/// Whether the Board pane's last layout stacked its panes. A plain holder,
+/// not a notifier: only callbacks read it, nothing rebuilds from it.
+class _StackedFlag {
+  bool value = false;
+}
+
 /// Whether the Board pane stacks its board over the notation instead of
 /// placing them side by side.
 ///
@@ -1002,8 +1014,6 @@ class _BoardPaneContent extends HookConsumerWidget {
         ref.watch(
           desktopTabsProvider.select((state) => state.activeId == activeTabId),
         );
-    final liveStreamingAllowed = ref.watch(liveGameStreamingLifecycleProvider);
-    final isForegroundSurface = isForegroundTab && liveStreamingAllowed;
     // On screen covers a board in a visible split cell that another cell
     // holds focus for. Live moves, clocks and the rail follow it; keyboard,
     // sounds, the engine and the stream player stay with the focused board.
@@ -1011,7 +1021,11 @@ class _BoardPaneContent extends HookConsumerWidget {
         isForegroundTab ||
         (activeTabId != null &&
             ref.watch(boardTabOnScreenProvider(activeTabId)));
-    final isOnScreenSurface = isOnScreen && liveStreamingAllowed;
+    // Only boards on screen follow the app lifecycle; a hidden tab must not
+    // rebuild each time the window is focused or minimised.
+    final isOnScreenSurface =
+        isOnScreen && ref.watch(liveGameStreamingLifecycleProvider);
+    final isForegroundSurface = isForegroundTab && isOnScreenSurface;
     // Columns of the split this board is a cell of; 0 when it is not in one.
     // Its own membership, not the visible split: switching to another tab
     // must not flip a hidden cell's layout (that rebuilt its games rail).
@@ -1287,6 +1301,8 @@ class _BoardPaneContent extends HookConsumerWidget {
     // away and back requires another explicit reveal, even for the same game.
     // Controller for the outer board pane split — used so the in-pane
     // close button on the left games rail can collapse the rail itself.
+    // Set by the split view from its last layout: stacked or side by side.
+    final boardPaneStacked = useMemoized(() => _StackedFlag(), const []);
     final mainSplitController = useMemoized<ResizableSplitViewController>(
       () => ResizableSplitViewController(),
       const [],
@@ -1322,10 +1338,17 @@ class _BoardPaneContent extends HookConsumerWidget {
     // (and closure) every time made Flutter re-run its heavy build on each
     // move step, engine-arrow change and live move of the open game.
     final gamesRailTabId = activeTabId ?? 'board-default';
+    // Keyed globally so a rail on screen moves, state and all, when the
+    // pane's split view is rebuilt on entering or leaving a split. A rail
+    // that is collapsed or dropped (stacked) is unmounted, as it always was.
+    final gamesRailKey = useMemoized(GlobalKey.new, const []);
     final gamesRail = useMemoized(
-      () => EventGamesTable(
-        tabId: gamesRailTabId,
-        onClose: () => mainSplitController.collapse(0),
+      () => KeyedSubtree(
+        key: gamesRailKey,
+        child: EventGamesTable(
+          tabId: gamesRailTabId,
+          onClose: () => mainSplitController.collapse(0),
+        ),
       ),
       [gamesRailTabId],
     );
@@ -5527,8 +5550,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     useEffect(() {
       if (!isForegroundTab) return null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        // A press inside this board (its rail, a field) already placed
+        // focus in the pane; only fetch it when it is somewhere else.
         if (context.mounted &&
             focusNode.context != null &&
+            !focusNode.hasFocus &&
             ref.read(desktopTabsProvider).activeId == activeTabId) {
           focusNode.requestFocus();
         }
@@ -5962,6 +5988,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           canRequestFocus: true,
           child: _BoardPaneSplitView(
             inSplitCell: inSplitCell,
+            stackedFlag: boardPaneStacked,
             controller: mainSplitController,
             analysisToolbarWidth: analysisToolbarWidth,
             boardColumnFitWidth: boardColumnFitWidth,
@@ -6125,6 +6152,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                                         : 0.0;
                                 final targetColumnSize =
                                     size + evalBarReservation + 48;
+                                // Stacked, the split runs top to bottom and
+                                // has no games rail: index and size both
+                                // describe a column that is not there.
+                                if (boardPaneStacked.value) return;
                                 mainSplitController.setSize(
                                   boardSplitIndex,
                                   targetColumnSize,

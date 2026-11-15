@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show Offset, Rect, Size;
 
@@ -387,7 +388,10 @@ List<(double, double)> _spans(
   final room = math.max(0.0, total - kBoardSplitGutter);
   final floor = math.min(minSpan, room / 2);
   final first = (room * fraction).clamp(floor, room - floor).toDouble();
-  return [(0, first), (first + kBoardSplitGutter, total)];
+  // An area thinner than the gutter still yields two empty spans, never a
+  // negative one.
+  final second = math.min(first + kBoardSplitGutter, total);
+  return [(0, first), (second, math.max(second, total))];
 }
 
 /// Which zone a pointer at [local] inside a cell of [cellSize] picks.
@@ -446,6 +450,14 @@ class BoardSplitState {
 
 class BoardSplitNotifier extends StateNotifier<BoardSplitState> {
   BoardSplitNotifier() : super(const BoardSplitState());
+
+  String? _keepHistoryOnCloseOf;
+
+  /// The tab strip marks a close that starts from the close button of a
+  /// tab the same press selected (the press on a background tab activates
+  /// it first). Closing it returns to the tab history picks, instead of
+  /// moving focus into the split that tab belonged to.
+  void keepHistoryOnClose(String tabId) => _keepHistoryOnCloseOf = tabId;
 
   BoardSplitState get current => state;
 
@@ -546,9 +558,53 @@ final boardSplitProvider =
       // Closing a tab, or navigating it away from the Board, takes it out of
       // its split; the rest of the group closes up around the gap.
       ref.listen<DesktopTabsState>(desktopTabsProvider, (previous, next) {
+        final closedActiveId = previous?.activeId;
+        final closedGroup = notifier.current.groupOf(closedActiveId);
+        final keepHistory = notifier._keepHistoryOnCloseOf;
+        // Left the tab without closing it: the mark no longer applies.
+        if (keepHistory != null &&
+            next.activeId != keepHistory &&
+            next.tabs.any((t) => t.id == keepHistory)) {
+          notifier._keepHistoryOnCloseOf = null;
+        }
         notifier.retainBoardTabs({
           for (final tab in next.tabs)
             if (tab.kind == TabKind.board) tab.id,
+        });
+        // The focused board of a visible split was closed and tab history
+        // picked a tab outside the split, hiding the boards still in it:
+        // focus the cell beside the closed one instead.
+        if (closedActiveId == null ||
+            closedGroup == null ||
+            next.tabs.any((t) => t.id == closedActiveId) ||
+            closedGroup.contains(next.activeId ?? '') ||
+            ref.read(boardFocusModeProvider)) {
+          return;
+        }
+        final tabs = ref.read(desktopTabsProvider.notifier);
+        // Close others / close to the right name their successor.
+        if (!tabs.lastCloseSuccessorFromHistory) return;
+        // Closed from the close button of a tab its own press selected: the
+        // split was never really in view, keep history's pick.
+        if (closedActiveId == keepHistory) {
+          notifier._keepHistoryOnCloseOf = null;
+          return;
+        }
+        final neighbour = splitNeighbourAfterClose(
+          closedGroup,
+          closedActiveId,
+          openTabIds: {for (final tab in next.tabs) tab.id},
+        );
+        if (neighbour == null) return;
+        final pickedByHistory = next.activeId;
+        // Not while the tab state is still notifying its listeners; and not
+        // if anything moved the active tab again in the meantime.
+        scheduleMicrotask(() {
+          final current = tabs.currentState;
+          if (current.activeId != pickedByHistory) return;
+          if (current.tabs.any((t) => t.id == neighbour)) {
+            tabs.activate(neighbour);
+          }
         });
       });
       return notifier;
@@ -573,8 +629,53 @@ final visibleBoardSplitProvider = Provider<BoardSplitLayout?>((ref) {
 final boardTabOnScreenProvider = Provider.family<bool, String>((ref, tabId) {
   final activeId = ref.watch(desktopTabsProvider.select((s) => s.activeId));
   if (activeId == tabId) return true;
-  return ref.watch(visibleBoardSplitProvider)?.contains(tabId) ?? false;
+  if (ref.watch(visibleBoardSplitProvider)?.contains(tabId) ?? false) {
+    return true;
+  }
+  // A press on a tab switches at once, and may turn into a pull that brings
+  // the previous board straight back. Until the press ends, that board (and
+  // its split) still counts as on screen, so the blip resets nothing.
+  final held = ref.watch(boardPressHeldTabProvider);
+  if (held == null || ref.watch(boardFocusModeProvider)) return false;
+  if (held == tabId) return true;
+  return ref
+          .watch(boardSplitProvider.select((s) => s.groupOf(held)))
+          ?.contains(tabId) ??
+      false;
 });
+
+/// The Board tab that was on screen when a press on another tab began, set
+/// for the length of that press by the tab strip. See
+/// [boardTabOnScreenProvider].
+final boardPressHeldTabProvider = StateProvider<String?>((ref) => null);
+
+/// The cell to focus after the focused board [closedTabId] of [group]
+/// closed: the other board in its column, else the board level with it in
+/// the other column, else any board still open.
+@visibleForTesting
+String? splitNeighbourAfterClose(
+  BoardSplitLayout group,
+  String closedTabId, {
+  required Set<String> openTabIds,
+}) {
+  final at = group.locate(closedTabId);
+  if (at == null) return null;
+  bool open(String id) => id != closedTabId && openTabIds.contains(id);
+  final column = group.columns[at.column];
+  for (final id in column) {
+    if (open(id)) return id;
+  }
+  for (var c = 0; c < group.columns.length; c++) {
+    if (c == at.column) continue;
+    final other = group.columns[c];
+    final level = other[math.min(at.row, other.length - 1)];
+    if (open(level)) return level;
+    for (final id in other) {
+      if (open(id)) return id;
+    }
+  }
+  return null;
+}
 
 /// Where "open beside" puts a board next to [targetTabId]: a new column on
 /// the right, else below the target, else below a board in the other column.
