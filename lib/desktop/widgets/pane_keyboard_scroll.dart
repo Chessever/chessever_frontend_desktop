@@ -17,9 +17,15 @@ import 'package:flutter/services.dart';
 /// stops propagation, so these arrow bindings act only as a fallback for
 /// ordinary scrollable pages without their own row/card navigation.
 class PaneKeyboardScroll extends StatefulWidget {
-  const PaneKeyboardScroll({super.key, required this.child});
+  const PaneKeyboardScroll({super.key, required this.child, this.active});
 
   final Widget child;
+
+  /// Whether this pane owns the keyboard fallback. Null follows the
+  /// surrounding [TickerMode], which is right while one pane is visible at a
+  /// time. A split workspace shows several panes with tickers running, and
+  /// only the focused one may claim focus or answer PageUp / PageDown.
+  final bool? active;
 
   @override
   State<PaneKeyboardScroll> createState() => _PaneKeyboardScrollState();
@@ -54,16 +60,32 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
     if (identical(notifier, _tickerMode)) return;
     _tickerMode?.removeListener(_handleTickerModeChanged);
     _tickerMode = notifier..addListener(_handleTickerModeChanged);
-    if (notifier.value.enabled) _scheduleFocusClaim();
+    if (notifier.value.enabled && widget.active != false) {
+      _scheduleFocusClaim();
+    }
+  }
+
+  bool get _active => widget.active ?? TickerMode.valuesOf(context).enabled;
+
+  @override
+  void didUpdateWidget(covariant PaneKeyboardScroll oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active == true && oldWidget.active != true) {
+      _scheduleFocusClaim();
+    }
   }
 
   void _handleTickerModeChanged() {
-    if (_tickerMode?.value.enabled == true) _scheduleFocusClaim();
+    if (_tickerMode?.value.enabled == true && widget.active != false) {
+      _scheduleFocusClaim();
+    }
   }
 
   void _scheduleFocusClaim() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
+      if (!mounted || !TickerMode.valuesOf(context).enabled || !_active) {
+        return;
+      }
       if (_canClaimFocus()) _focusNode.requestFocus();
     });
   }
@@ -120,7 +142,8 @@ class _PaneKeyboardScrollState extends State<PaneKeyboardScroll> {
   bool _handleHardwareKey(KeyEvent event) {
     if (!mounted ||
         !_focusNode.canRequestFocus ||
-        !TickerMode.valuesOf(context).enabled) {
+        !TickerMode.valuesOf(context).enabled ||
+        !_active) {
       return false;
     }
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;

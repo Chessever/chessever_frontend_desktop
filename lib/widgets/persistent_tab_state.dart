@@ -80,9 +80,9 @@ class PersistentIndexedStack extends StatelessWidget {
             enabled: index == i,
             child: Offstage(
               offstage: index != i,
-              child: _FreezeLayoutWhenHidden(
+              child: FreezeLayoutWhenHidden(
                 frozen: index != i,
-                child: _FreezeMediaQueryWhenHidden(
+                child: FreezeMediaQueryWhenHidden(
                   frozen: index != i,
                   child: ExcludeFocus(
                     excluding: index != i,
@@ -106,26 +106,26 @@ class PersistentIndexedStack extends StatelessWidget {
 /// A clean child laid out at unchanged constraints returns immediately, so a
 /// hidden tab costs nothing when the window resizes. Unfreezing marks the
 /// slot dirty and the child gets the live constraints in that same frame.
-class _FreezeLayoutWhenHidden extends SingleChildRenderObjectWidget {
-  const _FreezeLayoutWhenHidden({required this.frozen, super.child});
+class FreezeLayoutWhenHidden extends SingleChildRenderObjectWidget {
+  const FreezeLayoutWhenHidden({super.key, required this.frozen, super.child});
 
   final bool frozen;
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _RenderFreezeLayout(frozen);
+      RenderFreezeLayoutWhenHidden(frozen);
 
   @override
   void updateRenderObject(
     BuildContext context,
-    _RenderFreezeLayout renderObject,
+    RenderFreezeLayoutWhenHidden renderObject,
   ) {
     renderObject.frozen = frozen;
   }
 }
 
-class _RenderFreezeLayout extends RenderProxyBox {
-  _RenderFreezeLayout(this._frozen);
+class RenderFreezeLayoutWhenHidden extends RenderProxyBox {
+  RenderFreezeLayoutWhenHidden(this._frozen);
 
   bool _frozen;
   BoxConstraints? _lastConstraints;
@@ -163,8 +163,9 @@ class _RenderFreezeLayout extends RenderProxyBox {
 /// hidden tab's MediaQuery dependents do not rebuild on every resize frame.
 /// Always inserts a MediaQuery so the tree shape (and tab state) never
 /// changes when the slot hides or shows.
-class _FreezeMediaQueryWhenHidden extends StatefulWidget {
-  const _FreezeMediaQueryWhenHidden({
+class FreezeMediaQueryWhenHidden extends StatefulWidget {
+  const FreezeMediaQueryWhenHidden({
+    super.key,
     required this.frozen,
     required this.child,
   });
@@ -173,12 +174,12 @@ class _FreezeMediaQueryWhenHidden extends StatefulWidget {
   final Widget child;
 
   @override
-  State<_FreezeMediaQueryWhenHidden> createState() =>
+  State<FreezeMediaQueryWhenHidden> createState() =>
       _FreezeMediaQueryWhenHiddenState();
 }
 
 class _FreezeMediaQueryWhenHiddenState
-    extends State<_FreezeMediaQueryWhenHidden> {
+    extends State<FreezeMediaQueryWhenHidden> {
   MediaQueryData? _frozenData;
 
   @override

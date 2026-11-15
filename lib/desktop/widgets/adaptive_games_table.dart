@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/game_drag_source.dart';
+import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
@@ -155,6 +157,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
     this.onRowDoubleTap,
     this.onRowSecondaryTap,
     this.onRowHover,
+    this.rowDragPayload,
     this.rowSublineBuilder,
     this.rowDecorationBuilder,
     this.rowKeyBuilder,
@@ -238,6 +241,10 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
   /// that same single selection/focus model.
   final void Function(T row, int rowIndex)? onRowHover;
 
+  /// When it returns a payload, the row can be dragged onto the tab strip or
+  /// the Board workspace, where the drop opens that game beside the board.
+  final GameTabDragPayload? Function(T row)? rowDragPayload;
+
   /// Optional full-width line rendered below each row's column cells. The
   /// builder may return null to keep that row single-line. This is useful for
   /// dense chess continuations where the text should consume the visible rail
@@ -312,6 +319,7 @@ class AdaptiveGamesTable<T> extends StatelessWidget {
                       onRowDoubleTap: onRowDoubleTap,
                       onRowSecondaryTap: onRowSecondaryTap,
                       onRowHover: onRowHover,
+                      rowDragPayload: rowDragPayload,
                       rowSublineBuilder: rowSublineBuilder,
                       rowDecorationBuilder: rowDecorationBuilder,
                       rowKeyBuilder: rowKeyBuilder,
@@ -399,6 +407,7 @@ class _SingleTableBody<T> extends StatefulWidget {
     required this.onRowDoubleTap,
     required this.onRowSecondaryTap,
     required this.onRowHover,
+    required this.rowDragPayload,
     required this.rowSublineBuilder,
     required this.rowDecorationBuilder,
     required this.rowKeyBuilder,
@@ -432,6 +441,7 @@ class _SingleTableBody<T> extends StatefulWidget {
   final void Function(T row, {required bool inNewTab})? onRowDoubleTap;
   final void Function(T row, Offset globalPosition)? onRowSecondaryTap;
   final void Function(T row, int rowIndex)? onRowHover;
+  final GameTabDragPayload? Function(T row)? rowDragPayload;
   final Widget? Function(BuildContext context, T row)? rowSublineBuilder;
   final BoxDecoration? Function(T row, bool hovered)? rowDecorationBuilder;
   final Key? Function(T row)? rowKeyBuilder;
@@ -515,6 +525,7 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
       identical(a.onRowDoubleTap, b.onRowDoubleTap) &&
       identical(a.onRowSecondaryTap, b.onRowSecondaryTap) &&
       identical(a.onRowHover, b.onRowHover) &&
+      identical(a.rowDragPayload, b.rowDragPayload) &&
       identical(a.rowSublineBuilder, b.rowSublineBuilder) &&
       identical(a.rowDecorationBuilder, b.rowDecorationBuilder) &&
       identical(a.rowKeyBuilder, b.rowKeyBuilder) &&
@@ -908,34 +919,39 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
       includeBottomSeparator: rowIndex < widget.rows.length - 1,
     );
 
-    final sublineContent = MouseRegion(
-      onEnter: widget.enableRowHover ? (_) => _setHover(rowIndex) : null,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown:
-            widget.onRowTap == null && widget.onRowDoubleTap == null
-                ? null
-                : _captureGestureModifiers,
-        onTap:
-            widget.onRowTap == null
-                ? null
-                : () => widget.onRowTap!(
-                  row,
-                  inNewTab: _newTabForGesture(),
-                  shiftPressed: _shiftForGesture(),
-                ),
-        onDoubleTap:
-            widget.onRowDoubleTap == null
-                ? null
-                : () =>
-                    widget.onRowDoubleTap!(row, inNewTab: _newTabForGesture()),
-        onSecondaryTapUp:
-            widget.onRowSecondaryTap == null
-                ? null
-                : (d) => widget.onRowSecondaryTap!(row, d.globalPosition),
-        child: Padding(
-          padding: widget.padding.add(const EdgeInsets.only(bottom: 7)),
-          child: subline,
+    final Widget sublineContent = _draggableRow(
+      row,
+      MouseRegion(
+        onEnter: widget.enableRowHover ? (_) => _setHover(rowIndex) : null,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown:
+              widget.onRowTap == null && widget.onRowDoubleTap == null
+                  ? null
+                  : _captureGestureModifiers,
+          onTap:
+              widget.onRowTap == null
+                  ? null
+                  : () => widget.onRowTap!(
+                    row,
+                    inNewTab: _newTabForGesture(),
+                    shiftPressed: _shiftForGesture(),
+                  ),
+          onDoubleTap:
+              widget.onRowDoubleTap == null
+                  ? null
+                  : () => widget.onRowDoubleTap!(
+                    row,
+                    inNewTab: _newTabForGesture(),
+                  ),
+          onSecondaryTapUp:
+              widget.onRowSecondaryTap == null
+                  ? null
+                  : (d) => widget.onRowSecondaryTap!(row, d.globalPosition),
+          child: Padding(
+            padding: widget.padding.add(const EdgeInsets.only(bottom: 7)),
+            child: subline,
+          ),
         ),
       ),
     );
@@ -1045,9 +1061,18 @@ class _SingleTableBodyState<T> extends State<_SingleTableBody<T>> {
             widget.onRowSecondaryTap == null
                 ? null
                 : (d) => widget.onRowSecondaryTap!(row, d.globalPosition),
-        child: child,
+        child: _draggableRow(row, child),
       ),
     );
+  }
+
+  /// Wraps one cell of [row] so pressing anywhere on the row and dragging
+  /// lifts its game. Every cell carries the same payload: a table row has no
+  /// single widget of its own to wrap.
+  Widget _draggableRow(T row, Widget cell) {
+    final payload = widget.rowDragPayload?.call(row);
+    if (payload == null) return cell;
+    return GameDragSource(payload: payload, child: cell);
   }
 }
 

@@ -18,6 +18,9 @@ import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
+import 'package:chessever/desktop/shell/board_split_workspace.dart';
+import 'package:chessever/desktop/state/board_focus_mode.dart';
+import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -687,6 +690,91 @@ class _TabChipState extends ConsumerState<_TabChip>
   Offset? _primaryDragStart;
   bool _detachTriggered = false;
 
+  /// Set on a press of this Board tab when pulling it down could drop it
+  /// into a split: the board that was on screen before the press (which
+  /// the press then switches away from), or this tab's own visible split.
+  String? _pullTargetBoardId;
+  bool _pullWithinSplit = false;
+  bool _pulledIntoSplit = false;
+
+  /// Downward travel from the press to just past the chip's bottom edge:
+  /// the pull starts once the pointer leaves the chip, never on a wobble.
+  double _pullDistance = 24;
+
+  void _measurePullDistance(Offset globalPress) {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final bottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+    _pullDistance = math.max(12, bottom - globalPress.dy + 4);
+  }
+
+  bool get _pullAllowed => _pullTargetBoardId != null || _pullWithinSplit;
+
+  /// Records, before the press activates this tab, what a pull could drop
+  /// beside.
+  void _capturePullTarget() {
+    _pullTargetBoardId = null;
+    _pullWithinSplit = false;
+    if (widget.readOnlyPresentation ||
+        widget.tab.kind != TabKind.board ||
+        ref.read(boardFocusModeProvider)) {
+      return;
+    }
+    final visibleSplit = ref.read(visibleBoardSplitProvider);
+    if (visibleSplit?.contains(widget.tab.id) ?? false) {
+      _pullWithinSplit = true;
+      return;
+    }
+    final tabs = ref.read(desktopTabsProvider);
+    final active = tabs.active;
+    if (active != null &&
+        active.kind == TabKind.board &&
+        active.id != widget.tab.id &&
+        tabs.tabs.any((t) => t.id == active.id)) {
+      _pullTargetBoardId = active.id;
+    }
+  }
+
+  void _onPullStarted() {
+    _pulledIntoSplit = true;
+    // The press showed this tab; bring back the board it is being pulled
+    // onto, so the drop preview sits over the board the user was viewing.
+    final target = _pullTargetBoardId;
+    if (target != null) {
+      ref.read(desktopTabsProvider.notifier).activate(target);
+    }
+  }
+
+  void _openBesideActiveBoard() {
+    final activeId = ref.read(desktopTabsProvider).activeId;
+    if (activeId == null) return;
+    final split = ref.read(boardSplitProvider.notifier);
+    final placement = besideBoardPlacement(split.layoutFor(activeId), activeId);
+    if (placement == null) return;
+    if (split.place(
+      targetTabId: placement.targetTabId,
+      incomingTabId: widget.tab.id,
+      zone: placement.zone,
+    )) {
+      ref.read(desktopTabsProvider.notifier).activate(widget.tab.id);
+    }
+  }
+
+  void _onPullEnd(DraggableDetails details) {
+    _pulledIntoSplit = false;
+    if (details.wasAccepted || !mounted) return;
+    final view = View.of(context);
+    final bounds = Offset.zero & (view.physicalSize / view.devicePixelRatio);
+    if (!kIsWeb && !bounds.contains(details.offset)) {
+      // Let go outside the window: tear the tab off into its own window,
+      // the way pulling a tab out of the strip always did.
+      unawaited(_moveToNewWindow());
+      return;
+    }
+    // Let go somewhere that is not a board: it was a click on the tab.
+    widget.onActivate();
+  }
+
   Future<void> _moveToNewWindow() async {
     final container = ProviderScope.containerOf(context, listen: false);
     await detachBoardTabToWindow(container, widget.tab.id);
@@ -722,6 +810,21 @@ class _TabChipState extends ConsumerState<_TabChip>
                     ) !=
                     null));
     final isMuted = ref.read(boardTabSoundMuteProvider).contains(widget.tab.id);
+    final activeTabId = tabsState.activeId;
+    final activeIsBoard = tabsState.active?.kind == TabKind.board;
+    final splitState = ref.read(boardSplitProvider);
+    final inSplit = splitState.groupOf(widget.tab.id) != null;
+    final canOpenBeside =
+        isBoardTab &&
+        activeIsBoard &&
+        activeTabId != null &&
+        activeTabId != widget.tab.id &&
+        !(splitState.groupOf(activeTabId)?.contains(widget.tab.id) ?? false) &&
+        besideBoardPlacement(
+              ref.read(boardSplitProvider.notifier).layoutFor(activeTabId),
+              activeTabId,
+            ) !=
+            null;
 
     final picked = await showMenu<_TabAction>(
       context: context,
@@ -740,6 +843,22 @@ class _TabChipState extends ConsumerState<_TabChip>
               icon:
                   isMuted ? Icons.volume_up_rounded : Icons.volume_off_rounded,
               label: isMuted ? 'Unmute tab' : 'Mute tab',
+            ),
+          ),
+        if (canOpenBeside)
+          const PopupMenuItem<_TabAction>(
+            value: _TabAction.openBeside,
+            child: _MenuRow(
+              icon: Icons.vertical_split_rounded,
+              label: 'Show beside current board',
+            ),
+          ),
+        if (inSplit)
+          const PopupMenuItem<_TabAction>(
+            value: _TabAction.leaveSplit,
+            child: _MenuRow(
+              icon: Icons.open_in_full_rounded,
+              label: 'Move out of split view',
             ),
           ),
         if (canMoveToWindow)
@@ -780,6 +899,11 @@ class _TabChipState extends ConsumerState<_TabChip>
     switch (picked) {
       case _TabAction.toggleMute:
         ref.read(boardTabSoundMuteProvider.notifier).toggle(widget.tab.id);
+      case _TabAction.openBeside:
+        _openBesideActiveBoard();
+      case _TabAction.leaveSplit:
+        ref.read(boardSplitProvider.notifier).remove(widget.tab.id);
+        notifier.activate(widget.tab.id);
       case _TabAction.moveToWindow:
         await _moveToNewWindow();
       case _TabAction.close:
@@ -798,9 +922,22 @@ class _TabChipState extends ConsumerState<_TabChip>
     // step *above* the strip (#1A) using `kBlack3Color` (#25) so each
     // chip is a discrete shape rather than dissolving into the strip;
     // hover lifts another step to `kDividerColor` (#2C).
+    // A board shown in the visible split but not focused sits between the
+    // two: on screen, so closer to the content fill than a background tab.
+    final onScreenInSplit =
+        !widget.readOnlyPresentation &&
+        !widget.active &&
+        widget.tab.kind == TabKind.board &&
+        ref.watch(
+          visibleBoardSplitProvider.select(
+            (group) => group?.contains(widget.tab.id) ?? false,
+          ),
+        );
     final Color color =
         widget.active
             ? kBackgroundColor
+            : onScreenInSplit
+            ? (_hovered ? kBlack3Color : _kSplitMemberTabColor)
             : (_hovered ? kDividerColor : kBlack3Color);
     const fg = kWhiteColor;
 
@@ -843,7 +980,7 @@ class _TabChipState extends ConsumerState<_TabChip>
     //   inner padding: 14 px h / 8 px v so the icon + label + close button
     //   are not glued to the chip edges.
     // Tab buttons stay fixed on hover and activation; selection uses color only.
-    return Padding(
+    final chip = Padding(
       padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
       child: ClickCursor(
         child: MouseRegion(
@@ -856,6 +993,9 @@ class _TabChipState extends ConsumerState<_TabChip>
               if (btn & kPrimaryMouseButton != 0) {
                 _primaryDragStart = event.position;
                 _detachTriggered = false;
+                _pulledIntoSplit = false;
+                _capturePullTarget();
+                _measurePullDistance(event.position);
                 widget.onActivate();
               } else if (btn & kTertiaryButton != 0) {
                 // Middle-click — Chrome closes the tab.
@@ -869,6 +1009,8 @@ class _TabChipState extends ConsumerState<_TabChip>
               // in a browser it would only surprise.
               if (kIsWeb ||
                   _detachTriggered ||
+                  _pulledIntoSplit ||
+                  _pullAllowed ||
                   widget.tab.kind != TabKind.board ||
                   (event.buttons & kPrimaryMouseButton) == 0) {
                 return;
@@ -963,6 +1105,24 @@ class _TabChipState extends ConsumerState<_TabChip>
           ),
         ),
       ),
+    );
+    if (widget.readOnlyPresentation || widget.tab.kind != TabKind.board) {
+      return chip;
+    }
+    // Pulling a Board tab down drops it beside the board being viewed. The
+    // press decides whether there is such a board; without one the pull
+    // keeps tearing the tab off into its own window.
+    return BoardTabDragSource(
+      payload: BoardTabDragPayload(
+        tabId: widget.tab.id,
+        label: widget.tab.title,
+      ),
+      pullDownOnly: true,
+      canStart: () => _pullAllowed,
+      pullDistance: () => _pullDistance,
+      onDragStarted: _onPullStarted,
+      onDragEnd: _onPullEnd,
+      child: chip,
     );
   }
 }
@@ -1542,7 +1702,19 @@ class _HorizontalSplit extends StatelessWidget {
   }
 }
 
-enum _TabAction { toggleMute, moveToWindow, close, closeOthers, closeRight }
+/// A Board tab on screen in the split but not focused: sunk toward the
+/// content fill (the focused tab merges into it), clearly below the strip.
+const Color _kSplitMemberTabColor = Color(0xFF131316);
+
+enum _TabAction {
+  toggleMute,
+  openBeside,
+  leaveSplit,
+  moveToWindow,
+  close,
+  closeOthers,
+  closeRight,
+}
 
 class _MenuRow extends StatelessWidget {
   const _MenuRow({required this.icon, required this.label});
@@ -1556,7 +1728,14 @@ class _MenuRow extends StatelessWidget {
       children: [
         Icon(icon, size: 14, color: kWhiteColor70),
         const SizedBox(width: 10),
-        Text(label, style: const TextStyle(color: kWhiteColor, fontSize: 13)),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: kWhiteColor, fontSize: 13),
+          ),
+        ),
       ],
     );
   }
