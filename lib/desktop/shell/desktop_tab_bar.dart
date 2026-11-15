@@ -18,6 +18,9 @@ import 'package:chessever/desktop/services/desktop_board_window_service.dart';
 import 'package:chessever/desktop/services/desktop_share_actions.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_player.dart';
+import 'package:chessever/desktop/shell/board_split_workspace.dart';
+import 'package:chessever/desktop/state/board_focus_mode.dart';
+import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -153,7 +156,14 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
     });
   }
 
-  Future<void> _closeTabWithUnsavedAnalysisGuard(String tabId) async {
+  /// [keepHistory]: the close started from the close button of a tab its
+  /// own press selected, so the tab history's pick stands (see
+  /// [BoardSplitNotifier.keepHistoryOnClose]). Marked only once the close
+  /// really happens, after any confirmation.
+  Future<void> _closeTabWithUnsavedAnalysisGuard(
+    String tabId, {
+    bool keepHistory = false,
+  }) async {
     if (boardTabHasUnsavedAnalysis(tabId: tabId, read: ref.read)) {
       if (_closeConfirmationOpen) return;
       _closeConfirmationOpen = true;
@@ -161,6 +171,9 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
         context,
       ).whenComplete(() => _closeConfirmationOpen = false);
       if (!mounted || !confirmed) return;
+    }
+    if (keepHistory) {
+      ref.read(boardSplitProvider.notifier).keepHistoryOnClose(tabId);
     }
     ref.read(desktopTabsProvider.notifier).close(tabId);
   }
@@ -240,9 +253,14 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                         _revealedActiveId = state.activeId;
                         final tabs = state.tabs;
                         final activeId = state.activeId;
-                        WidgetsBinding.instance.addPostFrameCallback(
-                          (_) => _revealActiveTab(tabs, activeId, widths),
-                        );
+                        // A tab pulled into the split re-selects the board it
+                        // is dropped on; scrolling the strip for that could
+                        // unmount the pulled chip mid-drag.
+                        if (_pullingChip == null) {
+                          WidgetsBinding.instance.addPostFrameCallback(
+                            (_) => _revealActiveTab(tabs, activeId, widths),
+                          );
+                        }
                       }
                       // Window-resize frames re-run this builder even when
                       // every chip keeps its width. Returning the identical
@@ -330,6 +348,15 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                                 ? () => unawaited(
                                                   _closeTabWithUnsavedAnalysisGuard(
                                                     tab.id,
+                                                  ),
+                                                )
+                                                : null,
+                                        onCloseKeepingHistory:
+                                            tab.closable
+                                                ? () => unawaited(
+                                                  _closeTabWithUnsavedAnalysisGuard(
+                                                    tab.id,
+                                                    keepHistory: true,
                                                   ),
                                                 )
                                                 : null,
@@ -667,6 +694,7 @@ class _TabChip extends ConsumerStatefulWidget {
     required this.active,
     required this.onActivate,
     required this.onClose,
+    this.onCloseKeepingHistory,
   });
 
   final DesktopTab tab;
@@ -674,6 +702,10 @@ class _TabChip extends ConsumerStatefulWidget {
   final bool active;
   final VoidCallback onActivate;
   final VoidCallback? onClose;
+
+  /// [onClose] for a close whose successor tab history should pick even if
+  /// the tab sits in a split.
+  final VoidCallback? onCloseKeepingHistory;
 
   @override
   ConsumerState<_TabChip> createState() => _TabChipState();
@@ -686,6 +718,150 @@ class _TabChipState extends ConsumerState<_TabChip>
   bool _hovered = false;
   Offset? _primaryDragStart;
   bool _detachTriggered = false;
+
+  /// Set on a press of this Board tab when pulling it down could drop it
+  /// into a split: the board that was on screen before the press (which
+  /// the press then switches away from), or this tab's own visible split.
+  String? _pullTargetBoardId;
+  bool _pullWithinSplit = false;
+  bool _pulledIntoSplit = false;
+
+  /// Downward travel from the press to just past the chip's bottom edge:
+  /// the pull starts once the pointer leaves the chip, never on a wobble.
+  double _pullDistance = 24;
+
+  void _measurePullDistance(Offset globalPress) {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final bottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+    _pullDistance = math.max(12, bottom - globalPress.dy + 4);
+  }
+
+  bool get _pullAllowed => _pullTargetBoardId != null || _pullWithinSplit;
+
+  /// Records, before the press activates this tab, what a pull could drop
+  /// beside.
+  void _capturePullTarget() {
+    _pullTargetBoardId = null;
+    _pullWithinSplit = false;
+    if (widget.readOnlyPresentation ||
+        widget.tab.kind != TabKind.board ||
+        ref.read(boardFocusModeProvider)) {
+      return;
+    }
+    final visibleSplit = ref.read(visibleBoardSplitProvider);
+    if (visibleSplit?.contains(widget.tab.id) ?? false) {
+      _pullWithinSplit = true;
+      return;
+    }
+    final tabs = ref.read(desktopTabsProvider);
+    final active = tabs.active;
+    if (active != null &&
+        active.kind == TabKind.board &&
+        active.id != widget.tab.id &&
+        tabs.tabs.any((t) => t.id == active.id)) {
+      _pullTargetBoardId = active.id;
+    }
+  }
+
+  /// The board held on screen for the current press, and who holds it.
+  String? _heldBoardId;
+  StateController<String?>? _heldController;
+
+  /// Keeps the board that was on screen "on screen" while this press lasts:
+  /// the press switches to this tab at once, and a pull brings that board
+  /// straight back. Without the hold the blip would hide its Game Report
+  /// and drop its live subscriptions.
+  void _holdBoardForPress() {
+    final target = _pullTargetBoardId;
+    if (target == null) return;
+    final controller = ref.read(boardPressHeldTabProvider.notifier);
+    controller.state = target;
+    _heldBoardId = target;
+    _heldController = controller;
+  }
+
+  void _releaseHeldBoard() {
+    final controller = _heldController;
+    final held = _heldBoardId;
+    _heldController = null;
+    _heldBoardId = null;
+    if (controller != null && controller.state == held) {
+      controller.state = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    final controller = _heldController;
+    final held = _heldBoardId;
+    if (identical(_pullingChip, this)) _pullingChip = null;
+    // Not while the tree is being torn down.
+    if (controller != null) {
+      scheduleMicrotask(() {
+        if (controller.state == held) controller.state = null;
+      });
+    }
+    super.dispose();
+  }
+
+  void _onPullStarted() {
+    _pulledIntoSplit = true;
+    _pullingChip = this;
+    // The press showed this tab; bring back the board it is being pulled
+    // onto, so the drop preview sits over the board the user was viewing.
+    final target = _pullTargetBoardId;
+    if (target != null) {
+      ref.read(desktopTabsProvider.notifier).activate(target);
+    }
+  }
+
+  void _openBesideActiveBoard() {
+    final activeId = ref.read(desktopTabsProvider).activeId;
+    if (activeId == null) return;
+    final split = ref.read(boardSplitProvider.notifier);
+    final placement = besideBoardPlacement(split.layoutFor(activeId), activeId);
+    if (placement == null) return;
+    if (split.place(
+      targetTabId: placement.targetTabId,
+      incomingTabId: widget.tab.id,
+      zone: placement.zone,
+    )) {
+      ref.read(desktopTabsProvider.notifier).activate(widget.tab.id);
+    }
+  }
+
+  void _onPullEnd(DraggableDetails details) {
+    _pulledIntoSplit = false;
+    if (identical(_pullingChip, this)) _pullingChip = null;
+    _releaseHeldBoard();
+    if (details.wasAccepted || !mounted) return;
+    final view = View.of(context);
+    final bounds = Offset.zero & (view.physicalSize / view.devicePixelRatio);
+    if (!kIsWeb && !bounds.contains(details.offset)) {
+      // Let go outside the window: tear the tab off into its own window,
+      // the way pulling a tab out of the strip always did.
+      unawaited(_moveToNewWindow());
+      return;
+    }
+    // Let go somewhere that is not a board: it was a click on the tab.
+    widget.onActivate();
+  }
+
+  /// Whether the current press selected this tab (it was in the
+  /// background when the press began).
+  bool _selectedByPress = false;
+
+  void _closeFromButton() {
+    final keepHistory = widget.onCloseKeepingHistory;
+    if (_selectedByPress &&
+        widget.tab.kind == TabKind.board &&
+        keepHistory != null) {
+      keepHistory();
+      return;
+    }
+    widget.onClose?.call();
+  }
 
   Future<void> _moveToNewWindow() async {
     final container = ProviderScope.containerOf(context, listen: false);
@@ -722,6 +898,21 @@ class _TabChipState extends ConsumerState<_TabChip>
                     ) !=
                     null));
     final isMuted = ref.read(boardTabSoundMuteProvider).contains(widget.tab.id);
+    final activeTabId = tabsState.activeId;
+    final activeIsBoard = tabsState.active?.kind == TabKind.board;
+    final splitState = ref.read(boardSplitProvider);
+    final inSplit = splitState.groupOf(widget.tab.id) != null;
+    final canOpenBeside =
+        isBoardTab &&
+        activeIsBoard &&
+        activeTabId != null &&
+        activeTabId != widget.tab.id &&
+        !(splitState.groupOf(activeTabId)?.contains(widget.tab.id) ?? false) &&
+        besideBoardPlacement(
+              ref.read(boardSplitProvider.notifier).layoutFor(activeTabId),
+              activeTabId,
+            ) !=
+            null;
 
     final picked = await showMenu<_TabAction>(
       context: context,
@@ -740,6 +931,22 @@ class _TabChipState extends ConsumerState<_TabChip>
               icon:
                   isMuted ? Icons.volume_up_rounded : Icons.volume_off_rounded,
               label: isMuted ? 'Unmute tab' : 'Mute tab',
+            ),
+          ),
+        if (canOpenBeside)
+          const PopupMenuItem<_TabAction>(
+            value: _TabAction.openBeside,
+            child: _MenuRow(
+              icon: Icons.vertical_split_rounded,
+              label: 'Show beside current board',
+            ),
+          ),
+        if (inSplit)
+          const PopupMenuItem<_TabAction>(
+            value: _TabAction.leaveSplit,
+            child: _MenuRow(
+              icon: Icons.open_in_full_rounded,
+              label: 'Move out of split view',
             ),
           ),
         if (canMoveToWindow)
@@ -780,6 +987,11 @@ class _TabChipState extends ConsumerState<_TabChip>
     switch (picked) {
       case _TabAction.toggleMute:
         ref.read(boardTabSoundMuteProvider.notifier).toggle(widget.tab.id);
+      case _TabAction.openBeside:
+        _openBesideActiveBoard();
+      case _TabAction.leaveSplit:
+        ref.read(boardSplitProvider.notifier).remove(widget.tab.id);
+        notifier.activate(widget.tab.id);
       case _TabAction.moveToWindow:
         await _moveToNewWindow();
       case _TabAction.close:
@@ -798,9 +1010,22 @@ class _TabChipState extends ConsumerState<_TabChip>
     // step *above* the strip (#1A) using `kBlack3Color` (#25) so each
     // chip is a discrete shape rather than dissolving into the strip;
     // hover lifts another step to `kDividerColor` (#2C).
+    // A board shown in the visible split but not focused sits between the
+    // two: on screen, so closer to the content fill than a background tab.
+    final onScreenInSplit =
+        !widget.readOnlyPresentation &&
+        !widget.active &&
+        widget.tab.kind == TabKind.board &&
+        ref.watch(
+          visibleBoardSplitProvider.select(
+            (group) => group?.contains(widget.tab.id) ?? false,
+          ),
+        );
     final Color color =
         widget.active
             ? kBackgroundColor
+            : onScreenInSplit
+            ? (_hovered ? kBlack3Color : _kSplitMemberTabColor)
             : (_hovered ? kDividerColor : kBlack3Color);
     const fg = kWhiteColor;
 
@@ -843,7 +1068,7 @@ class _TabChipState extends ConsumerState<_TabChip>
     //   inner padding: 14 px h / 8 px v so the icon + label + close button
     //   are not glued to the chip edges.
     // Tab buttons stay fixed on hover and activation; selection uses color only.
-    return Padding(
+    final chip = Padding(
       padding: const EdgeInsets.only(top: 6, left: 4, right: 4),
       child: ClickCursor(
         child: MouseRegion(
@@ -856,6 +1081,11 @@ class _TabChipState extends ConsumerState<_TabChip>
               if (btn & kPrimaryMouseButton != 0) {
                 _primaryDragStart = event.position;
                 _detachTriggered = false;
+                _pulledIntoSplit = false;
+                _selectedByPress = !widget.active;
+                _capturePullTarget();
+                _holdBoardForPress();
+                _measurePullDistance(event.position);
                 widget.onActivate();
               } else if (btn & kTertiaryButton != 0) {
                 // Middle-click — Chrome closes the tab.
@@ -869,6 +1099,8 @@ class _TabChipState extends ConsumerState<_TabChip>
               // in a browser it would only surprise.
               if (kIsWeb ||
                   _detachTriggered ||
+                  _pulledIntoSplit ||
+                  _pullAllowed ||
                   widget.tab.kind != TabKind.board ||
                   (event.buttons & kPrimaryMouseButton) == 0) {
                 return;
@@ -881,10 +1113,23 @@ class _TabChipState extends ConsumerState<_TabChip>
                 return;
               }
               _detachTriggered = true;
+              // A background tab torn off by its own press: the window it
+              // leaves keeps the tab history's pick.
+              if (_selectedByPress) {
+                ref
+                    .read(boardSplitProvider.notifier)
+                    .keepHistoryOnClose(widget.tab.id);
+              }
               unawaited(_moveToNewWindow());
             },
-            onPointerUp: (_) => _primaryDragStart = null,
-            onPointerCancel: (_) => _primaryDragStart = null,
+            onPointerUp: (_) {
+              _primaryDragStart = null;
+              _releaseHeldBoard();
+            },
+            onPointerCancel: (_) {
+              _primaryDragStart = null;
+              _releaseHeldBoard();
+            },
             child: Container(
               constraints: const BoxConstraints(minHeight: 40),
               decoration: BoxDecoration(
@@ -923,7 +1168,10 @@ class _TabChipState extends ConsumerState<_TabChip>
                                       args: gameArgs,
                                       fg: fg,
                                       muted: soundMuted,
-                                      onClose: widget.onClose,
+                                      onClose:
+                                          widget.onClose == null
+                                              ? null
+                                              : _closeFromButton,
                                       showClose: _hovered,
                                       closeReveal: _hovered ? 1.0 : 0.0,
                                     ),
@@ -954,7 +1202,10 @@ class _TabChipState extends ConsumerState<_TabChip>
                               hasGameFen: hasGameFen,
                               showGameCardEvalBar: showGameCardEvalBar,
                               playerProfileArgs: playerProfileArgs,
-                              onClose: widget.onClose,
+                              onClose:
+                                  widget.onClose == null
+                                      ? null
+                                      : _closeFromButton,
                             ),
                   ),
                 ],
@@ -963,6 +1214,24 @@ class _TabChipState extends ConsumerState<_TabChip>
           ),
         ),
       ),
+    );
+    if (widget.readOnlyPresentation || widget.tab.kind != TabKind.board) {
+      return chip;
+    }
+    // Pulling a Board tab down drops it beside the board being viewed. The
+    // press decides whether there is such a board; without one the pull
+    // keeps tearing the tab off into its own window.
+    return BoardTabDragSource(
+      payload: BoardTabDragPayload(
+        tabId: widget.tab.id,
+        label: widget.tab.title,
+      ),
+      pullDownOnly: true,
+      canStart: () => _pullAllowed,
+      pullDistance: () => _pullDistance,
+      onDragStarted: _onPullStarted,
+      onDragEnd: _onPullEnd,
+      child: chip,
     );
   }
 }
@@ -1542,7 +1811,22 @@ class _HorizontalSplit extends StatelessWidget {
   }
 }
 
-enum _TabAction { toggleMute, moveToWindow, close, closeOthers, closeRight }
+/// A Board tab on screen in the split but not focused: sunk toward the
+/// content fill (the focused tab merges into it), clearly below the strip.
+const Color _kSplitMemberTabColor = Color(0xFF131316);
+
+/// The chip whose tab is being pulled into the split, if any.
+State<_TabChip>? _pullingChip;
+
+enum _TabAction {
+  toggleMute,
+  openBeside,
+  leaveSplit,
+  moveToWindow,
+  close,
+  closeOthers,
+  closeRight,
+}
 
 class _MenuRow extends StatelessWidget {
   const _MenuRow({required this.icon, required this.label});
@@ -1556,7 +1840,14 @@ class _MenuRow extends StatelessWidget {
       children: [
         Icon(icon, size: 14, color: kWhiteColor70),
         const SizedBox(width: 10),
-        Text(label, style: const TextStyle(color: kWhiteColor, fontSize: 13)),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: kWhiteColor, fontSize: 13),
+          ),
+        ),
       ],
     );
   }

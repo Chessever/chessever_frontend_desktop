@@ -72,6 +72,7 @@ import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/services/board_analysis_recovery.dart';
 import 'package:chessever/desktop/state/board_picture_in_picture_mode.dart';
+import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/cloud_library_refresh.dart';
@@ -856,11 +857,22 @@ class _BoardPaneSplitView extends StatelessWidget {
     required this.children,
     required this.analysisToolbarWidth,
     required this.boardColumnFitWidth,
+    this.inSplitCell = false,
+    this.stackedFlag,
   });
 
   final ResizableSplitViewController controller;
   final String? storageKey;
   final List<SplitChild> children;
+
+  /// The board is one cell of a split workspace. Its panes keep their own
+  /// remembered widths (separate from the full-size board), and the choice
+  /// between side by side and stacked follows the cell's shape, not a fixed
+  /// width: a short wide cell keeps the board beside its notation.
+  final bool inSplitCell;
+
+  /// Told after each layout whether the panes are stacked.
+  final _StackedFlag? stackedFlag;
 
   /// Width at which the Analysis rail's bottom strip shows every control.
   final ValueListenable<double?> analysisToolbarWidth;
@@ -878,19 +890,31 @@ class _BoardPaneSplitView extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final key = storageKey;
+        final effectiveKey =
+            key == null ? null : (inSplitCell ? '$key.split' : key);
         // Too narrow for the panes side by side (their minimums alone are
         // ~660 px), as in a phone-width browser window: stack the board over
         // the notation and engine, and leave the games list out.
-        if (constraints.maxWidth < _kBoardPaneStackedWidth) {
+        final stack = shouldStackBoardPane(
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
+          inSplitCell: inSplitCell,
+        );
+        stackedFlag?.value = stack;
+        if (stack) {
           final stacked = [
             for (final child in children)
               if (child.label != 'Games') child,
           ];
           if (stacked.length == 1) return stacked.single.child;
           return ResizableSplitView(
+            // A split cell's panes start from their own defaults (the games
+            // rail tucked away) instead of the full-size board's live state.
+            key: ValueKey<bool>(inSplitCell),
             axis: Axis.vertical,
             controller: controller,
-            storageKey: storageKey == null ? null : '$storageKey.stacked',
+            storageKey: effectiveKey == null ? null : '$effectiveKey.stacked',
             children: stacked,
           );
         }
@@ -901,9 +925,10 @@ class _BoardPaneSplitView extends StatelessWidget {
           ]),
           builder:
               (context, _) => ResizableSplitView(
+                key: ValueKey<bool>(inSplitCell),
                 axis: Axis.horizontal,
                 controller: controller,
-                storageKey: storageKey,
+                storageKey: effectiveKey,
                 children: _sizedToContent(children),
               ),
         );
@@ -934,6 +959,47 @@ class _BoardPaneSplitView extends StatelessWidget {
 
 const double _kBoardPaneStackedWidth = 660;
 
+/// Whether the Board pane's last layout stacked its panes. A plain holder,
+/// not a notifier: only callbacks read it, nothing rebuilds from it.
+class _StackedFlag {
+  bool value = false;
+}
+
+/// Whether the Board pane stacks its board over the notation instead of
+/// placing them side by side.
+///
+/// A full-size board stacks only below [_kBoardPaneStackedWidth]. A split
+/// cell is often short as well as narrow, where stacking would leave a
+/// postage-stamp board: it stays side by side (with smaller minimums) while
+/// it is at least as wide as it is tall, and stacks only when it is
+/// portrait or too narrow for two panes at all.
+@visibleForTesting
+bool shouldStackBoardPane({
+  required double width,
+  required double height,
+  required bool inSplitCell,
+}) {
+  if (!inSplitCell) return width < _kBoardPaneStackedWidth;
+  if (width < kBoardSplitCellMinSideBySideWidth) return true;
+  if (width >= _kBoardPaneStackedWidth) return false;
+  return height.isFinite && width < height;
+}
+
+/// Narrowest split cell that still fits the board beside its notation at
+/// their split-cell minimums.
+const double kBoardSplitCellMinSideBySideWidth =
+    _kSplitCellBoardMinWidth + _kSplitCellAnalysisMinWidth + 8;
+const double _kSplitCellBoardMinWidth = 260;
+const double _kSplitCellAnalysisMinWidth = 220;
+const double _kSplitCellGamesMinWidth = 200;
+
+/// A split cell starts with most of its width on the board. In a tall cell
+/// the board is width-bound, so this is what makes it bigger; in a short
+/// cell the board is height-bound and the notation still grows into the
+/// board column's spare width (its `comfortableSize`).
+const double _kSplitCellBoardWeight = 0.68;
+const List<double> _kSplitCellContextWeights = <double>[0.2, 0.55, 0.25];
+
 class _BoardPaneContent extends HookConsumerWidget {
   const _BoardPaneContent({this.tabId});
 
@@ -948,8 +1014,30 @@ class _BoardPaneContent extends HookConsumerWidget {
         ref.watch(
           desktopTabsProvider.select((state) => state.activeId == activeTabId),
         );
-    final isForegroundSurface =
-        isForegroundTab && ref.watch(liveGameStreamingLifecycleProvider);
+    // On screen covers a board in a visible split cell that another cell
+    // holds focus for. Live moves, clocks and the rail follow it; keyboard,
+    // sounds, the engine and the stream player stay with the focused board.
+    final isOnScreen =
+        isForegroundTab ||
+        (activeTabId != null &&
+            ref.watch(boardTabOnScreenProvider(activeTabId)));
+    // Only boards on screen follow the app lifecycle; a hidden tab must not
+    // rebuild each time the window is focused or minimised.
+    final isOnScreenSurface =
+        isOnScreen && ref.watch(liveGameStreamingLifecycleProvider);
+    final isForegroundSurface = isForegroundTab && isOnScreenSurface;
+    // Columns of the split this board is a cell of; 0 when it is not in one.
+    // Its own membership, not the visible split: switching to another tab
+    // must not flip a hidden cell's layout (that rebuilt its games rail).
+    final splitColumnCount =
+        activeTabId == null
+            ? 0
+            : ref.watch(
+              boardSplitProvider.select(
+                (state) => state.groupOf(activeTabId)?.columns.length ?? 0,
+              ),
+            );
+    final inSplitCell = splitColumnCount > 0;
     final restoredSession =
         activeTabId == null
             ? null
@@ -1160,14 +1248,24 @@ class _BoardPaneContent extends HookConsumerWidget {
         reportRevealState.value = const GameReportRevealState();
       },
     );
-    ref.listen(desktopTabsProvider.select((tabs) => tabs.activeId), (
-      previous,
-      next,
-    ) {
-      if (previous != next) {
-        reportRevealState.value = const GameReportRevealState();
-      }
-    });
+    if (activeTabId == null) {
+      ref.listen(desktopTabsProvider.select((tabs) => tabs.activeId), (
+        previous,
+        next,
+      ) {
+        if (previous != next) {
+          reportRevealState.value = const GameReportRevealState();
+        }
+      });
+    } else {
+      // Leaving the screen hides a revealed report. Moving focus between the
+      // cells of a visible split does not.
+      ref.listen<bool>(boardTabOnScreenProvider(activeTabId), (previous, next) {
+        if (previous != next) {
+          reportRevealState.value = const GameReportRevealState();
+        }
+      });
+    }
     final currentReportRevealKey = (
       reportActivation.value,
       currentReportFingerprint,
@@ -1203,6 +1301,8 @@ class _BoardPaneContent extends HookConsumerWidget {
     // away and back requires another explicit reveal, even for the same game.
     // Controller for the outer board pane split — used so the in-pane
     // close button on the left games rail can collapse the rail itself.
+    // Set by the split view from its last layout: stacked or side by side.
+    final boardPaneStacked = useMemoized(() => _StackedFlag(), const []);
     final mainSplitController = useMemoized<ResizableSplitViewController>(
       () => ResizableSplitViewController(),
       const [],
@@ -1238,10 +1338,17 @@ class _BoardPaneContent extends HookConsumerWidget {
     // (and closure) every time made Flutter re-run its heavy build on each
     // move step, engine-arrow change and live move of the open game.
     final gamesRailTabId = activeTabId ?? 'board-default';
+    // Keyed globally so a rail on screen moves, state and all, when the
+    // pane's split view is rebuilt on entering or leaving a split. A rail
+    // that is collapsed or dropped (stacked) is unmounted, as it always was.
+    final gamesRailKey = useMemoized(GlobalKey.new, const []);
     final gamesRail = useMemoized(
-      () => EventGamesTable(
-        tabId: gamesRailTabId,
-        onClose: () => mainSplitController.collapse(0),
+      () => KeyedSubtree(
+        key: gamesRailKey,
+        child: EventGamesTable(
+          tabId: gamesRailTabId,
+          onClose: () => mainSplitController.collapse(0),
+        ),
       ),
       [gamesRailTabId],
     );
@@ -1452,7 +1559,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         }
         pending.clear();
       };
-    }, [activeGameId, isForegroundSurface]);
+    }, [activeGameId, isOnScreenSurface]);
     final boardRenderKey =
         '${_boardRenderKey(activeTabId: activeTabId, activeGameId: activeGameId, boardArgs: boardArgs, latestPgnImport: latestPgnImport, lastAppliedGameId: lastAppliedGameId.value, lastAppliedPgn: lastAppliedPgn.value)}:cut${boardCutEpoch.value}';
 
@@ -2593,7 +2700,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     bool focusedGameIsStillActive(String gameId) {
       final tabId = activeTabId;
       if (tabId != null) {
-        return ref.read(desktopTabsProvider).activeId == tabId &&
+        return ref.read(boardTabOnScreenProvider(tabId)) &&
             ref.read(boardTabGameArgsByTabIdProvider)[tabId]?.gameId == gameId;
       }
       return ref.read(tournamentGamesProvider)?.activeGameId == gameId;
@@ -2770,7 +2877,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // root pane: every broadcast push would rebuild the board, notation, and
     // engine rail. Player headers watch the freshness-arbitrated base snapshot
     // below, so a rejected out-of-order packet cannot flash a stale clock.
-    if (isForegroundTab && activeGameId != null) {
+    if (isOnScreen && activeGameId != null) {
       // Keep the focused game's shared arbitration snapshot alive for the
       // entire foreground Board lifetime, including while the user reviews an
       // earlier ply and the live-clock leaf is intentionally detached. Exact
@@ -2832,7 +2939,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     // freshness arbitration so a late read can never move the board backwards.
     useEffect(() {
       if (!shouldRunLiveBoardSafetyPoll(
-        isForegroundTab: isForegroundTab,
+        isForegroundTab: isOnScreen,
         gameId: activeGameId,
         args: boardArgs,
       )) {
@@ -2880,7 +2987,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         cancelled = true;
         timer.cancel();
       };
-    }, [activeGameId, isForegroundTab, activeTabId]);
+    }, [activeGameId, isOnScreen, activeTabId]);
 
     // ---- Derive the active line from (chessGame, pointer) -----------
     // This is the single recomputation point. Everything below reads
@@ -5443,8 +5550,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     useEffect(() {
       if (!isForegroundTab) return null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        // A press inside this board (its rail, a field) already placed
+        // focus in the pane; only fetch it when it is somewhere else.
         if (context.mounted &&
             focusNode.context != null &&
+            !focusNode.hasFocus &&
             ref.read(desktopTabsProvider).activeId == activeTabId) {
           focusNode.requestFocus();
         }
@@ -5858,7 +5968,11 @@ class _BoardPaneContent extends HookConsumerWidget {
         context.getInheritedWidgetOfExactType<MediaQuery>()?.data.size.width ??
         double.infinity;
     const smallScreenWidthThreshold = 1400.0;
-    final gameRailInitialCollapsed = screenWidth < smallScreenWidthThreshold;
+    // In a split, a board that shares the width with another column has
+    // half the room: its games rail starts tucked into its collapsed strip,
+    // one click from coming back.
+    final gameRailInitialCollapsed =
+        screenWidth / math.max(1, splitColumnCount) < smallScreenWidthThreshold;
 
     return Shortcuts(
       shortcuts: editableAwareShortcuts(shortcuts),
@@ -5873,6 +5987,8 @@ class _BoardPaneContent extends HookConsumerWidget {
           // shortcuts to be live.
           canRequestFocus: true,
           child: _BoardPaneSplitView(
+            inSplitCell: inSplitCell,
+            stackedFlag: boardPaneStacked,
             controller: mainSplitController,
             analysisToolbarWidth: analysisToolbarWidth,
             boardColumnFitWidth: boardColumnFitWidth,
@@ -5894,9 +6010,12 @@ class _BoardPaneContent extends HookConsumerWidget {
               // and library tabs use the source list that opened the board.
               if (showGameRail)
                 SplitChild(
-                  minSize: 220,
+                  minSize: inSplitCell ? _kSplitCellGamesMinWidth : 220,
                   maxSize: 520,
-                  initialWeight: boardPaneContextInitialWeights[0],
+                  initialWeight:
+                      inSplitCell
+                          ? _kSplitCellContextWeights[0]
+                          : boardPaneContextInitialWeights[0],
                   label: 'Games',
                   collapsedIcon: Icons.view_list_rounded,
                   dismissible: true,
@@ -5904,12 +6023,21 @@ class _BoardPaneContent extends HookConsumerWidget {
                   child: gamesRail,
                 ),
               SplitChild(
-                minSize: pictureInPictureMode ? 0 : 380,
+                minSize:
+                    pictureInPictureMode
+                        ? 0
+                        : inSplitCell
+                        ? _kSplitCellBoardMinWidth
+                        : 380,
                 initialWeight:
                     pictureInPictureMode
                         ? 1
                         : boardFocusMode
                         ? _boardFocusBoardWeight
+                        : inSplitCell
+                        ? (showGameRail
+                            ? _kSplitCellContextWeights[1]
+                            : _kSplitCellBoardWeight)
                         : showGameRail
                         ? boardPaneContextInitialWeights[1]
                         : 0.41,
@@ -5991,7 +6119,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                               showFinishedResult: showFinishedResult,
                               onWheelStep: stepNotationHorizontally,
                               isLiveAtTip: isLiveAtTip,
-                              isForegroundTab: isForegroundTab,
+                              isOnScreen: isOnScreen,
                               activeGameId: activeGameId,
                               boardArgs: boardArgs,
                               sourceGame: boardArgs?.sourceGame,
@@ -6024,6 +6152,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                                         : 0.0;
                                 final targetColumnSize =
                                     size + evalBarReservation + 48;
+                                // Stacked, the split runs top to bottom and
+                                // has no games rail: index and size both
+                                // describe a column that is not there.
+                                if (boardPaneStacked.value) return;
                                 mainSplitController.setSize(
                                   boardSplitIndex,
                                   targetColumnSize,
@@ -6093,10 +6225,14 @@ class _BoardPaneContent extends HookConsumerWidget {
               ),
               if (!pictureInPictureMode)
                 SplitChild(
-                  minSize: 280,
+                  minSize: inSplitCell ? _kSplitCellAnalysisMinWidth : 280,
                   initialWeight:
                       boardFocusMode
                           ? _boardFocusRightPaneWeight
+                          : inSplitCell
+                          ? (showGameRail
+                              ? _kSplitCellContextWeights[2]
+                              : 1 - _kSplitCellBoardWeight)
                           : showGameRail
                           ? boardPaneContextInitialWeights[2]
                           : 0.30,
@@ -9473,7 +9609,7 @@ class _BoardArea extends ConsumerWidget {
     required this.showFinishedResult,
     required this.onWheelStep,
     required this.isLiveAtTip,
-    required this.isForegroundTab,
+    required this.isOnScreen,
     required this.focusMode,
     required this.pictureInPicture,
     required this.onPreviousGame,
@@ -9553,7 +9689,10 @@ class _BoardArea extends ConsumerWidget {
   /// against wall-clock (live tip) or render a static PGN-baked figure
   /// (any earlier move, or finished game).
   final bool isLiveAtTip;
-  final bool isForegroundTab;
+
+  /// The board is on screen (focused, or a visible split cell): its clock
+  /// ticks live.
+  final bool isOnScreen;
   final bool suppressEngineAnalysis;
 
   /// `[%cal …]` arrows + `[%csl …]` square circles authored into the
@@ -9802,7 +9941,7 @@ class _BoardArea extends ConsumerWidget {
               trailingControl: null,
               activeGameId: activeGameId,
               historyOwnerId: tabId,
-              useLiveClock: isForegroundTab && isLiveAtTip,
+              useLiveClock: isOnScreen && isLiveAtTip,
               boardArgs: boardArgs,
               sourceGame: sourceGame,
               viewSource: viewSource,
@@ -9828,7 +9967,7 @@ class _BoardArea extends ConsumerWidget {
               trailingControl: null,
               activeGameId: activeGameId,
               historyOwnerId: tabId,
-              useLiveClock: isForegroundTab && isLiveAtTip,
+              useLiveClock: isOnScreen && isLiveAtTip,
               boardArgs: boardArgs,
               sourceGame: sourceGame,
               viewSource: viewSource,

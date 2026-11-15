@@ -7,7 +7,7 @@ import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/shell/browser_safe_shortcuts.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -59,6 +59,8 @@ import 'package:chessever/desktop/widgets/botvinnik/botvinnik_dock.dart';
 import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_width_breakpoint.dart';
 import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
+import 'package:chessever/desktop/shell/board_split_workspace.dart';
+import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/widgets/pane_keyboard_scroll.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
@@ -84,7 +86,6 @@ import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/group_event/model/tour_event_card_model.dart';
 import 'package:chessever/screens/standings/player_standing_model.dart';
 import 'package:chessever/theme/app_theme.dart';
-import 'package:chessever/widgets/persistent_tab_state.dart';
 import 'package:chessever/utils/host_platform.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
@@ -837,11 +838,27 @@ class DesktopShell extends HookConsumerWidget {
                                       Expanded(
                                         child: PageStorage(
                                           bucket: tabPageStorageBucket,
-                                          child: DesktopWorkspaceStack(
-                                            tabs: tabsState.tabs,
-                                            activeId: tabsState.activeId,
-                                            feedbackScreenshotKey:
-                                                feedbackScreenshotKey,
+                                          // Game rows and Board tabs dropped
+                                          // here split the Board workspace.
+                                          child: BoardSplitDropLayer(
+                                            child: BoardSplitWorkspaceHost(
+                                              builder:
+                                                  (
+                                                    context,
+                                                    split,
+                                                    geometry,
+                                                  ) => DesktopWorkspaceStack(
+                                                    tabs: tabsState.tabs,
+                                                    activeId:
+                                                        tabsState.activeId,
+                                                    feedbackScreenshotKey:
+                                                        feedbackScreenshotKey,
+                                                    split: split,
+                                                    splitGeometry: geometry,
+                                                    onActivateCell:
+                                                        tabsNotifier.activate,
+                                                  ),
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -999,11 +1016,24 @@ class DesktopWorkspaceStack extends StatelessWidget {
     required this.activeId,
     required this.feedbackScreenshotKey,
     this.contentBuilder,
+    this.split,
+    this.splitGeometry,
+    this.onActivateCell,
   });
   final List<DesktopTab> tabs;
   final String? activeId;
   final GlobalKey feedbackScreenshotKey;
   final Widget Function(DesktopTab tab)? contentBuilder;
+
+  /// Board tabs shown side by side instead of the active tab alone. Ignored
+  /// unless every member is an open tab.
+  final BoardSplitLayout? split;
+
+  /// Live divider positions of [split]; see [DesktopWorkspaceSlots].
+  final ValueListenable<BoardSplitLayout?>? splitGeometry;
+
+  /// Makes a split cell's tab the active tab when it is pressed.
+  final ValueChanged<String>? onActivateCell;
 
   @override
   Widget build(BuildContext context) {
@@ -1021,14 +1051,34 @@ class DesktopWorkspaceStack extends StatelessWidget {
       closable: false,
     );
     final pages = [home, ...tabs];
-    return PersistentIndexedStack(
-      index: activeIndex < 0 ? 0 : activeIndex + 1,
-      sizing: StackFit.expand,
-      children: [
+    final openIds = {for (final tab in tabs) tab.id};
+    final candidate = split;
+    final visibleSplit =
+        candidate != null &&
+                candidate.isSplit &&
+                candidate.contains(activeId ?? '') &&
+                candidate.tabIds.every(openIds.contains)
+            ? candidate
+            : null;
+    return DesktopWorkspaceSlots(
+      activeIndex: activeIndex < 0 ? 0 : activeIndex + 1,
+      split: visibleSplit,
+      splitGeometry: splitGeometry,
+      onActivateCell: onActivateCell,
+      pages: [
         for (final tab in pages)
-          KeyedSubtree(
-            key: ValueKey<String>('desktop-tab:${tab.id}:${tab.kind.name}'),
-            child: PaneKeyboardScroll(child: content(tab)),
+          DesktopWorkspacePage(
+            slotId: 'desktop-tab:${tab.id}:${tab.kind.name}',
+            tabId: tab.id,
+            child: PaneKeyboardScroll(
+              // In a split several panes run tickers at once; only the
+              // focused one keeps the keyboard scroll fallback.
+              active:
+                  visibleSplit != null && visibleSplit.contains(tab.id)
+                      ? tab.id == activeId
+                      : null,
+              child: content(tab),
+            ),
           ),
       ],
     );

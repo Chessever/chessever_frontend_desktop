@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/local_pgn_source.dart';
 import 'dart:async';
@@ -1744,6 +1745,21 @@ class _DesktopPositionGamesTableState
     });
   }
 
+  /// Lets a row be dragged onto the tab strip or beside the board. The drop
+  /// opens it exactly like Cmd/Ctrl-click does.
+  GameTabDragPayload? _dragPayloadFor(Map<String, dynamic> row) {
+    final id = row['id']?.toString().trim() ?? '';
+    if (id.isEmpty) return null;
+    return GameTabDragPayload(
+      id: id,
+      label: gameDragLabel(
+        row['white']?.toString() ?? '',
+        row['black']?.toString() ?? '',
+      ),
+      spawn: (_, {required focus}) => _openGame(row, focus: focus),
+    );
+  }
+
   Future<void> _openGame(
     Map<String, dynamic> row, {
     bool focus = true,
@@ -2106,6 +2122,7 @@ class _DesktopPositionGamesTableState
     final table = AdaptiveGamesTable<Map<String, dynamic>>(
       columns: _buildColumns(boardSettings, selectedRowId),
       rows: _rows,
+      rowDragPayload: _dragPayloadFor,
       enableColumnResizing: widget.referenceLayout,
       lazyRowExtent: _usesLazyRows ? _lazyRowExtent : null,
       lazyColumnWidths: _usesLazyRows ? _scaledLazyColumnWidths : null,

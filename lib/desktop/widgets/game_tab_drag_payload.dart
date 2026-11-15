@@ -71,3 +71,21 @@ class GameTabDragPayload {
     await spawn(ref, focus: focus);
   }
 }
+
+/// "Carlsen vs Nepomniachtchi" for a drag chip: surnames only, so the chip
+/// stays short. Falls back to [fallback] when both names are missing.
+String gameDragLabel(String white, String black, {String fallback = 'Game'}) {
+  String surname(String name) {
+    final t = name.trim();
+    if (t.isEmpty) return '';
+    if (t.contains(',')) return t.split(',').first.trim();
+    final parts = t.split(RegExp(r'\s+'));
+    return parts.last;
+  }
+
+  final w = surname(white);
+  final b = surname(black);
+  if (w.isEmpty && b.isEmpty) return fallback;
+  if (w.isEmpty || b.isEmpty) return w.isEmpty ? b : w;
+  return '$w vs $b';
+}

@@ -1,3 +1,6 @@
+import 'package:chessever/desktop/state/board_split_view.dart';
+import 'package:chessever/desktop/widgets/game_drag_source.dart';
+import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/combined/combined_category.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
@@ -576,7 +579,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   Future<void> _maybeLoadMoreEventRailGames({bool force = false}) async {
     if (!mounted) return;
     final activeTabId = widget.tabId;
-    if (ref.read(desktopTabsProvider).activeId != activeTabId ||
+    if (!ref.read(boardTabOnScreenProvider(activeTabId)) ||
         !ref.read(shouldStreamProvider) ||
         !_appLifecycleAllowsStreaming) {
       return;
@@ -1653,9 +1656,9 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     final activeArgs = ref.watch(
       boardTabGameArgsByTabIdProvider.select((m) => m[activeTabId]),
     );
-    final isForegroundTab = ref.watch(
-      desktopTabsProvider.select((state) => state.activeId == activeTabId),
-    );
+    // A board in a visible split cell is on screen even when another cell
+    // holds keyboard focus, so its rail keeps streaming too.
+    final isForegroundTab = ref.watch(boardTabOnScreenProvider(activeTabId));
     final streamingEnabled = ref.watch(shouldStreamProvider);
     final shouldStreamVisibleRail =
         isForegroundTab && streamingEnabled && _appLifecycleAllowsStreaming;
@@ -2854,6 +2857,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                         game, {
                         required bool inNewTab,
                         bool inNewWindow = false,
+                        bool focus = true,
                       }) async {
                         await _openEventGame(
                           ref: ref,
@@ -2873,6 +2877,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                           activeArgs: _railLatestArgs,
                           inNewTab: inNewTab,
                           inNewWindow: inNewWindow,
+                          focus: focus,
                         );
                       },
                       onInsertGame:
@@ -5710,6 +5715,9 @@ Future<void> _openEventGame({
   required BoardTabGameArgs? activeArgs,
   bool inNewTab = false,
   bool inNewWindow = false,
+  // Only a new tab can open in the background (a drag into a split, a
+  // background new-tab gesture); replacing the board always shows it.
+  bool focus = true,
 }) async {
   final ownerContext = context ?? ref.context;
   final ownerContainer =
@@ -5923,7 +5931,7 @@ Future<void> _openEventGame({
     openBoardGameTabFromContainer(
       ownerContainer,
       args,
-      focus: true,
+      focus: focus || !inNewTab,
       reuseExisting: false,
       replaceActive: !inNewTab,
     );
@@ -5981,7 +5989,7 @@ Future<void> _openEventGame({
     openBoardGameTab(
       ref,
       args,
-      focus: true,
+      focus: focus || !inNewTab,
       reuseExisting: false,
       replaceActive: !inNewTab,
     );
@@ -6036,7 +6044,7 @@ Future<void> _openEventGame({
   openBoardGameTab(
     ref,
     args,
-    focus: true,
+    focus: focus || !inNewTab,
     reuseExisting: false,
     replaceActive: !inNewTab,
   );
@@ -6206,6 +6214,26 @@ class _DatabaseGamesList extends ConsumerWidget {
             key: game.id == _activeSelectionId ? selectedRowKey : null,
             game: game,
             selected: _isSelected(game),
+            dragPayload: GameTabDragPayload(
+              id: game.id,
+              label: gameDragLabel(game.whitePlayer, game.blackPlayer),
+              spawn:
+                  (_, {required focus}) => _openEventGame(
+                    ref: ref,
+                    context: context,
+                    container: ProviderScope.containerOf(
+                      context,
+                      listen: false,
+                    ),
+                    kind: _GameListKind.database,
+                    game: game,
+                    eventGames: copyScopeGames,
+                    tournamentTitle: tournamentTitle,
+                    activeArgs: activeArgs,
+                    inNewTab: true,
+                    focus: focus,
+                  ),
+            ),
             onTap: ({required bool inNewTab, required bool shiftPressed}) {
               if (inNewTab) {
                 onHighlightGame(game);
@@ -6369,10 +6397,14 @@ class _DatabaseGameRow extends StatefulWidget {
     required this.onTap,
     required this.onDoubleTap,
     required this.onSecondaryTap,
+    this.dragPayload,
   });
 
   final TournamentGameSummary game;
   final bool selected;
+
+  /// Lets the row be dragged into a split beside the board.
+  final GameTabDragPayload? dragPayload;
   final void Function({required bool inNewTab, required bool shiftPressed})
   onTap;
   final void Function({required bool inNewTab}) onDoubleTap;
@@ -6416,94 +6448,99 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
     final border =
         selected ? kPrimaryColor.withValues(alpha: 0.72) : Colors.transparent;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      child: ClickCursor(
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapDown: _captureGestureModifiers,
-            onTap:
-                () => widget.onTap(
-                  inNewTab: _newTabForGesture(),
-                  shiftPressed: _shiftForGesture(),
+    final payload = widget.dragPayload;
+    Widget draggable(Widget row) =>
+        payload == null ? row : GameDragSource(payload: payload, child: row);
+    return draggable(
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        child: ClickCursor(
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: _captureGestureModifiers,
+              onTap:
+                  () => widget.onTap(
+                    inNewTab: _newTabForGesture(),
+                    shiftPressed: _shiftForGesture(),
+                  ),
+              onDoubleTap:
+                  () => widget.onDoubleTap(inNewTab: _newTabForGesture()),
+              onSecondaryTapUp:
+                  (details) => widget.onSecondaryTap(details.globalPosition),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 90),
+                curve: Curves.easeOutCubic,
+                height: _EventGamesTableState._databaseGameRowExtent,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                // The layout border is a constant transparent 1 px; the visible
+                // 1.2 px selection edge paints over it from
+                // foregroundDecoration. Animating the layout border's width
+                // would re-inset the player cells by a fraction of a pixel on
+                // every frame of the selection fade.
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: border, width: 1.2),
                 ),
-            onDoubleTap:
-                () => widget.onDoubleTap(inNewTab: _newTabForGesture()),
-            onSecondaryTapUp:
-                (details) => widget.onSecondaryTap(details.globalPosition),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 90),
-              curve: Curves.easeOutCubic,
-              height: _EventGamesTableState._databaseGameRowExtent,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              // The layout border is a constant transparent 1 px; the visible
-              // 1.2 px selection edge paints over it from
-              // foregroundDecoration. Animating the layout border's width
-              // would re-inset the player cells by a fraction of a pixel on
-              // every frame of the selection fade.
-              foregroundDecoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: border, width: 1.2),
-              ),
-              decoration: BoxDecoration(
-                color: bg,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.transparent),
-                boxShadow:
-                    selected
-                        ? [
-                          BoxShadow(
-                            color: kPrimaryColor.withValues(alpha: 0.18),
-                            blurRadius: 14,
-                            offset: const Offset(0, 3),
-                          ),
-                        ]
-                        : null,
-              ),
-              child: Row(
-                children: [
-                  ...[
-                    Expanded(
-                      child: _PlayerCell(
-                        key: ValueKey('database-player-white-${game.id}'),
-                        databaseSide: 'White',
-                        name: game.whitePlayer,
-                        federation: game.whiteFederation,
-                        fideId: game.whiteFideId,
-                        title: game.whiteTitle,
-                        rating: game.whiteRating,
-                        selected: selected,
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.transparent),
+                  boxShadow:
+                      selected
+                          ? [
+                            BoxShadow(
+                              color: kPrimaryColor.withValues(alpha: 0.18),
+                              blurRadius: 14,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                          : null,
+                ),
+                child: Row(
+                  children: [
+                    ...[
+                      Expanded(
+                        child: _PlayerCell(
+                          key: ValueKey('database-player-white-${game.id}'),
+                          databaseSide: 'White',
+                          name: game.whitePlayer,
+                          federation: game.whiteFederation,
+                          fideId: game.whiteFideId,
+                          title: game.whiteTitle,
+                          rating: game.whiteRating,
+                          selected: selected,
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _PlayerCell(
+                          key: ValueKey('database-player-black-${game.id}'),
+                          databaseSide: 'Black',
+                          name: game.blackPlayer,
+                          federation: game.blackFederation,
+                          fideId: game.blackFideId,
+                          title: game.blackTitle,
+                          rating: game.blackRating,
+                          selected: selected,
+                        ),
+                      ),
+                    ],
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: _PlayerCell(
-                        key: ValueKey('database-player-black-${game.id}'),
-                        databaseSide: 'Black',
-                        name: game.blackPlayer,
-                        federation: game.blackFederation,
-                        fideId: game.blackFideId,
-                        title: game.blackTitle,
-                        rating: game.blackRating,
-                        selected: selected,
+                    SizedBox(
+                      width: 38,
+                      child: Center(
+                        child: _StatusPill(
+                          status: game.status,
+                          isLive: false,
+                          hasStarted: game.hasStarted,
+                        ),
                       ),
                     ),
                   ],
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 38,
-                    child: Center(
-                      child: _StatusPill(
-                        status: game.status,
-                        isLive: false,
-                        hasStarted: game.hasStarted,
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -6549,6 +6586,7 @@ class _EventRoundTable extends StatelessWidget {
     TournamentGameSummary game, {
     required bool inNewTab,
     bool inNewWindow,
+    bool focus,
   })
   onOpenGame;
   final Future<void> Function(TournamentGameSummary game) onInsertGame;
@@ -6616,6 +6654,14 @@ class _EventRoundTable extends StatelessWidget {
             rowMinHeight: 48,
             rowKeyBuilder:
                 (game) => game.id == _activeSelectionId ? selectedRowKey : null,
+            rowDragPayload:
+                (game) => GameTabDragPayload(
+                  id: game.id,
+                  label: gameDragLabel(game.whitePlayer, game.blackPlayer),
+                  spawn:
+                      (_, {required focus}) =>
+                          onOpenGame(game, inNewTab: true, focus: focus),
+                ),
             onRowTap: (
               game, {
               required bool inNewTab,

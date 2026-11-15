@@ -284,6 +284,13 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
 
   DesktopTabsState get currentState => state;
 
+  /// Whether the last close that took away the active tab let tab history
+  /// pick the next one (a single [close]), rather than naming it (the pivot
+  /// of [closeOthers] and [closeToTheRight]). Split view only steers focus
+  /// in the first case.
+  bool get lastCloseSuccessorFromHistory => _lastCloseSuccessorFromHistory;
+  bool _lastCloseSuccessorFromHistory = false;
+
   static int _idCounter = 0;
   static String _nextId() => 'tab-${_idCounter++}';
 
@@ -600,6 +607,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
     if (idx < 0) return;
     final tab = state.tabs[idx];
     if (!tab.closable) return;
+    _lastCloseSuccessorFromHistory = true;
 
     final remaining = [
       for (var i = 0; i < state.tabs.length; i++)
@@ -638,6 +646,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   /// Close every closable tab *except* [keepId]. Mirrors Chrome's
   /// "Close other tabs" context-menu action.
   void closeOthers(String keepId) {
+    _lastCloseSuccessorFromHistory = false;
     final previousTabs = state.tabs;
     final keep = <DesktopTab>[
       for (final t in previousTabs)
@@ -669,6 +678,7 @@ class DesktopTabsNotifier extends StateNotifier<DesktopTabsState> {
   /// Close every closable tab on the right of [pivotId]. Mirrors Chrome's
   /// "Close tabs to the right" action.
   void closeToTheRight(String pivotId) {
+    _lastCloseSuccessorFromHistory = false;
     final previousTabs = state.tabs;
     final idx = previousTabs.indexWhere((t) => t.id == pivotId);
     if (idx < 0) return;
