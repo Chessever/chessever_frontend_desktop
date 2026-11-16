@@ -14,6 +14,7 @@ import 'package:chessever/desktop/widgets/desktop_endgame_board_overlay.dart';
 import 'package:chessever/desktop/widgets/desktop_like_count_heart.dart';
 import 'package:chessever/desktop/widgets/desktop_locked_content.dart';
 import 'package:chessever/desktop/widgets/game_card_data.dart';
+import 'package:chessever/desktop/widgets/match_play_color_mark.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/widgets/motion_card.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
@@ -487,9 +488,15 @@ class _ListLayoutState extends State<_ListLayout>
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            _CleanPlayerRow(data: widget.data, isWhite: true),
+                            _CleanPlayerRow(
+                              data: widget.data,
+                              isWhite: _firstSideIsWhite(widget.data),
+                            ),
                             const _TileHairline(),
-                            _CleanPlayerRow(data: widget.data, isWhite: false),
+                            _CleanPlayerRow(
+                              data: widget.data,
+                              isWhite: !_firstSideIsWhite(widget.data),
+                            ),
                           ],
                         ),
                       ),
@@ -605,6 +612,10 @@ class _CleanPlayerRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         children: [
+          if (data.matchPlayAnchorIsWhite != null) ...[
+            MatchPlayColorMark(isWhite: isWhite),
+            const SizedBox(width: 6),
+          ],
           BackfilledFederationFlag(
             federation: fed,
             fideId: fideId,
@@ -665,11 +676,16 @@ class _CleanFaceOffBlock extends StatelessWidget {
   const _CleanFaceOffBlock({
     required this.data,
     required this.isWhite,
+    required this.leading,
     this.locked = false,
   });
 
   final GameCardData data;
   final bool isWhite;
+
+  /// The left block (aligned to the start). It is White's block except in
+  /// match play, where it belongs to side A whatever colour A has.
+  final bool leading;
   final bool locked;
 
   @override
@@ -681,9 +697,10 @@ class _CleanFaceOffBlock extends StatelessWidget {
     final title = isWhite ? data.whiteTitle : data.blackTitle;
     const nameColor = kWhiteColor;
     final alignment =
-        isWhite ? CrossAxisAlignment.start : CrossAxisAlignment.end;
-    final textAlign = isWhite ? TextAlign.start : TextAlign.end;
-    final mainAlign = isWhite ? MainAxisAlignment.start : MainAxisAlignment.end;
+        leading ? CrossAxisAlignment.start : CrossAxisAlignment.end;
+    final textAlign = leading ? TextAlign.start : TextAlign.end;
+    final mainAlign = leading ? MainAxisAlignment.start : MainAxisAlignment.end;
+    final showColorMark = data.matchPlayAnchorIsWhite != null;
 
     final meta = <Widget>[
       BackfilledFederationFlag(
@@ -716,27 +733,46 @@ class _CleanFaceOffBlock extends StatelessWidget {
       ],
     ];
 
+    final nameText = DesktopCompactPlayerNameText(
+      name: name,
+      textAlign: textAlign,
+      style: const TextStyle(
+        color: nameColor,
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.05,
+        height: 1.15,
+      ),
+    );
     return Column(
       crossAxisAlignment: alignment,
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        DesktopCompactPlayerNameText(
-          name: name,
-          textAlign: textAlign,
-          style: const TextStyle(
-            color: nameColor,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.05,
-            height: 1.15,
+        if (!showColorMark)
+          nameText
+        else
+          // The mark mirrors with the block: on the outer edge of each side.
+          Row(
+            mainAxisAlignment: mainAlign,
+            mainAxisSize: MainAxisSize.max,
+            children: [
+              if (leading) ...[
+                MatchPlayColorMark(isWhite: isWhite),
+                const SizedBox(width: 6),
+              ],
+              Flexible(child: nameText),
+              if (!leading) ...[
+                const SizedBox(width: 6),
+                MatchPlayColorMark(isWhite: isWhite),
+              ],
+            ],
           ),
-        ),
         const SizedBox(height: 4),
         Row(
           mainAxisAlignment: mainAlign,
           mainAxisSize: MainAxisSize.max,
-          children: isWhite ? meta : meta.reversed.toList(growable: false),
+          children: leading ? meta : meta.reversed.toList(growable: false),
         ),
       ],
     );
@@ -1142,7 +1178,8 @@ class _CompactLayoutState extends State<_CompactLayout>
                         Expanded(
                           child: _CleanFaceOffBlock(
                             data: widget.data,
-                            isWhite: true,
+                            isWhite: _firstSideIsWhite(widget.data),
+                            leading: true,
                             locked: locked,
                           ),
                         ),
@@ -1152,7 +1189,8 @@ class _CompactLayoutState extends State<_CompactLayout>
                         Expanded(
                           child: _CleanFaceOffBlock(
                             data: widget.data,
-                            isWhite: false,
+                            isWhite: !_firstSideIsWhite(widget.data),
+                            leading: false,
                             locked: locked,
                           ),
                         ),
@@ -1299,8 +1337,11 @@ class _GridLayoutState extends State<_GridLayout>
                     enabled: widget.lockedReason != null,
                     child: _PlayerRow(
                       data: widget.data,
-                      isWhite: false,
-                      result: _resultFor(widget.data, isWhite: false),
+                      isWhite: _gridTopIsWhite(widget.data),
+                      result: _resultFor(
+                        widget.data,
+                        isWhite: _gridTopIsWhite(widget.data),
+                      ),
                       compact: true,
                       locked: widget.lockedReason != null,
                     ),
@@ -1368,6 +1409,7 @@ class _GridLayoutState extends State<_GridLayout>
                                       width: railWidth,
                                       height: boardSide,
                                       view: PlayerView.gridView,
+                                      flipped: _gridTopIsWhite(widget.data),
                                       allowStockfishFallback:
                                           widget.allowStockfishFallback,
                                     ),
@@ -1375,7 +1417,9 @@ class _GridLayoutState extends State<_GridLayout>
                                 Expanded(
                                   child: _BoardPreview(
                                     data: widget.data,
-                                    flipped: false,
+                                    // The names sit on the board's edges, so
+                                    // the board turns with them.
+                                    flipped: _gridTopIsWhite(widget.data),
                                   ),
                                 ),
                               ],
@@ -1420,8 +1464,11 @@ class _GridLayoutState extends State<_GridLayout>
                     enabled: widget.lockedReason != null,
                     child: _PlayerRow(
                       data: widget.data,
-                      isWhite: true,
-                      result: _resultFor(widget.data, isWhite: true),
+                      isWhite: !_gridTopIsWhite(widget.data),
+                      result: _resultFor(
+                        widget.data,
+                        isWhite: !_gridTopIsWhite(widget.data),
+                      ),
                       compact: true,
                       locked: widget.lockedReason != null,
                     ),
@@ -1444,6 +1491,7 @@ class _EvalRail extends StatelessWidget {
     required this.width,
     required this.height,
     required this.view,
+    this.flipped = false,
     this.allowStockfishFallback = true,
   });
 
@@ -1451,6 +1499,9 @@ class _EvalRail extends StatelessWidget {
   final double width;
   final double height;
   final PlayerView view;
+
+  /// White's share on top, matching a board drawn from Black's side.
+  final bool flipped;
 
   /// When false, the evaluation bar suppresses local Stockfish fallback while
   /// keeping cached / server-resolved evaluations. Used to avoid kicking off
@@ -1477,6 +1528,7 @@ class _EvalRail extends StatelessWidget {
             height: height,
             fen: f,
             playerView: view,
+            isFlipped: flipped,
             allowStockfishFallback: allowFallback,
             railDecorationBuilder: DesktopEvalMidpoint.behindLabel,
           ),
@@ -1681,6 +1733,10 @@ class _PlayerRow extends StatelessWidget {
 
     return Row(
       children: [
+        if (data.matchPlayAnchorIsWhite != null) ...[
+          MatchPlayColorMark(isWhite: isWhite),
+          const SizedBox(width: 6),
+        ],
         BackfilledFederationFlag(
           federation: fed,
           fideId: fideId,
@@ -1913,9 +1969,19 @@ String _resultFor(GameCardData data, {required bool isWhite}) =>
       customPoints: isWhite ? data.whiteCustomPoints : data.blackCustomPoints,
     );
 
+/// Whether the first side of a card (left / top line) is White. Always true
+/// except for a match-play card whose side A has Black in this game.
+bool _firstSideIsWhite(GameCardData data) =>
+    data.matchPlayAnchorIsWhite ?? true;
+
+/// Grid cards put names on the board's edges: Black on top as always, side A
+/// on top in match play (with the board turned to match).
+bool _gridTopIsWhite(GameCardData data) => data.matchPlayAnchorIsWhite ?? false;
+
 String _resultLabel(GameCardData data) {
   if (data.status.isFinished) {
-    return '${_resultFor(data, isWhite: true)} – ${_resultFor(data, isWhite: false)}';
+    final firstIsWhite = _firstSideIsWhite(data);
+    return '${_resultFor(data, isWhite: firstIsWhite)} – ${_resultFor(data, isWhite: !firstIsWhite)}';
   }
   return data.status == GameStatus.ongoing ? 'Underway' : '';
 }

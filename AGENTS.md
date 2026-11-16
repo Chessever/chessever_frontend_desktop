@@ -386,6 +386,50 @@ downloads them. Manual PGN and Combined sources stay local.
   change a player's id, never delete rows (a deleted profile keeps its row
   with `deleted_at`), and never sync before `isRosterLoaded`.
 
+## Match-play knockouts
+
+A knockout round where one player pair has 2+ games inside one source round.
+Speed Chess Championship publishes a whole stage in ONE round: game 1 and 2
+of every match as 0-move `*` shells, then each match grows game by game (one
+match a day) to ~200 boards. Only such rounds change; every other round, team
+event, Combined view, non-repeating knockout and For You renders as before.
+
+- **Gate:** the event is a knockout (`knockoutTournamentStateProvider`) AND
+  `isMatchPlayRound`. Callers opt in; the defaults keep today's code paths.
+- **Identity:** unordered FIDE-id pair, else normalized name pair. Never
+  `board_nr` (the ingest renumbers it every cycle to follow the source file)
+  and never PGN `[Board]` tags.
+- **Game index:** PGN `[Round]` `S.NN` -> NN, `S.SET.G` -> (SET, G). Board
+  rail rows carry no PGN, so there: finished games by last move time, then
+  the game in play, then shells by board number, then id.
+- **Side A** is White of game 1. It stays first (left / top) in the header
+  and every row and card, never swapped to the leader; each player shows a
+  White/Black square (`MatchPlayColorMark`). Grid cards turn the board.
+- **Score:** A–B over every finished game of the round, either colour.
+- **Live** only with a move and no result; a shell is never live and its
+  header shows no start time.
+- **Order:** live matches first, then played ones newest first, then the
+  rest in bracket order (board of game 1). Inside a match: the game in play,
+  finished newest first, then shells.
+- **Focus-follow** (`decideMatchPlayFocusFollow`, run by the board rail):
+  when the board's game is finished and a later game of the same match gets
+  its first move while the reader watches, open it in that Board tab. Once
+  per transition; never on first load, never after the reader opened an older
+  game while a newer one had started, never while the board has unsaved
+  analysis.
+- **Data:** the rail reads the whole selected round (up to
+  `kEventRailMatchPlayRoundLimit`) once its rows repeat a pairing; the Games
+  tab merges a match-play stage's named shells into synthetic stage rows
+  (`hasMatchPlayPairing`).
+
+**Three copies, one rule.** Here: `lib/desktop/knockout/match_play.dart`
+(used by `event_games_table.dart`, `tournament_games_view.dart`,
+`desktop_game_card.dart`), tested in `test/desktop/match_play_knockout_test.dart`.
+chessever.com: `chessever_web_frontend` `src/broadcast/components/knockout.ts`.
+Phone: `chessever-frontend` `knockout_match_detector.dart` and
+`games_tour_flattened_layout.dart`. Change one, change all three, each with
+its tests. Check against SCC XI (tour `fqCjSUpE`, round `60IswAYI`).
+
 ## Forui
 
 On demand — read `docs/agents/forui.md` before working on this area. Gist: This repo pins `forui: ^0.16.0` (`pubspec.yaml`).

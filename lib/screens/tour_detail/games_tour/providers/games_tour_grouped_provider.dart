@@ -259,6 +259,7 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
   );
   var representedSiblingIsLoading = false;
 
+  final matchPlayPairingOnlyRoundIds = <String>{};
   if (isMultiStageKnockout && hasSiblingStageTours) {
     final selectedTourId = tourId!;
     final selectedTourGames = allGamesScreenModel.where(
@@ -315,21 +316,52 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
       }
     }
   } else if (isMultiStageKnockout) {
-    for (final game in allGamesScreenModel) {
-      String? roundId;
+    String? stageRoundIdFor(GamesTourModel game) {
       for (final stage in rounds) {
-        if (stage.sourceRoundIds.contains(game.roundId)) {
-          roundId = stage.id;
-          break;
-        }
+        if (stage.sourceRoundIds.contains(game.roundId)) return stage.id;
       }
       // Compatibility fallback for cached/legacy synthetic models that do not
       // yet carry their source round ids.
-      if (roundId == null && tourId != null) {
-        roundId = roundSlugStageRoundId(tourId, game.roundSlug);
-      }
+      return tourId == null
+          ? null
+          : roundSlugStageRoundId(tourId, game.roundSlug);
+    }
+
+    for (final game in allGamesScreenModel) {
+      final roundId = stageRoundIdFor(game);
       if (roundId != null && gamesByRound.containsKey(roundId)) {
         addGameToRound(roundId, game);
+      }
+    }
+
+    // MATCH-PLAY stages only (Speed Chess Championship: a stage's whole set
+    // of matches in one source round, game 1 and 2 of every match published
+    // as 0-move shells). Their named shells are the matches not played yet,
+    // so they join the stage like an open round's pairings. Every other
+    // multi-stage knockout keeps hiding 0-move boards, exactly as before.
+    for (final round in rounds) {
+      if (round.roundStatus == RoundStatus.completed) continue;
+      final stageGames = [
+        for (final game in allGamesScreenModel)
+          if (stageRoundIdFor(game) == round.id) game,
+      ];
+      if (!hasMatchPlayPairing(stageGames)) continue;
+      ensureRoundEntry(round.id);
+      final hadPlayedGames = seenGameIdsPerRound[round.id]!.isNotEmpty;
+      var addedShells = false;
+      for (final game in stageGames) {
+        if (!_hasResolvedPlayer(game.whitePlayer) ||
+            !_hasResolvedPlayer(game.blackPlayer)) {
+          continue;
+        }
+        if (seenGameIdsPerRound[round.id]!.add(game.gameId)) {
+          gamesByRound[round.id]!.add(game);
+          addedShells = true;
+        }
+      }
+      // Like an open round: pairing-only until its first board is played.
+      if (!hadPlayedGames && addedShells) {
+        matchPlayPairingOnlyRoundIds.add(round.id);
       }
     }
   } else {
@@ -353,7 +385,7 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
   // have already started. Merge resolved names into every open round — and
   // mark the round pairing-only only when it still has no played boards.
   // "?" placeholders stay hidden. Multi-stage knockouts keep synthetic ids.
-  final upcomingPairingRoundIds = <String>{};
+  final upcomingPairingRoundIds = <String>{...matchPlayPairingOnlyRoundIds};
   if (!isMultiStageKnockout) {
     final defaultRoundId = rounds.firstOrNull?.id;
     for (final round in rounds) {
@@ -586,6 +618,25 @@ List<GamesTourModel> sortTournamentRoundGamesByBoard(
     return a.gameId.compareTo(b.gameId);
   });
   return sorted;
+}
+
+/// The match-play gate of a knockout round's rows: one unordered pair of
+/// players has 2+ games inside one SOURCE round (desktop
+/// `lib/desktop/knockout/match_play.dart` holds the full rule). Legs that a
+/// feed publishes as separate source rounds (World Cup game-1 / game-2) never
+/// count, so those knockouts are untouched.
+@visibleForTesting
+bool hasMatchPlayPairing(Iterable<GamesTourModel> games) {
+  final bySourceRound = <String, List<GamesTourModel>>{};
+  for (final game in games) {
+    bySourceRound.putIfAbsent(game.roundId.trim(), () => []).add(game);
+  }
+  for (final sourceGames in bySourceRound.values) {
+    if (sourceGames.length < 2) continue;
+    final matches = KnockoutMatchDetector.groupByMatches(sourceGames);
+    if (matches.values.any((match) => match.length > 1)) return true;
+  }
+  return false;
 }
 
 /// Whether a game row is renderable as an event board: placeholder rows

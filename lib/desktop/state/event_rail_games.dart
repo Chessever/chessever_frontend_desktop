@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/knockout/match_play.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
@@ -14,6 +15,13 @@ import 'package:chessever/repository/supabase/round/round_repository.dart';
 /// The event rail deliberately stays below the live-stream batch size's third
 /// chunk while still covering substantially more rows than fit on screen.
 const int kEventRailGamesPageSize = 64;
+
+/// Whole-round read for a match-play knockout round (one pairing with several
+/// games in the round, e.g. Speed Chess Championship's ~200-board stage). A
+/// match's score, its side A and focus-follow need every game of the match,
+/// and a 64-row window around the selected board misses games the source
+/// appends later. Data only: rendering still requires a knockout event.
+const int kEventRailMatchPlayRoundLimit = 256;
 const Duration _eventRailSafetyRefreshInterval = Duration(seconds: 5);
 
 @immutable
@@ -138,6 +146,10 @@ class EventRailGamesNotifier
       <int, List<String>>{};
   int _nextSafetyPageOffset = kEventRailGamesPageSize;
   List<String> _selectedRoundPageIds = const <String>[];
+
+  /// The selected round's last rows repeated a player pairing (see
+  /// [kEventRailMatchPlayRoundLimit]). Reset whenever the round changes.
+  bool _selectedRoundRepeatsPairing = false;
   Games? _selectedGameSeed;
   bool _selectedRoundBaselineInitialized = false;
 
@@ -163,6 +175,7 @@ class EventRailGamesNotifier
     _canonicalPageIdsByOffset.clear();
     _nextSafetyPageOffset = kEventRailGamesPageSize;
     _selectedRoundPageIds = const <String>[];
+    _selectedRoundRepeatsPairing = false;
     _selectedGameSeed = null;
     _selectedRoundBaselineInitialized = false;
     _selectedContextHydratedSelectionEpoch = null;
@@ -207,6 +220,7 @@ class EventRailGamesNotifier
     _canonicalPageIdsByOffset[0] = _gameIds(tourPage);
     if (buildSelectionEpoch == _selectionEpoch) {
       _selectedRoundPageIds = _gameIds(selectedRoundPage);
+      _noteSelectedRoundShape(selectedRoundPage);
       _selectedRoundBaselineInitialized = true;
       if (selectedRoundPage.isNotEmpty ||
           eventKey.selectedRoundId.trim().isEmpty) {
@@ -296,6 +310,7 @@ class EventRailGamesNotifier
     _selectionEpoch++;
     if (selection.selectedRoundId.trim() != previousRoundId) {
       _selectedRoundPageIds = const <String>[];
+      _selectedRoundRepeatsPairing = false;
       _selectedRoundBaselineInitialized = false;
     }
 
@@ -831,6 +846,7 @@ class EventRailGamesNotifier
       if (selectedPage.isNotEmpty) _selectedGameSeed = selectedPage.first;
       if (roundPage.isNotEmpty || eventKey.selectedRoundId.trim().isEmpty) {
         _selectedRoundPageIds = _gameIds(roundPage);
+        _noteSelectedRoundShape(roundPage);
         _selectedRoundBaselineInitialized = true;
         _selectedContextHydratedSelectionEpoch = selectionEpoch;
       }
@@ -1115,6 +1131,7 @@ class EventRailGamesNotifier
         }
       }
       _selectedRoundPageIds = selectedRoundPageIds;
+      _noteSelectedRoundShape(selectedRoundGames);
       _selectedRoundBaselineInitialized = true;
       if (!_eventRailStatesEqual(current, refreshed)) {
         state = AsyncData(refreshed);
@@ -1267,11 +1284,43 @@ class EventRailGamesNotifier
               selectedGameId: selectedId,
               selectedBoardNumber: key.selectedBoardNumber,
             );
+    if (_selectedRoundRepeatsPairing &&
+        selectedIndex < kEventRailMatchPlayRoundLimit) {
+      return repository.getEventRailGamesByRoundId(
+        roundId,
+        limit: kEventRailMatchPlayRoundLimit,
+        offset: 0,
+      );
+    }
     final offset = math.max(0, selectedIndex - kEventRailGamesPageSize ~/ 2);
     return repository.getEventRailGamesByRoundId(
       roundId,
       limit: kEventRailGamesPageSize,
       offset: offset,
+    );
+  }
+
+  /// Widens the next selected-round read once the round's rows repeat a
+  /// pairing. Only rows of the selected round count: a stray row of another
+  /// round in [rows] cannot switch it on.
+  void _noteSelectedRoundShape(List<Games> rows) {
+    if (_selectedRoundRepeatsPairing || rows.isEmpty) return;
+    final roundId = _eventKey.selectedRoundId.trim();
+    if (roundId.isEmpty) return;
+    _selectedRoundRepeatsPairing = mayHoldMatchPlayPairs<Games>(
+      rows.where((game) => game.roundId.trim() == roundId),
+      (game) {
+        final players = game.players ?? const <Player>[];
+        final white = players.isNotEmpty ? players.first : null;
+        final black = players.length >= 2 ? players[1] : null;
+        return (
+          roundId: game.roundId,
+          white: white?.name ?? '',
+          black: black?.name ?? '',
+          whiteFideId: white?.fideId,
+          blackFideId: black?.fideId,
+        );
+      },
     );
   }
 

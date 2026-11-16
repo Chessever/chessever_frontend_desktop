@@ -1882,6 +1882,68 @@ void main() {
       expect(failed.loadMoreError, contains('page unavailable'));
     });
 
+    for (final repeats in [true, false]) {
+      test(
+        repeats
+            ? 'a round that repeats a pairing is read whole on refresh'
+            : 'a round without repeated pairings keeps its 64-row window',
+        () async {
+          // Eighty boards; with [repeats] boards 41-80 replay boards 1-40's
+          // pairings with colours reversed (match play), else all differ.
+          final roundGames = <Games>[
+            for (var board = 1; board <= 80; board++)
+              _pairGame(
+                id: 'scc-$board',
+                boardNumber: board,
+                white:
+                    board <= 40 || !repeats
+                        ? 'Seed $board'
+                        : 'Challenger ${board - 40}',
+                black:
+                    board <= 40 || !repeats
+                        ? 'Challenger $board'
+                        : 'Seed ${board - 40}',
+              ),
+          ];
+          final repository = _FakeGameRepository(
+            firstTourPage: roundGames.take(64).toList(),
+            selectedRoundPage: roundGames.take(64).toList(),
+            selectedGame: roundGames.first,
+            totalCount: roundGames.length,
+            allRoundGames: roundGames,
+          );
+          final container = _container(repository);
+          addTearDown(container.dispose);
+          const key = BoardTabEventGamesKey(
+            tourId: 'tour-1',
+            selectedGameId: 'scc-1',
+            selectedRoundId: 'scc-r16',
+            selectedBoardNumber: 1,
+          );
+          final provider = eventRailGamesProvider(_providerKey(key));
+          final subscription = container.listen(provider, (_, __) {});
+          addTearDown(subscription.close);
+          await container.read(provider.future);
+          expect(
+            repository.roundPageCalls.last,
+            const _PageCall(id: 'scc-r16', limit: 64, offset: 0),
+          );
+
+          await container.read(provider.notifier).refreshLoadedMetadata();
+          expect(
+            repository.roundPageCalls.last,
+            repeats
+                ? const _PageCall(
+                  id: 'scc-r16',
+                  limit: kEventRailMatchPlayRoundLimit,
+                  offset: 0,
+                )
+                : const _PageCall(id: 'scc-r16', limit: 64, offset: 0),
+          );
+        },
+      );
+    }
+
     test(
       'refresh publishes new headings without game changes and survives catalog errors',
       () async {
@@ -3569,6 +3631,45 @@ Games _smartGmGame({
     lastMove: 'e2e4',
     lastMoveTime: day.add(Duration(minutes: boardNumber)),
     gameDay: day,
+    boardNr: boardNumber,
+  );
+}
+
+Games _pairGame({
+  required String id,
+  required int boardNumber,
+  required String white,
+  required String black,
+}) {
+  return Games(
+    id: id,
+    roundId: 'scc-r16',
+    roundSlug: 'round-of-16',
+    tourId: 'tour-1',
+    tourSlug: 'tour-1',
+    name: '$white - $black',
+    fen: null,
+    players: <Player>[
+      Player(
+        name: white,
+        title: 'GM',
+        rating: 2700,
+        fideId: 0,
+        fed: 'USA',
+        clock: 0,
+        team: '',
+      ),
+      Player(
+        name: black,
+        title: 'GM',
+        rating: 2700,
+        fideId: 0,
+        fed: 'USA',
+        clock: 0,
+        team: '',
+      ),
+    ],
+    status: '*',
     boardNr: boardNumber,
   );
 }
