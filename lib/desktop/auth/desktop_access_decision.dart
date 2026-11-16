@@ -46,6 +46,7 @@ enum DesktopAccessReason {
   premiumGameReport('premium_game_report'),
   premiumPgnImport('premium_pgn_import'),
   premiumPgnCopy('premium_pgn_copy'),
+  premiumBoardSplit('premium_board_split'),
   premiumLikes('premium_likes'),
   premiumCommunityLikes('premium_community_likes'),
   quotaPrepOwnAccounts('quota_prep_own_accounts'),
@@ -311,6 +312,12 @@ _Requirement _requirementFor(
   if (context.feature == DesktopFeature.pgnCopy) {
     return const _Requirement.premium(DesktopAccessReason.premiumPgnCopy);
   }
+  // Splitting the Board workspace is Premium on every edition, whatever the
+  // boards show. Removing a board from a split is never gated (handled
+  // above with the other data-stewardship actions).
+  if (context.feature == DesktopFeature.boardSplit) {
+    return const _Requirement.premium(DesktopAccessReason.premiumBoardSplit);
+  }
   // The current phone gates every report, including the first and cached
   // reports. Native desktop retains its existing lifetime allowance.
   if (isWebApp && context.feature == DesktopFeature.gameReport) {
@@ -356,7 +363,10 @@ _Requirement _requirementFor(
   switch (context.feature) {
     case DesktopFeature.pgnImport:
     case DesktopFeature.pgnCopy:
-      throw StateError('PGN access is resolved before feature dispatch.');
+    case DesktopFeature.boardSplit:
+      throw StateError(
+        'PGN and board split access are resolved before feature dispatch.',
+      );
     case DesktopFeature.eventDiscovery:
       if (context.action == DesktopAction.view) return _free;
       return const _Requirement.premium(

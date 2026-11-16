@@ -10,6 +10,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
@@ -820,15 +821,36 @@ class _TabChipState extends ConsumerState<_TabChip>
     final activeId = ref.read(desktopTabsProvider).activeId;
     if (activeId == null) return;
     final split = ref.read(boardSplitProvider.notifier);
-    final placement = besideBoardPlacement(split.layoutFor(activeId), activeId);
+    final layout = split.layoutFor(activeId);
+    final placement = besideBoardPlacement(layout, activeId);
     if (placement == null) return;
-    if (split.place(
-      targetTabId: placement.targetTabId,
-      incomingTabId: widget.tab.id,
-      zone: placement.zone,
-    )) {
-      ref.read(desktopTabsProvider.notifier).activate(widget.tab.id);
+    void place() {
+      if (split.place(
+        targetTabId: placement.targetTabId,
+        incomingTabId: widget.tab.id,
+        zone: placement.zone,
+      )) {
+        ref.read(desktopTabsProvider.notifier).activate(widget.tab.id);
+      }
     }
+
+    // Showing a board beside another is Premium; without it the Premium
+    // prompt opens instead, and a verified purchase finishes the move.
+    final admitted = admitBoardSplit(
+      ProviderScope.containerOf(context, listen: false),
+      surface: 'board_split_open_beside',
+      resume: DesktopAccessResume(
+        run: () {
+          if (mounted) place();
+        },
+        stillMatches:
+            () =>
+                mounted &&
+                ref.read(desktopTabsProvider).activeId == activeId &&
+                split.layoutFor(activeId) == layout,
+      ),
+    );
+    if (admitted) place();
   }
 
   void _onPullEnd(DraggableDetails details) {

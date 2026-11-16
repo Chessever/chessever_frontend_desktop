@@ -49,6 +49,11 @@ enum DesktopFeature {
   /// exporting retained files are separate operations.
   pgnImport,
   pgnCopy,
+
+  /// Showing more than one Board tab at once in a split Board workspace.
+  /// Opening a game on its own board stays free; adding a board beside
+  /// another is Premium.
+  boardSplit,
 }
 
 /// Where the user discovered the content a request acts on.

@@ -5,6 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/shell/board_split_workspace.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
@@ -12,6 +18,9 @@ import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/game_drag_source.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
+
+import 'support/desktop_premium_test_overrides.dart';
 
 const _workspaceKey = ValueKey('workspace');
 
@@ -70,7 +79,7 @@ void main() {
     tester,
   ) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     final tabs = container.read(desktopTabsProvider.notifier);
     final a = tabs.open(TabKind.board, reuseExisting: false);
@@ -132,7 +141,7 @@ void main() {
     tester,
   ) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     final tabs = container.read(desktopTabsProvider.notifier);
     final a = tabs.open(TabKind.board, reuseExisting: false);
@@ -208,9 +217,102 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a guest dropping a game on a split zone gets the Premium '
+      'prompt, and opening it in place stays free', (tester) async {
+    _sizeWindow(tester);
+    final container = ProviderContainer(
+      overrides: [
+        subscriptionProvider.overrideWith(
+          (ref) => SubscriptionNotifier.stub(SubscriptionState()),
+        ),
+        desktopEntitlementProvider.overrideWithValue(
+          DesktopEntitlementSnapshot.guest,
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final shown = <DesktopAccessDecision>[];
+    final surfaces = <String>[];
+    addTearDown(
+      registerDesktopPaywallPresenter(container, (
+        decision, {
+        DesktopAccessContext? context,
+        DesktopAccessResume? resume,
+        required String surface,
+      }) async {
+        shown.add(decision);
+        surfaces.add(surface);
+        return false;
+      }),
+    );
+    final tabs = container.read(desktopTabsProvider.notifier);
+    final a = tabs.open(TabKind.board, reuseExisting: false);
+    var spawned = 0;
+    final payload = GameTabDragPayload(
+      id: 'g1',
+      label: 'Carlsen vs Nepomniachtchi',
+      spawn: (ref, {required focus}) async {
+        spawned++;
+        ref
+            .read(desktopTabsProvider.notifier)
+            .open(TabKind.board, reuseExisting: false, focus: focus);
+      },
+    );
+    await tester.pumpWidget(
+      _harness(
+        container,
+        sources: [
+          GameDragSource(
+            payload: payload,
+            child: const SizedBox(
+              key: ValueKey('row'),
+              height: 40,
+              width: 200,
+              child: Text('Carlsen vs Nepomniachtchi'),
+            ),
+          ),
+        ],
+      ),
+    );
+    final origin = tester.getTopLeft(find.byKey(_workspaceKey));
+
+    Future<void> dragTo(Offset target, String label) async {
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const ValueKey('row'))),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveBy(const Offset(20, 0));
+      await tester.pump();
+      await gesture.moveTo(origin + target - const Offset(60, 30));
+      await tester.pump();
+      await gesture.moveTo(origin + target);
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump();
+    }
+
+    await dragTo(const Offset(1120, 410), 'Split right \u00b7 Premium');
+    expect(spawned, 0);
+    expect(container.read(boardSplitProvider).groups, isEmpty);
+    expect(shown.single.outcome, DesktopAccess.premiumRequired);
+    expect(shown.single.reason, DesktopAccessReason.premiumBoardSplit);
+    expect(surfaces.single, 'board_split_game_drop');
+    expect(container.read(desktopTabsProvider).activeId, a);
+
+    // The middle of an unsplit board opens the game as before, for anyone.
+    await dragTo(const Offset(600, 400), 'Open here');
+    expect(spawned, 1);
+    expect(shown, hasLength(1));
+    expect(container.read(boardSplitProvider).groups, isEmpty);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a full split only offers to replace a board', (tester) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     final tabs = container.read(desktopTabsProvider.notifier);
     final ids = [
@@ -294,7 +396,7 @@ void main() {
     tester,
   ) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     final tabs = container.read(desktopTabsProvider.notifier);
     tabs.open(TabKind.board, reuseExisting: false);
@@ -342,7 +444,7 @@ void main() {
   testWidgets('dragging the divider resizes the cells without rebuilding '
       'any board', (tester) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     final tabs = container.read(desktopTabsProvider.notifier);
     final a = tabs.open(TabKind.board, reuseExisting: false);
@@ -416,7 +518,7 @@ void main() {
     tester,
   ) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     container
         .read(desktopTabsProvider.notifier)
@@ -457,7 +559,7 @@ void main() {
   testWidgets('while a dropped game opens, the workspace shows it and '
       'takes no other split drop', (tester) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     final tabs = container.read(desktopTabsProvider.notifier);
     final a = tabs.open(TabKind.board, reuseExisting: false);
@@ -566,7 +668,7 @@ void main() {
   testWidgets('the preview follows the boards when they change under a '
       'still pointer', (tester) async {
     _sizeWindow(tester);
-    final container = ProviderContainer();
+    final container = ProviderContainer(overrides: desktopPremiumTestOverrides);
     addTearDown(container.dispose);
     final tabs = container.read(desktopTabsProvider.notifier);
     final a = tabs.open(TabKind.board, reuseExisting: false);

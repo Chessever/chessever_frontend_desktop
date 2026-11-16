@@ -9,6 +9,8 @@ import 'package:chessever/desktop/state/board_focus_mode.dart';
 import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 
+import 'support/desktop_premium_test_overrides.dart';
+
 BoardSplitLayout _single(String id) => BoardSplitLayout.single(id);
 
 void main() {
@@ -421,7 +423,7 @@ void main() {
       late DesktopTabsNotifier tabs;
       late String other, a, b, c;
       setUp(() {
-        container = ProviderContainer();
+        container = ProviderContainer(overrides: desktopPremiumTestOverrides);
         tabs = container.read(desktopTabsProvider.notifier);
         other = tabs.open(TabKind.library);
         a = tabs.open(TabKind.board, reuseExisting: false);
@@ -453,7 +455,7 @@ void main() {
 
       test('for close to the right, which names its tab', () async {
         // Strip order [x, pivot, y] with x and y split, y focused.
-        final local = ProviderContainer();
+        final local = ProviderContainer(overrides: desktopPremiumTestOverrides);
         addTearDown(local.dispose);
         final strip = local.read(desktopTabsProvider.notifier);
         final x = strip.open(TabKind.board, reuseExisting: false);
@@ -507,7 +509,9 @@ void main() {
     });
 
     test('closing the focused board focuses the cell beside it', () async {
-      final container = ProviderContainer();
+      final container = ProviderContainer(
+        overrides: desktopPremiumTestOverrides,
+      );
       addTearDown(container.dispose);
       final tabs = container.read(desktopTabsProvider.notifier);
       String board() => tabs.open(TabKind.board, reuseExisting: false);
@@ -534,7 +538,9 @@ void main() {
     });
 
     test('a press on another tab keeps the board on screen until it ends', () {
-      final container = ProviderContainer();
+      final container = ProviderContainer(
+        overrides: desktopPremiumTestOverrides,
+      );
       addTearDown(container.dispose);
       final tabs = container.read(desktopTabsProvider.notifier);
       final a = tabs.open(TabKind.board, reuseExisting: false);
@@ -555,7 +561,9 @@ void main() {
     });
 
     test('each split keeps its own id after its boards change', () {
-      final container = ProviderContainer();
+      final container = ProviderContainer(
+        overrides: desktopPremiumTestOverrides,
+      );
       addTearDown(container.dispose);
       final tabs = container.read(desktopTabsProvider.notifier);
       String board() => tabs.open(TabKind.board, reuseExisting: false);
@@ -589,7 +597,9 @@ void main() {
     });
 
     test('a tab joins one group at a time and closed tabs leave it', () {
-      final container = ProviderContainer();
+      final container = ProviderContainer(
+        overrides: desktopPremiumTestOverrides,
+      );
       addTearDown(container.dispose);
       final tabs = container.read(desktopTabsProvider.notifier);
       final a = tabs.open(TabKind.board, reuseExisting: false);

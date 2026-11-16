@@ -6,6 +6,10 @@ import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/state/board_focus_mode.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 
@@ -448,8 +452,49 @@ class BoardSplitState {
   }
 }
 
+/// The request a split asks admission for. Showing two or more boards at
+/// once is Premium; one board on its own is free for everyone.
+const DesktopAccessContext boardSplitAccessContext = DesktopAccessContext(
+  feature: DesktopFeature.boardSplit,
+  action: DesktopAction.create,
+  origin: DesktopDiscoveryOrigin.localFile,
+);
+
+/// Whether the current membership may split the Board workspace.
+///
+/// Read only when a split is made or shown, so nothing watches the
+/// membership for a reader who never splits.
+final boardSplitAccessProvider = Provider<DesktopAccessDecision>(
+  (ref) => readDesktopAccess(ref.watch, boardSplitAccessContext),
+);
+
+/// Admission for an explicit split (a drop onto a split zone, "Open
+/// beside"). Returns true when splitting is allowed now. Otherwise opens the
+/// window's Premium prompt (sign in, upgrade or Retry, whichever the
+/// membership calls for) and returns false: the caller must not split.
+/// [resume] runs once after a verified purchase.
+bool admitBoardSplit(
+  ProviderContainer container, {
+  required String surface,
+  DesktopAccessResume? resume,
+}) => admitDesktopAction(
+  container,
+  boardSplitAccessContext,
+  surface: surface,
+  resume: resume,
+);
+
 class BoardSplitNotifier extends StateNotifier<BoardSplitState> {
-  BoardSplitNotifier() : super(const BoardSplitState());
+  /// [canSplit] answers whether a layout of two or more boards may be made
+  /// now. It is the last line behind the drop and menu gates: any placement
+  /// that would leave a split is refused without it. Defaults to allowed.
+  BoardSplitNotifier({bool Function()? canSplit})
+    : _canSplit = canSplit ?? _alwaysAllowed,
+      super(const BoardSplitState());
+
+  static bool _alwaysAllowed() => true;
+
+  final bool Function() _canSplit;
 
   String? _keepHistoryOnCloseOf;
 
@@ -481,6 +526,9 @@ class BoardSplitNotifier extends StateNotifier<BoardSplitState> {
       zone: zone,
     );
     if (next == null) return false;
+    // A split, or a change inside one, needs Premium. A drop that leaves one
+    // board on its own (opening a game in place) is free.
+    if (next.isSplit && !_canSplit()) return false;
     final groups = <BoardSplitLayout>[];
     for (final group in state.groups) {
       if (group.id == target.id) continue;
@@ -508,6 +556,12 @@ class BoardSplitNotifier extends StateNotifier<BoardSplitState> {
           if (g.id != group.id) g else if (rest != null) rest,
       ],
     );
+  }
+
+  /// Dissolves every split. The tabs stay open; each shows on its own.
+  void collapseAll() {
+    if (state.groups.isEmpty) return;
+    state = const BoardSplitState();
   }
 
   /// Drops every member that is no longer an open Board tab.
@@ -554,7 +608,45 @@ class BoardSplitNotifier extends StateNotifier<BoardSplitState> {
 
 final boardSplitProvider =
     StateNotifierProvider<BoardSplitNotifier, BoardSplitState>((ref) {
-      final notifier = BoardSplitNotifier();
+      final notifier = BoardSplitNotifier(
+        canSplit: () => ref.read(boardSplitAccessProvider).isAllowed,
+      );
+      // Losing Premium (signing out, an expiry, a lapsed renewal) closes
+      // every split: the boards stay open as tabs, each on its own. Only a
+      // known lapse does; a membership that is still being checked or
+      // cannot be reached keeps what is on screen, as admitted work does
+      // everywhere else. Membership is watched only while a split exists.
+      ProviderSubscription<DesktopAccessDecision>? access;
+      void watchAccess(BoardSplitState split) {
+        if (split.groups.isEmpty) {
+          access?.close();
+          access = null;
+          return;
+        }
+        access ??= ref.listen<DesktopAccessDecision>(boardSplitAccessProvider, (
+          _,
+          next,
+        ) {
+          if (next.outcome != DesktopAccess.premiumRequired) return;
+          // Not while the membership change is still being delivered.
+          scheduleMicrotask(() {
+            if (!notifier.mounted) return;
+            final now = ref.read(boardSplitAccessProvider);
+            if (now.outcome == DesktopAccess.premiumRequired) {
+              notifier.collapseAll();
+            }
+          });
+        });
+      }
+
+      final removeAccessWatch = notifier.addListener(
+        watchAccess,
+        fireImmediately: false,
+      );
+      ref.onDispose(() {
+        removeAccessWatch();
+        access?.close();
+      });
       // Closing a tab, or navigating it away from the Board, takes it out of
       // its split; the rest of the group closes up around the gap.
       ref.listen<DesktopTabsState>(desktopTabsProvider, (previous, next) {

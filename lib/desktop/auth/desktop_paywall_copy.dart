@@ -233,6 +233,13 @@ DesktopPaywallCopy _premiumCopy(
         body:
             'Upgrade to copy games as PGN. Copying a position as FEN stays free.',
       );
+    case DesktopAccessReason.premiumBoardSplit:
+      return const DesktopPaywallCopy(
+        title: 'Split boards are Premium',
+        body:
+            'Upgrade to show up to four boards side by side. Opening a game '
+            'on its own board stays free.',
+      );
     case DesktopAccessReason.premiumLikes:
     case DesktopAccessReason.premiumCommunityLikes:
       return const DesktopPaywallCopy(
