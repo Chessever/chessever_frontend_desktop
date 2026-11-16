@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_focus_mode.dart';
@@ -861,11 +863,20 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
       incomingTabId: incoming,
     );
     if (rect == null) return null;
+    var label = _labelFor(zone, layout, incoming);
+    // A drop that would show more than one board needs Premium: say so on
+    // the landing area, so the prompt the drop opens is no surprise.
+    final opensAlone = zone == BoardSplitZone.replace && !layout.isSplit;
+    if (!opensAlone &&
+        ref.read(boardSplitAccessProvider).outcome ==
+            DesktopAccess.premiumRequired) {
+      label = '$label \u00b7 Premium';
+    }
     return _DropPlan(
       targetTabId: target,
       zone: zone,
       rect: rect,
-      label: _labelFor(zone, layout, incoming),
+      label: label,
       layoutKey: _layoutKey(activeId, layout),
       groupId: layout.id,
     );
@@ -928,23 +939,31 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
       return;
     }
     if (data is BoardTabDragPayload) {
-      final open = tabs.currentState.tabs.any(
+      bool open() => tabs.currentState.tabs.any(
         (t) => t.id == data.tabId && t.kind == TabKind.board,
       );
-      if (open &&
-          split.place(
-            targetTabId: shown.targetTabId,
-            incomingTabId: data.tabId,
-            zone: shown.zone,
-          )) {
-        tabs.activate(data.tabId);
+      void place() {
+        if (open() &&
+            split.place(
+              targetTabId: shown.targetTabId,
+              incomingTabId: data.tabId,
+              zone: shown.zone,
+            )) {
+          tabs.activate(data.tabId);
+        }
+      }
+
+      // Every place a tab can land shows it beside another board.
+      if (open() && _admitSplit('board_split_tab_drop', shown, place)) {
+        place();
       }
       return;
     }
     if (data is! GameTabDragPayload) return;
     if (!split.layoutFor(shown.targetTabId).isSplit &&
         shown.zone == BoardSplitZone.replace) {
-      // Nothing to split: open the game the way the tab strip does.
+      // Nothing to split: open the game the way the tab strip does. Free
+      // for everyone, as it was before boards could be split.
       unawaited(
         data
             .spawnAdmitted(ref, focus: true, surface: 'board_drop')
@@ -952,8 +971,26 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
       );
       return;
     }
-    unawaited(_openInSplit(data, shown).catchError(_reportDropError));
+    void open() =>
+        unawaited(_openInSplit(data, shown).catchError(_reportDropError));
+    if (_admitSplit('board_split_game_drop', shown, open)) open();
   }
+
+  /// Admission for a drop that splits the workspace. Allowed now: true.
+  /// Otherwise the Premium prompt opens and the drop is not taken; a
+  /// verified purchase replays it once, if the boards it was aimed at are
+  /// still where they were.
+  bool _admitSplit(String surface, _DropPlan shown, void Function() replay) =>
+      admitBoardSplit(
+        ProviderScope.containerOf(context, listen: false),
+        surface: surface,
+        resume: DesktopAccessResume(
+          run: () {
+            if (mounted) replay();
+          },
+          stillMatches: () => mounted && shown.layoutKey == _currentLayoutKey,
+        ),
+      );
 
   void _reportDropError(Object error, StackTrace stack) {
     FlutterError.reportError(

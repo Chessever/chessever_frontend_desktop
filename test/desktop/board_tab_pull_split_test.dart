@@ -6,6 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_decision.dart';
+import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/shell/board_split_workspace.dart';
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
@@ -14,6 +20,9 @@ import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/game_drag_source.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/revenue_cat_service/subscribe_state.dart';
+
+import 'support/desktop_premium_test_overrides.dart';
 
 class _StableEngineSettings extends EngineSettingsNotifierNew {
   @override
@@ -22,14 +31,31 @@ class _StableEngineSettings extends EngineSettingsNotifierNew {
 
 const _workspaceKey = ValueKey('workspace');
 
+class _Subscription extends SubscriptionNotifier {
+  _Subscription(super.state) : super.stub();
+
+  void become(SubscriptionState next) => state = next;
+}
+
 Future<({ProviderContainer container, String carlsen, String anand})> _pump(
-  WidgetTester tester,
-) async {
+  WidgetTester tester, {
+  bool premium = true,
+}) async {
   tester.view.physicalSize = const Size(1208, 854);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final container = ProviderContainer(
     overrides: [
+      if (premium)
+        ...desktopPremiumTestOverrides
+      else ...[
+        subscriptionProvider.overrideWith(
+          (ref) => _Subscription(SubscriptionState()),
+        ),
+        desktopEntitlementProvider.overrideWithValue(
+          DesktopEntitlementSnapshot.guest,
+        ),
+      ],
       engineSettingsProviderNew.overrideWith(_StableEngineSettings.new),
     ],
   );
@@ -149,6 +175,56 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('a guest pulling a tab down gets the Premium prompt instead', (
+    tester,
+  ) async {
+    final fixture = await _pump(tester, premium: false);
+    final shown = <DesktopAccessDecision>[];
+    final surfaces = <String>[];
+    final unregister = registerDesktopPaywallPresenter(fixture.container, (
+      decision, {
+      DesktopAccessContext? context,
+      DesktopAccessResume? resume,
+      required String surface,
+    }) async {
+      shown.add(decision);
+      surfaces.add(surface);
+      return false;
+    });
+    addTearDown(unregister);
+
+    final mouse = await tester.startGesture(
+      tester.getCenter(find.textContaining('Carlsen')),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await mouse.moveBy(const Offset(0, 30));
+    await tester.pump();
+    final origin = tester.getTopLeft(find.byKey(_workspaceKey));
+    await mouse.moveTo(origin + const Offset(1120, 400));
+    await tester.pump();
+    await mouse.moveTo(origin + const Offset(1130, 410));
+    await tester.pump();
+    // The landing area still shows, and says what it needs.
+    expect(find.text('Split right \u00b7 Premium'), findsOneWidget);
+
+    await mouse.up();
+    await tester.pump();
+    expect(fixture.container.read(boardSplitProvider).groups, isEmpty);
+    expect(fixture.container.read(visibleBoardSplitProvider), isNull);
+    expect(shown, hasLength(1));
+    expect(shown.single.outcome, DesktopAccess.premiumRequired);
+    expect(shown.single.reason, DesktopAccessReason.premiumBoardSplit);
+    expect(surfaces.single, 'board_split_tab_drop');
+    // Both boards are still open tabs.
+    final open = {
+      for (final t in fixture.container.read(desktopTabsProvider).tabs) t.id,
+    };
+    expect(open, containsAll([fixture.carlsen, fixture.anand]));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('the only board on screen keeps its old pull behaviour', (
     tester,
   ) async {
@@ -193,6 +269,50 @@ void main() {
     final tabs = fixture.container.read(desktopTabsProvider).tabs;
     expect(tabs.any((t) => t.id == fixture.carlsen), isFalse);
     expect(fixture.container.read(boardSplitProvider).groups, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a guest asking for a board beside the current one gets the '
+      'Premium prompt, and the purchase finishes the move', (tester) async {
+    final fixture = await _pump(tester, premium: false);
+    final surfaces = <String>[];
+    final unregister = registerDesktopPaywallPresenter(fixture.container, (
+      decision, {
+      DesktopAccessContext? context,
+      DesktopAccessResume? resume,
+      required String surface,
+    }) async {
+      surfaces.add(surface);
+      expect(fixture.container.read(boardSplitProvider).groups, isEmpty);
+      // The member buys Premium inside the prompt.
+      (fixture.container.read(subscriptionProvider.notifier) as _Subscription)
+          .become(
+            SubscriptionState(
+              isSubscribed: true,
+              expirationDate: DateTime.now().add(const Duration(days: 30)),
+            ),
+          );
+      if (resume != null && (resume.stillMatches?.call() ?? true)) {
+        await resume.run();
+      }
+      return true;
+    });
+    addTearDown(unregister);
+
+    await tester.tapAt(
+      tester.getCenter(find.textContaining('Carlsen')),
+      buttons: kSecondaryMouseButton,
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Show beside current board'));
+    await tester.pumpAndSettle();
+    expect(surfaces, ['board_split_open_beside']);
+    expect(fixture.container.read(visibleBoardSplitProvider)!.columns, [
+      [fixture.anand],
+      [fixture.carlsen],
+    ]);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });

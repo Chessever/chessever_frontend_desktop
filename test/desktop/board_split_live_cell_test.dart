@@ -199,8 +199,9 @@ void main() {
         desktopEntitlementProvider.overrideWithValue(
           DesktopEntitlementSnapshot.guest,
         ),
+        // Splitting the workspace is Premium.
         subscriptionProvider.overrideWith(
-          (_) => _Subscription(SubscriptionState()),
+          (_) => _Subscription(SubscriptionState(isSubscribed: true)),
         ),
         boardTabGameArgsByTabIdProvider.overrideWith(
           (ref) => <String, BoardTabGameArgs>{
