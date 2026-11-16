@@ -504,6 +504,9 @@ class TourInfo {
   final Map<String, dynamic>? officialTeamStandings;
   final Map<String, dynamic>? officialPlayerStandingsSections;
 
+  /// Confirmed match finals and organizer seed order for shared-round knockouts.
+  final Map<String, dynamic>? matchPlayBracket;
+
   /// A finished event's complete organizer table, pinned by the data hub
   /// (`{url, source, pinnedAt}`): every roster row then carries the
   /// organizer's own rank, score and games count.
@@ -541,6 +544,7 @@ class TourInfo {
     this.standingsUpdatedAt,
     this.officialTeamStandings,
     this.officialPlayerStandingsSections,
+    this.matchPlayBracket,
     this.standingsPin,
     this.customScoring,
     this.teamScoring,
@@ -566,6 +570,7 @@ class TourInfo {
       standingsPin: _asStringKeyMap(json['standingsPin']),
       customScoring: _asStringKeyMap(json['customScoring']),
       teamScoring: _asStringKeyMap(json['teamScoring']),
+      matchPlayBracket: _asStringKeyMap(json['matchPlayBracket']),
     );
   }
 
@@ -596,6 +601,7 @@ class TourInfo {
         'standingsUpdatedAt': standingsUpdatedAt!.toIso8601String(),
       if (officialTeamStandings != null)
         'officialTeamStandings': officialTeamStandings,
+      if (matchPlayBracket != null) 'matchPlayBracket': matchPlayBracket,
       if (officialPlayerStandingsSections != null)
         'officialPlayerStandingsSections': officialPlayerStandingsSections,
       if (standingsPin != null) 'standingsPin': standingsPin,

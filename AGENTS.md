@@ -434,3 +434,21 @@ its tests. Check against SCC XI (tour `fqCjSUpE`, round `60IswAYI`).
 
 On demand — read `docs/agents/forui.md` before working on this area. Gist: This repo pins `forui: ^0.16.0` (`pubspec.yaml`).
 forui.dev documents the latest release — check every API against 0.16 and never blind-bump forui (0.24+ removed `FThemes.zinc.dark`, which the whole shell uses).
+
+
+### Confirmed match finals before the next pairing exists
+
+`tours.info.matchPlayBracket` carries `seeds` (one `roundId` plus `fideIds`,
+an ordered array of player pairs) and `results` (one `roundId`, `fideIds`,
+`scores` in that identity order, `gameCount`, `winnerFideId`, and source audit
+fields `sourceUrl`/`finishedAt`). A confirmed final must match the entire
+loaded match's identities, terminal game count and aggregate score. Duplicate
+records, partial reads, new games or corrected results invalidate it. A pause
+between games is never a finalization signal. This metadata is written only
+from a confirmed organizer result, not inferred from a score lead.
+
+A validated complete seed order puts qualified players into the next empty
+stage's correct slots with TBD opponents. These are view-only cards: no fake
+game rows, scores, live status or board navigation. Published next-round
+pairings take precedence. Match finals are independent of the rest of a shared
+stage. Keep this contract and its SCC 12–8 regression fixture in all three apps.

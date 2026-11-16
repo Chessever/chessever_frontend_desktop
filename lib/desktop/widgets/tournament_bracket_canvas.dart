@@ -165,17 +165,19 @@ class _DesktopBracketMatchCard extends StatelessWidget {
         StringBuffer()
           ..write(match.isLive ? 'Live match. ' : 'Match. ')
           ..write(
-            '${match.participant1.displayName} '
-            '${_formatBracketScore(match.participant1Score)}, '
-            '${match.participant2.displayName} '
-            '${_formatBracketScore(match.participant2Score)}',
+            match.isProjected
+                ? '${match.participant1.displayName}, ${match.participant2.displayName}. Not played yet'
+                : '${match.participant1.displayName} '
+                  '${_formatBracketScore(match.participant1Score)}, '
+                  '${match.participant2.displayName} '
+                  '${_formatBracketScore(match.participant2Score)}',
           );
     if (match.winner != null) {
       semantics.write('. ${match.winner!.displayName} advances');
     }
 
     return DesktopTappable(
-      onPress: onActivate,
+      onPress: match.isProjected ? null : onActivate,
       semanticsLabel: semantics.toString(),
       borderRadius: BorderRadius.circular(10),
       hoverColor: kPrimaryColor.withValues(alpha: 0.055),
@@ -217,7 +219,7 @@ class _DesktopBracketMatchCard extends StatelessWidget {
                   Expanded(
                     child: _DesktopBracketParticipantRow(
                       participant: match.participant1,
-                      score: match.participant1Score,
+                      score: match.isProjected ? null : match.participant1Score,
                       winner: winnerId == match.participant1.id,
                       eliminated:
                           winnerId != null && winnerId != match.participant1.id,
@@ -228,7 +230,7 @@ class _DesktopBracketMatchCard extends StatelessWidget {
                   Expanded(
                     child: _DesktopBracketParticipantRow(
                       participant: match.participant2,
-                      score: match.participant2Score,
+                      score: match.isProjected ? null : match.participant2Score,
                       winner: winnerId == match.participant2.id,
                       eliminated:
                           winnerId != null && winnerId != match.participant2.id,
@@ -270,7 +272,7 @@ class _DesktopBracketParticipantRow extends StatelessWidget {
   });
 
   final BracketParticipant participant;
-  final double score;
+  final double? score;
   final bool winner;
   final bool eliminated;
   final bool leader;
@@ -350,8 +352,8 @@ class _DesktopBracketParticipantRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            _formatBracketScore(score),
+          if (score != null) Text(
+            _formatBracketScore(score!),
             textAlign: TextAlign.right,
             style: TextStyle(
               color:
