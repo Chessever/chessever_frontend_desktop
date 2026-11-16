@@ -2355,23 +2355,69 @@ class _AboutBody extends ConsumerWidget {
       child: SingleChildScrollView(
         physics: const DesktopScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _RatingOverviewRow(
-              ratings: ratings,
-              history: historyAsync?.valueOrNull,
-              historyLoading: historyAsync?.isLoading ?? false,
-              selected: currentTimeControl,
-              onSelect: onSelectTimeControl,
-            ),
-            const SizedBox(height: 14),
-            details,
-          ],
+        child: PlayerProfileStrayClickGuard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _RatingOverviewRow(
+                ratings: ratings,
+                history: historyAsync?.valueOrNull,
+                historyLoading: historyAsync?.isLoading ?? false,
+                selected: currentTimeControl,
+                onSelect: onSelectTimeControl,
+              ),
+              const SizedBox(height: 14),
+              details,
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// Ignores pointer input briefly after the Overview mounts.
+///
+/// Search results open a profile on a single click, so the second click of a
+/// double-click lands on the freshly opened Overview, right where the centred
+/// search palette was: the middle rating card. That silently turned on the
+/// Rapid filter (Trello #1409). The guard outlasts a double-click's gap and is
+/// too short for a deliberate click to notice.
+@visibleForTesting
+class PlayerProfileStrayClickGuard extends StatefulWidget {
+  const PlayerProfileStrayClickGuard({super.key, required this.child});
+
+  static const Duration settleDuration = Duration(milliseconds: 400);
+
+  final Widget child;
+
+  @override
+  State<PlayerProfileStrayClickGuard> createState() =>
+      _PlayerProfileStrayClickGuardState();
+}
+
+class _PlayerProfileStrayClickGuardState
+    extends State<PlayerProfileStrayClickGuard> {
+  Timer? _settle;
+  bool _settling = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _settle = Timer(PlayerProfileStrayClickGuard.settleDuration, () {
+      if (mounted) setState(() => _settling = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _settle?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      IgnorePointer(ignoring: _settling, child: widget.child);
 }
 
 class _OverviewStatusPanel extends StatelessWidget {
