@@ -2,6 +2,7 @@ import 'package:chessever/desktop/combined/combined_group_expansion.dart';
 import 'package:chessever/desktop/combined/combined_group_header.dart';
 import 'package:chessever/desktop/combined/combined_hall_provider.dart';
 import 'package:chessever/desktop/state/combined_tournament.dart';
+import 'package:chessever/desktop/knockout/match_play.dart';
 import 'dart:async';
 import '../state/event_player_board_games.dart';
 
@@ -186,6 +187,75 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
     return left.index.compareTo(right.index);
   });
   return ranked.map((item) => item.entry).toList(growable: false);
+}
+
+/// One player-pairing section of a knockout round on the Games tab.
+@immutable
+class DesktopKnockoutMatchSection {
+  const DesktopKnockoutMatchSection({
+    required this.key,
+    required this.header,
+    this.anchorIsWhiteById,
+  });
+
+  final String key;
+
+  /// [MatchHeaderModel.games] are the section's cards in render order.
+  final MatchHeaderModel header;
+
+  /// Match play only: per game id, whether side A ([MatchHeaderModel.player1])
+  /// has White. Null for every other knockout round.
+  final Map<String, bool>? anchorIsWhiteById;
+
+  bool get isMatchPlay => anchorIsWhiteById != null;
+}
+
+/// The match sections of one knockout round, in display order.
+///
+/// A MATCH-PLAY round (`lib/desktop/knockout/match_play.dart`: one pair with
+/// 2+ games in a source round, e.g. Speed Chess Championship) gets the
+/// match-play rule: side A (White of game 1) on the left of the header and
+/// first on every card, its A–B score, live match first, then played matches
+/// newest first, then the rest in bracket order, and inside a match the game
+/// in play, finished games newest first, then unplayed shells. Every other
+/// knockout round keeps [orderedKnockoutMatchEntriesForDisplay] exactly.
+@visibleForTesting
+List<DesktopKnockoutMatchSection> desktopKnockoutMatchSections(
+  List<GamesTourModel> games,
+) {
+  final matchPlay =
+      isMatchPlayRound(games, matchPlayIdentityOfTourModel)
+          ? buildMatchPlayRound(games, matchPlayFactsOfTourModel)
+          : null;
+  if (matchPlay == null || matchPlay.looseGames.isNotEmpty) {
+    return [
+      for (final entry in orderedKnockoutMatchEntriesForDisplay(games))
+        DesktopKnockoutMatchSection(
+          key: entry.key,
+          header: KnockoutMatchDetector.createMatchHeader(
+            entry.key,
+            entry.value,
+          ),
+        ),
+    ];
+  }
+  return [
+    for (final match in matchPlay.matches)
+      DesktopKnockoutMatchSection(
+        key: match.key,
+        header: MatchHeaderModel(
+          matchKey: match.key,
+          player1Card: match.firstGame.whitePlayer,
+          player2Card: match.firstGame.blackPlayer,
+          player1Score: match.aPoints,
+          player2Score: match.bPoints,
+          games: match.displayGames,
+          roundName: match.firstGame.roundSlug ?? '',
+          isComplete: match.chronologicalFacts.every((game) => game.isFinished),
+        ),
+        anchorIsWhiteById: match.anchorIsWhiteById,
+      ),
+  ];
 }
 
 int? _latestKnockoutStageOrder(List<GamesTourModel> matchGames) {
@@ -699,16 +769,14 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
                 ],
           );
         } else {
-          for (final entry in orderedKnockoutMatchEntriesForDisplay(
-            roundGames,
-          )) {
+          for (final section in desktopKnockoutMatchSections(roundGames)) {
             final expansionKey = (
               scopeId: tournamentScopeId,
               roundId: round.id,
-              matchId: entry.key,
+              matchId: section.key,
             );
             if (ref.watch(_tournamentMatchExpandedProvider(expansionKey))) {
-              visibleRoundGames.addAll(entry.value);
+              visibleRoundGames.addAll(section.header.games);
             }
           }
         }
@@ -1306,23 +1374,21 @@ class _RoundSliverSection extends ConsumerWidget {
             ..add(const SliverToBoxAdapter(child: SizedBox(height: 12)));
         }
       } else if (showMatches) {
-        for (final entry in orderedKnockoutMatchEntriesForDisplay(games)) {
+        for (final section in desktopKnockoutMatchSections(games)) {
           contentSlivers.add(
             _MatchSliverSection(
-              key: ValueKey<String>('${round.id}:${entry.key}'),
+              key: ValueKey<String>('${round.id}:${section.key}'),
               expansionKey: (
                 scopeId: scopeId,
                 roundId: round.id,
-                matchId: entry.key,
+                matchId: section.key,
               ),
               scopeId: scopeId,
               selectedGameId: selectedGameId,
               onSelectGame: onSelectGame,
               keyForGame: keyForGame,
-              header: KnockoutMatchDetector.createMatchHeader(
-                entry.key,
-                entry.value,
-              ),
+              header: section.header,
+              matchPlayAnchors: section.anchorIsWhiteById,
               eventGames: eventGames,
               tournamentTitle: tournamentTitle,
               layout: layout,
@@ -1402,6 +1468,7 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
     required this.roundNameById,
     required this.streamingEnabled,
     this.centerSparseRow = false,
+    this.matchPlayAnchors,
   });
 
   final String scopeId;
@@ -1409,6 +1476,10 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
   final ValueChanged<String> onSelectGame;
   final Key Function(String gameId) keyForGame;
   final List<GamesTourModel> games;
+
+  /// Match-play cards: per game id, whether side A has White. Null renders
+  /// every card by colour, as always.
+  final Map<String, bool>? matchPlayAnchors;
   final List<GamesTourModel> eventGames;
   final String tournamentTitle;
   final DesktopCardLayout layout;
@@ -1493,6 +1564,7 @@ class _TournamentGamesSliverGrid extends StatelessWidget {
                   game: game,
                   eventGames: eventGames,
                   tournamentTitle: tournamentTitle,
+                  matchPlayAnchorIsWhite: matchPlayAnchors?[game.gameId],
                   // DesktopGameKeyboardItem selects immediately on pointer-down;
                   // the child reserves activation for double-click.
                   selectionHandledByAncestor: true,
@@ -1791,6 +1863,7 @@ class _MatchSliverSection extends ConsumerWidget {
     required this.onSelectGame,
     required this.keyForGame,
     required this.header,
+    this.matchPlayAnchors,
     required this.eventGames,
     required this.tournamentTitle,
     required this.layout,
@@ -1806,6 +1879,10 @@ class _MatchSliverSection extends ConsumerWidget {
   final ValueChanged<String> onSelectGame;
   final Key Function(String gameId) keyForGame;
   final MatchHeaderModel header;
+
+  /// Match play: per game id, whether side A has White (cards keep A first).
+  /// Null for every other knockout round.
+  final Map<String, bool>? matchPlayAnchors;
   final List<GamesTourModel> eventGames;
   final String tournamentTitle;
   final DesktopCardLayout layout;
@@ -1822,6 +1899,9 @@ class _MatchSliverSection extends ConsumerWidget {
         SliverToBoxAdapter(
           child: _MatchSectionHeader(
             header: header,
+            // A match-play shell's date is when the file was published, not
+            // when the match is played: no schedule in that header.
+            showSchedule: matchPlayAnchors == null,
             expanded: expanded,
             onToggle:
                 () =>
@@ -1842,6 +1922,7 @@ class _MatchSliverSection extends ConsumerWidget {
             onSelectGame: onSelectGame,
             keyForGame: keyForGame,
             games: header.games,
+            matchPlayAnchors: matchPlayAnchors,
             eventGames: eventGames,
             tournamentTitle: tournamentTitle,
             layout: layout,
@@ -1858,19 +1939,28 @@ class _MatchSliverSection extends ConsumerWidget {
 }
 
 @visibleForTesting
-Widget buildKnockoutMatchSectionHeaderForTesting(MatchHeaderModel header) =>
-    _MatchSectionHeader(header: header, expanded: true, onToggle: () {});
+Widget buildKnockoutMatchSectionHeaderForTesting(
+  MatchHeaderModel header, {
+  bool showSchedule = true,
+}) => _MatchSectionHeader(
+  header: header,
+  showSchedule: showSchedule,
+  expanded: true,
+  onToggle: () {},
+);
 
 class _MatchSectionHeader extends StatefulWidget {
   const _MatchSectionHeader({
     required this.header,
     required this.expanded,
     required this.onToggle,
+    this.showSchedule = true,
   });
 
   final MatchHeaderModel header;
   final bool expanded;
   final VoidCallback onToggle;
+  final bool showSchedule;
 
   @override
   State<_MatchSectionHeader> createState() => _MatchSectionHeaderState();
@@ -1882,7 +1972,7 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
   @override
   Widget build(BuildContext context) {
     final h = widget.header;
-    final startsAt = h.startsAt;
+    final startsAt = widget.showSchedule ? h.startsAt : null;
     return ClickCursor(
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
@@ -2915,9 +3005,14 @@ class LiveDesktopGameCard extends ConsumerWidget {
     this.accessContext,
     this.lockedReason,
     this.readOnlyPresentation = false,
+    this.matchPlayAnchorIsWhite,
   });
 
   final GamesTourModel game;
+
+  /// Match-play knockout cards: whether the match's side A has White in this
+  /// game (see [GameCardData.matchPlayAnchorIsWhite]). Null everywhere else.
+  final bool? matchPlayAnchorIsWhite;
 
   /// Paint public card data without live, PGN, engine or admission work.
   /// This is inert presentation, not a grant of access.
@@ -3014,6 +3109,9 @@ class LiveDesktopGameCard extends ConsumerWidget {
             : null;
     final shouldStream = ref.watch(shouldStreamProvider);
     var data = GameCardData.fromGamesTourModel(displayGame);
+    if (matchPlayAnchorIsWhite case final anchorIsWhite?) {
+      data = data.copyWith(matchPlayAnchorIsWhite: anchorIsWhite);
+    }
     final fallback = federationFallback?.trim();
     final fallbackName = federationFallbackForName?.trim();
     if (fallback != null &&
@@ -3171,6 +3269,7 @@ Object _liveCardSignature({
     data.lastMoveTime,
     data.activePlayer,
     data.canResolveRemoteFen,
+    data.matchPlayAnchorIsWhite,
     selected,
     allowStockfishFallback,
     layout,

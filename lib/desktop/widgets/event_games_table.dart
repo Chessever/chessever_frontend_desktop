@@ -2,6 +2,8 @@ import 'package:chessever/desktop/state/board_split_view.dart';
 import 'package:chessever/desktop/widgets/game_drag_source.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/desktop/combined/combined_category.dart';
+import 'package:chessever/desktop/knockout/match_play.dart';
+import 'package:chessever/desktop/widgets/match_play_color_mark.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'dart:async';
@@ -216,11 +218,13 @@ List<String> eventRailRangeSelectionIds({
 List<String> eventRailOrderedIdsForTesting(
   List<TournamentGameSummary> games, {
   bool preserveInputOrder = false,
+  bool knockoutEvent = false,
 }) {
   return _buildRoundGroups(
         games,
         groupByRound: true,
         preserveInputOrder: preserveInputOrder,
+        knockoutEvent: knockoutEvent,
       )
       .expand((group) => group.games)
       .map((game) => game.id)
@@ -242,6 +246,7 @@ eventRailRoundGroupsForTesting(
   List<TournamentGameSummary> games, {
   bool? combinedSources,
   bool preserveInputOrder = false,
+  bool knockoutEvent = false,
 }) {
   return [
     for (final group in _buildRoundGroups(
@@ -249,6 +254,7 @@ eventRailRoundGroupsForTesting(
       groupByRound: true,
       combinedSources: combinedSources,
       preserveInputOrder: preserveInputOrder,
+      knockoutEvent: knockoutEvent,
     ))
       (
         id: group.id,
@@ -354,15 +360,77 @@ class EventRailRoundAdvanceController {
 
 @visibleForTesting
 List<({String? title, String? score, List<String> gameIds})>
-eventRailRoundSegmentsForTesting(List<TournamentGameSummary> games) {
+eventRailRoundSegmentsForTesting(
+  List<TournamentGameSummary> games, {
+  bool knockoutEvent = false,
+}) {
   return [
-    for (final group in _buildRoundGroups(games, groupByRound: true))
+    for (final group in _buildRoundGroups(
+      games,
+      groupByRound: true,
+      knockoutEvent: knockoutEvent,
+    ))
       for (final segment in group.displaySegments)
         (
           title: segment.title,
           score: segment.score,
           gameIds: [for (final game in segment.games) game.id],
         ),
+  ];
+}
+
+/// Match-play view of the event rail: every segment in render order (after
+/// the rail's live-first pass), with the colour of the TOP line of each row.
+/// [window] cuts the render window the way the rail does for big events.
+@visibleForTesting
+List<
+  ({String? title, String? score, List<String> gameIds, List<bool>? topIsWhite})
+>
+eventRailMatchPlaySegmentsForTesting(
+  List<TournamentGameSummary> games, {
+  bool knockoutEvent = true,
+  bool liveFirst = false,
+  DateTime? now,
+  List<EventRailRoundMetadata> roundCatalog = const <EventRailRoundMetadata>[],
+  List<TournamentGameSummary>? window,
+}) {
+  final full = _buildRoundGroups(
+    games,
+    groupByRound: true,
+    now: now,
+    roundCatalog: roundCatalog,
+    knockoutEvent: knockoutEvent,
+  );
+  final groups =
+      window == null
+          ? full
+          : _withFullRailMatchPlayGroups(
+            _buildRoundGroups(
+              window,
+              groupByRound: true,
+              now: now,
+              roundCatalog: roundCatalog,
+              knockoutEvent: knockoutEvent,
+            ),
+            full,
+            window,
+          );
+  return [
+    for (final group in groups)
+      for (final segment in group.displaySegments)
+        () {
+          final shown = _segmentGamesForDisplay(segment, liveFirst: liveFirst);
+          final anchors = segment.matchPlayAnchors;
+          return (
+            title: segment.title,
+            score: segment.score,
+            gameIds: [for (final game in shown) game.id],
+            topIsWhite:
+                anchors == null
+                    ? null
+                    : [for (final game in shown) anchors[game.id] ?? true],
+          );
+        }(),
   ];
 }
 
@@ -414,6 +482,37 @@ List<TournamentGameSummary> eventRailWindowContinuationGamesForTesting({
     selectedGameId: selectedGameId,
     visibleLimit: visibleLimit,
   );
+}
+
+/// Whether [tourId] is a knockout event, for the rail's match-play opt-in.
+/// The rail already reads the same state for its team-standings decision.
+final _eventRailKnockoutTourProvider = Provider.autoDispose
+    .family<bool, String>(
+      (ref, tourId) => ref.watch(
+        knockoutTournamentStateProvider(
+          tourId,
+        ).select((state) => state.isKnockout && !state.isTeamEvent),
+      ),
+    );
+
+/// The match-play opt-in for keyboard paths that run outside the rail's
+/// build. Never wakes the tournament-format provider: when no rail is
+/// watching it, the answer is false and prev/next keeps the plain order.
+bool _eventRailMatchPlayKnockoutFor(
+  WidgetRef ref,
+  BoardTabGameArgs? args,
+  List<TournamentGameSummary> games,
+) {
+  if (preserveTournamentEventInputOrder(args, games)) return false;
+  if (!eventRailMayHoldMatchPlay(games)) return false;
+  final tourId = _eventRailStandingsTourId(
+    activeArgs: args,
+    games: games,
+    keyedTourId: args?.eventGamesKey?.tourId,
+  );
+  if (tourId.isEmpty) return false;
+  final provider = _eventRailKnockoutTourProvider(tourId);
+  return ref.exists(provider) && ref.read(provider);
 }
 
 /// Board-pane companion table for the event that produced the active game.
@@ -475,6 +574,16 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
   String? _eventRailPageSelectionId;
   int _eventRailVisibleLimit = _eventRailRenderPageSize;
   late final EventRailRoundAdvanceController _roundAdvanceController;
+
+  /// Whether the last build opted this rail into match-play knockout rounds.
+  /// Keyboard paths outside build read it so prev/next walks the same order
+  /// the rail shows.
+  bool _lastMatchPlayKnockout = false;
+
+  /// Focus-follow bookkeeping for match play (see
+  /// [decideMatchPlayFocusFollow]); scoped to [_matchPlayFollowTabId].
+  MatchPlayFollowState? _matchPlayFollow;
+  String? _matchPlayFollowTabId;
 
   /// Ordered-row count behind the current window, so growth stops at the end
   /// of what is loaded instead of climbing forever.
@@ -872,7 +981,11 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
 
       final refreshed = ref.read(provider).valueOrNull?.games ?? available;
       final visibleRoundKeys = visibleOrderedGames.map(_roundKey).toSet();
-      final refreshedVisible = _buildRoundGroups(refreshed, groupByRound: true)
+      final refreshedVisible = _buildRoundGroups(
+            refreshed,
+            groupByRound: true,
+            knockoutEvent: _lastMatchPlayKnockout,
+          )
           .where((group) => visibleRoundKeys.contains(group.id))
           .expand((group) => group.games)
           .toList(growable: false);
@@ -1649,6 +1762,81 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
     }
   }
 
+  /// Match-play focus-follow: when the board's game is finished and the next
+  /// game of the same match gets its first move while the reader watches,
+  /// open that game in this Board tab. The decision is
+  /// [decideMatchPlayFocusFollow]; this only observes and acts on it.
+  void _followMatchPlayFocus({
+    required List<_EventRoundGroup> groups,
+    required String activeTabId,
+    required String? focusedGameId,
+    required bool watching,
+    required List<TournamentGameSummary> eventGames,
+    required String tournamentTitle,
+    required BoardTabGameArgs? activeArgs,
+  }) {
+    if (_matchPlayFollowTabId != activeTabId) {
+      _matchPlayFollowTabId = activeTabId;
+      _matchPlayFollow = null;
+    }
+    // A hidden rail keeps its last observation; a start that lands while the
+    // reader is away is judged when the board is on screen again.
+    if (!watching) return;
+    final focusId = focusedGameId?.trim() ?? '';
+    List<MatchPlayGameFacts>? chronology;
+    if (focusId.isNotEmpty) {
+      search:
+      for (final group in groups) {
+        for (final segment in group.segments ?? const <_EventRoundSegment>[]) {
+          final games = segment.matchPlayChronology;
+          if (games != null && games.any((game) => game.id == focusId)) {
+            chronology = games;
+            break search;
+          }
+        }
+      }
+    }
+    final decision = decideMatchPlayFocusFollow(
+      previous: _matchPlayFollow,
+      focusedGameId: focusId,
+      matchGames: chronology,
+      isUserAnalysing:
+          () => boardTabHasUnsavedAnalysis(tabId: activeTabId, read: ref.read),
+    );
+    _matchPlayFollow = decision.state;
+    final targetId = decision.followGameId;
+    if (targetId == null) return;
+    final target = eventGames.where((game) => game.id == targetId).firstOrNull;
+    if (target == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Only the Board tab the reader is on, still on the game it was on, and
+      // still not mid-analysis: a follow never asks to discard anything.
+      if (ref.read(desktopTabsProvider).activeId != activeTabId) return;
+      final args = ref.read(boardTabGameArgsByTabIdProvider)[activeTabId];
+      if (_selectedGameIdForArgs(args) != focusId) return;
+      if (boardTabHasUnsavedAnalysis(tabId: activeTabId, read: ref.read)) {
+        return;
+      }
+      unawaited(
+        _openEventGame(
+          ref: ref,
+          context: context,
+          container: ProviderScope.containerOf(context, listen: false),
+          kind: _GameListKind.event,
+          game: _eventSummaryWithCurrentLiveUpdate(
+            ref,
+            target,
+            _railLatestLiveBatchKeys[target.id],
+          ),
+          eventGames: eventGames,
+          tournamentTitle: tournamentTitle,
+          activeArgs: activeArgs,
+        ),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final referenceNow = ref.watch(eventRailNowProviderForTesting)();
@@ -1872,6 +2060,15 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
       officialTeamEvent: officialTeamEvent,
       games: resolved.games,
     );
+    // Match play is opt-in per knockout event. The board pre-check keeps every
+    // other rail from even asking for the tournament's format.
+    final knockoutEvent =
+        isEventRail &&
+        !preserveEventInputOrder &&
+        standingsTourId.isNotEmpty &&
+        eventRailMayHoldMatchPlay(resolved.games) &&
+        ref.watch(_eventRailKnockoutTourProvider(standingsTourId));
+    _lastMatchPlayKnockout = knockoutEvent;
     final eventRoundCatalog =
         eventRailValue?.roundCatalog ?? const <EventRailRoundMetadata>[];
     _scheduleRoundAdvance(
@@ -1905,6 +2102,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                   isEventRail
                       ? eventRoundCatalog
                       : const <EventRailRoundMetadata>[],
+              knockoutEvent: knockoutEvent,
             );
     final allOrderedGames =
         resolved.kind == _GameListKind.database
@@ -1912,6 +2110,19 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             : allRoundGroups
                 .expand((round) => round.games)
                 .toList(growable: false);
+    if (knockoutEvent) {
+      _followMatchPlayFocus(
+        groups: allRoundGroups,
+        activeTabId: activeTabId,
+        focusedGameId: activeSelectedGameId,
+        watching: isForegroundTab,
+        eventGames: allOrderedGames,
+        tournamentTitle: resolved.title,
+        activeArgs: effectiveArgs,
+      );
+    } else {
+      _matchPlayFollow = null;
+    }
     final eventPage =
         resolved.kind == _GameListKind.event
             ? _eventRailWindowFor(
@@ -1933,19 +2144,24 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             ? allRoundGroups
             : combinedEventRail
             ? _roundGroupsInWindow(allRoundGroups, eventPage.games)
-            : _buildRoundGroups(
-              eventPage.games,
-              groupByRound: true,
-              preserveInputOrder: preserveEventInputOrder,
-              combinedSources: hasCombinedTournamentSources(
-                resolved.games.map((game) => game.tourId),
+            : _withFullRailMatchPlayGroups(
+              _buildRoundGroups(
+                eventPage.games,
+                groupByRound: true,
+                preserveInputOrder: preserveEventInputOrder,
+                combinedSources: hasCombinedTournamentSources(
+                  resolved.games.map((game) => game.tourId),
+                ),
+                now: referenceNow,
+                // The catalog has to reach the groups that actually render.
+                // Without it only rounds holding a game inside the current
+                // window got a heading, so a 9-round event listed 9, 7, 5, 4
+                // and simply dropped 8, 6, 3, 2 and 1.
+                roundCatalog: eventRoundCatalog,
+                knockoutEvent: knockoutEvent,
               ),
-              now: referenceNow,
-              // The catalog has to reach the groups that actually render.
-              // Without it only rounds holding a game inside the current window
-              // got a heading, so a 9-round event listed 9, 7, 5, 4 and simply
-              // dropped 8, 6, 3, 2 and 1.
-              roundCatalog: eventRoundCatalog,
+              allRoundGroups,
+              eventPage.games,
             );
     final expansionKeys = <String, _EventRoundExpansionKey>{
       for (final group in roundGroups)
@@ -2013,8 +2229,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                         ),
                       )
                       .expand(
-                        (segment) => orderEventRailGamesForDisplay(
-                          segment.games,
+                        (segment) => _segmentGamesForDisplay(
+                          segment,
                           liveFirst: liveFirst,
                         ),
                       ),
@@ -2802,8 +3018,8 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
             );
           }
           if (!segmentExpanded) continue;
-          final segmentGames = orderEventRailGamesForDisplay(
-            segment.games,
+          final segmentGames = _segmentGamesForDisplay(
+            segment,
             liveFirst: liveFirst,
           );
           for (
@@ -2813,6 +3029,7 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
           ) {
             final end = math.min(start + rowChunkSize, segmentGames.length);
             final chunk = segmentGames.sublist(start, end);
+            final matchPlayAnchors = segment.matchPlayAnchors;
             entry(
               id: 'rail-chunk-$matchupId-$start',
               signature: _RailChunkSignature(
@@ -2826,12 +3043,17 @@ class _EventGamesTableState extends ConsumerState<EventGamesTable>
                 selectedGameId: selectedGameId,
                 highlightedGameId: _highlightedGameId,
                 highlightedGameIds: _highlightedGameIds,
+                matchPlaySides: _matchPlaySidesSignature(
+                  chunk,
+                  matchPlayAnchors,
+                ),
               ),
               build:
                   () => Padding(
                     padding: EdgeInsets.only(top: start == 0 ? 5 : 0),
                     child: _EventRoundTable(
                       games: chunk,
+                      matchPlayAnchors: matchPlayAnchors,
                       copyScopeGamesOf: () => _railLatestScopeGames,
                       selectedGameId: selectedGameId,
                       selectedGameIds: _highlightedGameIds,
@@ -3314,6 +3536,11 @@ Future<void> _navigateActiveEventGameNow(
     resolved,
     activeArgs,
     roundCatalog: navigationRoundCatalog,
+    knockoutEvent: _eventRailMatchPlayKnockoutFor(
+      ref,
+      activeArgs,
+      resolved.games,
+    ),
   );
   var orderedGames =
       liveOnly
@@ -3361,6 +3588,11 @@ Future<void> _navigateActiveEventGameNow(
         resolved,
         activeArgs,
         roundCatalog: navigationRoundCatalog,
+        knockoutEvent: _eventRailMatchPlayKnockoutFor(
+          ref,
+          activeArgs,
+          resolved.games,
+        ),
       );
       orderedGames =
           liveOnly
@@ -3394,6 +3626,11 @@ Future<void> _navigateActiveEventGameNow(
       resolved.games,
       groupByRound: true,
       preserveInputOrder: preserveEventInputOrder,
+      knockoutEvent: _eventRailMatchPlayKnockoutFor(
+        ref,
+        activeArgs,
+        resolved.games,
+      ),
     );
     final orderedRoundIds = <String>[
       for (final group in displayGroups) group.id,
@@ -3426,6 +3663,9 @@ Future<void> _navigateActiveEventGameNow(
             resolved.games,
             groupByRound: resolved.kind == _GameListKind.event,
             preserveInputOrder: preserveEventInputOrder,
+            knockoutEvent:
+                resolved.kind == _GameListKind.event &&
+                _eventRailMatchPlayKnockoutFor(ref, activeArgs, resolved.games),
           );
   final contextGames = allGroupsForContext
       .expand((round) => round.games)
@@ -3539,6 +3779,7 @@ _navigationOrdering(
   _ResolvedEventGames resolved,
   BoardTabGameArgs? activeArgs, {
   List<EventRailRoundMetadata> roundCatalog = const <EventRailRoundMetadata>[],
+  bool knockoutEvent = false,
 }) {
   final preserveEventInputOrder =
       resolved.kind == _GameListKind.event &&
@@ -3557,6 +3798,7 @@ _navigationOrdering(
       resolved.games,
       groupByRound: true,
       roundCatalog: roundCatalog,
+      knockoutEvent: knockoutEvent,
     ),
     _GameListKind.source || _GameListKind.database => _buildRoundGroups(
       resolved.games,
@@ -4246,10 +4488,68 @@ List<_EventRoundGroup> _roundGroupsInWindow(
                       title: segment.title,
                       score: segment.score,
                       games: visible(segment.games),
+                      matchPlayAnchors: segment.matchPlayAnchors,
                     ),
                 ],
       ),
   ];
+}
+
+/// The render window of a match-play round, cut from the FULL rail's group.
+///
+/// Who is side A, the score and the match order are decided by every loaded
+/// row of the round; a window regrouped on its own could hold one game of a
+/// pair and drop match play, or score a match from half its games. Other
+/// groups are returned untouched. A match with no row in the window drops out.
+List<_EventRoundGroup> _withFullRailMatchPlayGroups(
+  List<_EventRoundGroup> windowGroups,
+  List<_EventRoundGroup> fullGroups,
+  List<TournamentGameSummary> window,
+) {
+  final fullById = <String, _EventRoundGroup>{
+    for (final group in fullGroups)
+      if (group.segments?.any((segment) => segment.isMatchPlay) ?? false)
+        group.id: group,
+  };
+  if (fullById.isEmpty) return windowGroups;
+  final ids = {for (final game in window) game.id};
+  return [
+    for (final group in windowGroups)
+      if (fullById[group.id] case final full?
+          when full.games.any((game) => ids.contains(game.id)))
+        _matchPlayGroupInWindow(full, ids)
+      else
+        group,
+  ];
+}
+
+_EventRoundGroup _matchPlayGroupInWindow(
+  _EventRoundGroup full,
+  Set<String> windowIds,
+) {
+  final segments = <_EventRoundSegment>[
+    for (final segment in full.segments!)
+      if (segment.games.any((game) => windowIds.contains(game.id)))
+        _EventRoundSegment(
+          id: segment.id,
+          title: segment.title,
+          score: segment.score,
+          games: [
+            for (final game in segment.games)
+              if (windowIds.contains(game.id)) game,
+          ],
+          matchPlayAnchors: segment.matchPlayAnchors,
+        ),
+  ];
+  return _EventRoundGroup(
+    id: full.id,
+    title: full.title,
+    status: full.status,
+    startsAt: full.startsAt,
+    games: [for (final segment in segments) ...segment.games],
+    pairingOnly: full.pairingOnly,
+    segments: segments,
+  );
 }
 
 /// A slice of a round's rows rendered under an optional matchup header.
@@ -4262,14 +4562,44 @@ class _EventRoundSegment {
     this.title,
     this.score,
     required this.games,
+    this.matchPlayAnchors,
+    this.matchPlayChronology,
   });
 
   final String id;
   final String? title;
   final String? score;
   final List<TournamentGameSummary> games;
+
+  /// Match-play knockout matches only (`lib/desktop/knockout/match_play.dart`):
+  /// per game id, whether side A has White. Its rows keep A on the top line
+  /// with a colour mark, and [games] is already in match order. Null for every
+  /// other segment, which renders exactly as before.
+  final Map<String, bool>? matchPlayAnchors;
+
+  /// The match's games, game 1 first, for focus-follow. Null outside match
+  /// play, and in a render window (the full rail keeps it).
+  final List<MatchPlayGameFacts>? matchPlayChronology;
+
+  bool get isMatchPlay => matchPlayAnchors != null;
 }
 
+/// A segment's rows in render order. Match-play rows are already in match
+/// order (the game in play, finished newest first, then shells); a live-first
+/// or board re-sort would scramble the match.
+List<TournamentGameSummary> _segmentGamesForDisplay(
+  _EventRoundSegment segment, {
+  required bool liveFirst,
+}) =>
+    segment.isMatchPlay
+        ? segment.games
+        : orderEventRailGamesForDisplay(segment.games, liveFirst: liveFirst);
+
+/// [knockoutEvent] opts the rail into match-play rounds: true only for a
+/// single knockout event's rail (never Combined, player or database rails).
+/// Even then a round changes only when it is match-play
+/// ([_matchPlayEventRoundGroup]); with the default every round renders as
+/// before.
 List<_EventRoundGroup> _buildRoundGroups(
   List<TournamentGameSummary> games, {
   required bool groupByRound,
@@ -4277,6 +4607,7 @@ List<_EventRoundGroup> _buildRoundGroups(
   bool? combinedSources,
   DateTime? now,
   List<EventRailRoundMetadata> roundCatalog = const <EventRailRoundMetadata>[],
+  bool knockoutEvent = false,
 }) {
   if (!groupByRound) {
     return [
@@ -4308,6 +4639,7 @@ List<_EventRoundGroup> _buildRoundGroups(
       roundCatalog: roundCatalog,
       gamesByRoundKey: byRound,
       now: now,
+      knockoutEvent: knockoutEvent,
     );
   }
 
@@ -4334,6 +4666,18 @@ List<_EventRoundGroup> _buildRoundGroups(
   final playedGroups = <_EventRoundGroup>[];
   final pairingGroups = <_EventRoundGroup>[];
   for (final entry in byRound.entries) {
+    final matchPlay =
+        knockoutEvent
+            ? _matchPlayEventRoundGroup(entry.key, entry.value, now: now)
+            : null;
+    if (matchPlay != null) {
+      if (!matchPlay.pairingOnly) {
+        playedGroups.add(matchPlay);
+      } else if (matchPlay.status == RoundStatus.upcoming) {
+        pairingGroups.add(matchPlay);
+      }
+      continue;
+    }
     final visible =
         entry.value.where(_isBoardVisibleEventGame).toList()
           ..sort(_compareEventGamesInRound);
@@ -4454,6 +4798,7 @@ List<_EventRoundGroup> _catalogOrderedRoundGroups({
   required List<EventRailRoundMetadata> roundCatalog,
   required Map<String, List<TournamentGameSummary>> gamesByRoundKey,
   DateTime? now,
+  bool knockoutEvent = false,
 }) {
   final effectiveNow = now ?? DateTime.now();
   final seen = <String>{};
@@ -4489,6 +4834,12 @@ List<_EventRoundGroup> _catalogOrderedRoundGroups({
       );
       continue;
     }
+    final matchPlay =
+        knockoutEvent ? _matchPlayEventRoundGroup(key, rows, now: now) : null;
+    if (matchPlay != null) {
+      ordered.add(matchPlay);
+      continue;
+    }
     final visible =
         rows.where(_isBoardVisibleEventGame).toList()
           ..sort(_compareEventGamesInRound);
@@ -4510,10 +4861,82 @@ List<_EventRoundGroup> _catalogOrderedRoundGroups({
   // screen; keep it after the catalog's own order so nothing disappears.
   for (final entry in gamesByRoundKey.entries) {
     if (seen.contains(entry.key)) continue;
-    ordered.add(_eventRoundGroupFor(entry.key, entry.value));
+    ordered.add(
+      (knockoutEvent
+              ? _matchPlayEventRoundGroup(entry.key, entry.value, now: now)
+              : null) ??
+          _eventRoundGroupFor(entry.key, entry.value),
+    );
   }
   return ordered;
 }
+
+/// A match-play knockout round as one group: a header per match (side A
+/// first, A–B score), then its games in match order. Null when [rows] are not
+/// a match-play round, so the caller keeps its ordinary path.
+///
+/// Every named row stays, 0-move shells included: a match with no move yet is
+/// still a match of the round, and a shell is never live.
+_EventRoundGroup? _matchPlayEventRoundGroup(
+  String id,
+  List<TournamentGameSummary> rows, {
+  DateTime? now,
+}) {
+  final named = rows.where(_hasResolvedPlayers).toList(growable: false);
+  final round = buildMatchPlayRound<TournamentGameSummary>(
+    named,
+    (game) => matchPlayFactsOfSummary(game, now: now),
+  );
+  if (round == null) return null;
+  final segments = <_EventRoundSegment>[
+    for (final match in round.matches)
+      _EventRoundSegment(
+        id: 'match-play:${match.key}',
+        title:
+            '${_compactPlayerName(match.firstFacts.whiteName)} vs '
+            '${_compactPlayerName(match.firstFacts.blackName)}',
+        score:
+            match.hasReportedScore
+                ? '${_formatMatchPoints(match.aPoints)}–'
+                    '${_formatMatchPoints(match.bPoints)}'
+                : '',
+        games: match.displayGames,
+        matchPlayAnchors: match.anchorIsWhiteById,
+        matchPlayChronology: match.chronologicalFacts,
+      ),
+    if (round.looseGames.isNotEmpty)
+      _EventRoundSegment(
+        id: 'match-play-loose',
+        games: List<TournamentGameSummary>.of(round.looseGames)
+          ..sort(_compareEventGamesInRound),
+      ),
+  ];
+  final startsAt = _roundHeaderStartsAt(named);
+  return _EventRoundGroup(
+    id: id,
+    title: _roundGroupTitle(named),
+    status: _eventRoundStatus(named, startsAt: startsAt),
+    startsAt: startsAt,
+    games: [for (final segment in segments) ...segment.games],
+    pairingOnly: !named.any(_isBoardVisibleEventGame),
+    segments: segments,
+  );
+}
+
+/// Cheap pre-check before the rail asks whether the event is a knockout
+/// (see [mayHoldMatchPlayPairs]).
+@visibleForTesting
+bool eventRailMayHoldMatchPlay(Iterable<TournamentGameSummary> games) =>
+    mayHoldMatchPlayPairs(
+      games,
+      (game) => (
+        roundId: game.roundId,
+        white: game.whitePlayer,
+        black: game.blackPlayer,
+        whiteFideId: game.whiteFideId,
+        blackFideId: game.blackFideId,
+      ),
+    );
 
 String Function(TournamentGameSummary game) _roundKeyResolverFor(
   List<TournamentGameSummary> games, {
@@ -4929,11 +5352,17 @@ class _EventGameMatchupCell extends ConsumerWidget {
     required this.game,
     required this.selected,
     this.liveBatchKey,
+    this.matchPlayAnchorIsWhite,
   });
 
   final TournamentGameSummary game;
   final bool selected;
   final LiveGamesBatchKey? liveBatchKey;
+
+  /// Match play: whether side A, always on the top line, has White in this
+  /// game. Both lines then carry a colour mark, since position no longer
+  /// tells the colour. Null keeps White on top with no mark.
+  final bool? matchPlayAnchorIsWhite;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -4953,6 +5382,9 @@ class _EventGameMatchupCell extends ConsumerWidget {
             }
             : null;
 
+    final anchorIsWhite = matchPlayAnchorIsWhite;
+    final topIsWhite = anchorIsWhite ?? true;
+    final showColorMarks = anchorIsWhite != null;
     return Row(
       children: [
         Expanded(
@@ -4961,16 +5393,18 @@ class _EventGameMatchupCell extends ConsumerWidget {
             children: [
               _EventGamePlayerLine(
                 game: displayed,
-                isWhite: true,
+                isWhite: topIsWhite,
                 selected: selected,
-                clockActive: isLive && whiteToMove == true,
+                clockActive: isLive && whiteToMove == topIsWhite,
+                showColorMark: showColorMarks,
               ),
               const SizedBox(height: 2),
               _EventGamePlayerLine(
                 game: displayed,
-                isWhite: false,
+                isWhite: !topIsWhite,
                 selected: selected,
-                clockActive: isLive && whiteToMove == false,
+                clockActive: isLive && whiteToMove == !topIsWhite,
+                showColorMark: showColorMarks,
               ),
             ],
           ),
@@ -4986,12 +5420,17 @@ class _EventGamePlayerLine extends StatelessWidget {
     required this.isWhite,
     required this.selected,
     required this.clockActive,
+    this.showColorMark = false,
   });
 
   final TournamentGameSummary game;
   final bool isWhite;
   final bool selected;
   final bool clockActive;
+
+  /// Match-play rows keep each player on one line, so the line names its
+  /// colour with a small White / Black square instead.
+  final bool showColorMark;
 
   @override
   Widget build(BuildContext context) {
@@ -5015,6 +5454,10 @@ class _EventGamePlayerLine extends StatelessWidget {
     return Row(
       key: Key('event-game-${game.id}-${isWhite ? 'white' : 'black'}-line'),
       children: [
+        if (showColorMark) ...[
+          MatchPlayColorMark(isWhite: isWhite),
+          const SizedBox(width: 6),
+        ],
         Expanded(
           child: _PlayerCell(
             name: isWhite ? game.whitePlayer : game.blackPlayer,
@@ -6555,6 +6998,7 @@ class _DatabaseGameRowState extends State<_DatabaseGameRow> {
 class _EventRoundTable extends StatelessWidget {
   const _EventRoundTable({
     required this.games,
+    this.matchPlayAnchors,
     required this.copyScopeGamesOf,
     required this.selectedGameId,
     required this.selectedGameIds,
@@ -6570,6 +7014,10 @@ class _EventRoundTable extends StatelessWidget {
   });
 
   final List<TournamentGameSummary> games;
+
+  /// Match-play rows: per game id, whether side A has White. Null renders
+  /// every row White-first, as always.
+  final Map<String, bool>? matchPlayAnchors;
 
   /// Read at INVOKE time, not baked at build time: a cached row chunk outlives
   /// the build that produced it, and the copy scope must stay the live one.
@@ -6627,6 +7075,10 @@ class _EventRoundTable extends StatelessWidget {
               game: game,
               selected: _isSelected(game),
               liveBatchKey: liveBatchKeyByGameId[game.id],
+              matchPlayAnchorIsWhite:
+                  matchPlayAnchors == null
+                      ? null
+                      : matchPlayAnchors![game.id] ?? true,
             ),
       ),
     ];
@@ -7106,6 +7558,7 @@ class _RailChunkSignature {
     required this.selectedGameId,
     required this.highlightedGameId,
     required this.highlightedGameIds,
+    this.matchPlaySides = '',
   });
 
   final String tabId;
@@ -7118,6 +7571,11 @@ class _RailChunkSignature {
   final String? selectedGameId;
   final String? highlightedGameId;
   final Set<String> highlightedGameIds;
+
+  /// Which side is on top of each match-play row (empty elsewhere). Side A
+  /// can change without any row of this chunk changing (an earlier game of
+  /// the match arrives), so the cached chunk must not outlive it.
+  final String matchPlaySides;
 
   @override
   bool operator ==(Object other) {
@@ -7132,6 +7590,7 @@ class _RailChunkSignature {
         other.selectedGameId != selectedGameId ||
         other.highlightedGameId != highlightedGameId ||
         !identical(other.highlightedGameIds, highlightedGameIds) ||
+        other.matchPlaySides != matchPlaySides ||
         other.games.length != games.length) {
       return false;
     }
@@ -7150,8 +7609,19 @@ class _RailChunkSignature {
     streaming,
     selectedGameId,
     highlightedGameId,
+    matchPlaySides,
     games.length,
   );
+}
+
+String _matchPlaySidesSignature(
+  List<TournamentGameSummary> chunk,
+  Map<String, bool>? anchors,
+) {
+  if (anchors == null) return '';
+  return String.fromCharCodes([
+    for (final game in chunk) (anchors[game.id] ?? true) ? 0x77 : 0x62,
+  ]);
 }
 
 class _EventRailWindow {

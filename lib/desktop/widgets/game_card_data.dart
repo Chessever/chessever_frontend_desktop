@@ -41,6 +41,7 @@ class GameCardData {
     this.lastMoveTime,
     this.activePlayer,
     this.canResolveRemoteFen = false,
+    this.matchPlayAnchorIsWhite,
   });
 
   /// Stable identifier — game id for tournament games, saved-analysis id for
@@ -96,11 +97,18 @@ class GameCardData {
   /// immediately and hydrate the real final position asynchronously.
   final bool canResolveRemoteFen;
 
+  /// Match-play knockout cards only: whether the match's side A has White in
+  /// this game. A keeps the first place (left / top) in every game of the
+  /// match and each player shows a colour mark. Null everywhere else, where
+  /// the card is laid out by colour as always.
+  final bool? matchPlayAnchorIsWhite;
+
   GameCardData copyWith({
     String? whiteFederation,
     String? blackFederation,
     int? whiteFideId,
     int? blackFideId,
+    bool? matchPlayAnchorIsWhite,
   }) {
     return GameCardData(
       id: id,
@@ -130,6 +138,8 @@ class GameCardData {
       lastMoveTime: lastMoveTime,
       activePlayer: activePlayer,
       canResolveRemoteFen: canResolveRemoteFen,
+      matchPlayAnchorIsWhite:
+          matchPlayAnchorIsWhite ?? this.matchPlayAnchorIsWhite,
     );
   }
 
