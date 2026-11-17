@@ -23,9 +23,13 @@ import 'package:chessever/screens/standings/score_card_screen.dart'
     show selectedPlayerProvider, scoreCardHasEventContextProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
+import 'package:chessever/screens/tour_detail/provider/tour_detail_screen_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/federation_flag.dart';
+import 'support/current_broadcast_games.dart';
+import 'package:chessever/services/official_round_results.dart';
 
 final _mergedGamesSourcesStateProvider =
     StateProvider<MergedTournamentGamesSourceState>(
@@ -33,6 +37,377 @@ final _mergedGamesSourcesStateProvider =
     );
 
 void main() {
+  testWidgets('confirmed knockout retains multi-game slots and exact opens', (
+    tester,
+  ) async {
+    final white = _card('Carlsen, Magnus', 1503014, 2830);
+    final black = _card('Opponent', 46616543, 2750);
+    final first = _game(
+      id: 'match-a',
+      round: 'Round 5',
+      white: white,
+      black: black,
+      status: GameStatus.whiteWins,
+    );
+    final second = _game(
+      id: 'match-b',
+      round: 'Round 5',
+      white: black,
+      black: white,
+      status: GameStatus.draw,
+    );
+    final opened = <GamesTourModel>[];
+    final container = ProviderContainer(
+      overrides: [
+        playerTourStandingsSnapshotProvider.overrideWith(
+          _LayoutStandingsNotifier.new,
+        ),
+        tournamentRosterStandingsProvider('event-1').overrideWith(
+          (ref) => const Stream<List<PlayerStandingModel>>.empty(),
+        ),
+        mergedTournamentGamesProvider.overrideWith((ref) => [second, first]),
+        knockoutTournamentStateProvider('event-1').overrideWith(
+          (ref) => const KnockoutTournamentState(
+            isKnockout: true,
+            isTeamEvent: false,
+            stageName: null,
+            allGames: [],
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    _setStandingsDetail(container, 'event-1');
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          home: Scaffold(
+            body: TournamentStandingsView(
+              tabId: 'knockout-tab',
+              tournamentId: 'event-1',
+              photoResolver: (_) async => null,
+              gameOpener: (game, eventGames) {
+                opened.add(game);
+                expect(eventGames, [same(second), same(first)]);
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('5 · 1'), findsOneWidget);
+    expect(find.text('5 · 2'), findsOneWidget);
+    expect(find.text('?'), findsNothing);
+    for (final slot in [1, 2]) {
+      await tester.tap(find.byKey(Key('standings-round-1503014-5-$slot')));
+      await tester.pumpAndSettle();
+    }
+    expect(opened, [same(first), same(second)]);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final scenario in [
+    (
+      name: 'unknown format',
+      knockout: false,
+      pending: false,
+      team: false,
+      selectedId: 'event-1',
+    ),
+    (
+      name: 'pending detection',
+      knockout: true,
+      pending: true,
+      team: false,
+      selectedId: 'event-1',
+    ),
+    (
+      name: 'team event',
+      knockout: true,
+      pending: false,
+      team: true,
+      selectedId: 'event-1',
+    ),
+    (
+      name: 'another tab knockout',
+      knockout: true,
+      pending: false,
+      team: false,
+      selectedId: 'other-event',
+    ),
+    (
+      name: 'missing metadata',
+      knockout: true,
+      pending: false,
+      team: false,
+      selectedId: '',
+    ),
+  ]) {
+    testWidgets('${scenario.name} keeps duplicate pairings conflict-safe', (
+      tester,
+    ) async {
+      final white = _card('Carlsen, Magnus', 1503014, 2830);
+      final black = _card('Opponent', 46616543, 2750);
+      final games = [
+        _game(
+          id: 'match-a',
+          round: 'Round 5',
+          white: white,
+          black: black,
+          status: GameStatus.whiteWins,
+        ),
+        _game(
+          id: 'match-b',
+          round: 'Round 5',
+          white: black,
+          black: white,
+          status: GameStatus.draw,
+        ),
+      ];
+      var classificationReads = 0;
+      var opens = 0;
+      final container = ProviderContainer(
+        overrides: [
+          playerTourStandingsSnapshotProvider.overrideWith(
+            _LayoutStandingsNotifier.new,
+          ),
+          tournamentRosterStandingsProvider('event-1').overrideWith(
+            (ref) => const Stream<List<PlayerStandingModel>>.empty(),
+          ),
+          mergedTournamentGamesProvider.overrideWith((ref) => games),
+          knockoutTournamentStateProvider(scenario.selectedId).overrideWith((
+            ref,
+          ) {
+            classificationReads++;
+            return KnockoutTournamentState(
+              isKnockout: scenario.knockout,
+              isTeamEvent: scenario.team,
+              isDetectionPending: scenario.pending,
+              stageName: null,
+              allGames: games,
+            );
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      _setStandingsDetail(container, scenario.selectedId);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            home: Scaffold(
+              body: TournamentStandingsView(
+                tabId: 'guard-tab',
+                tournamentId: 'event-1',
+                photoResolver: (_) async => null,
+                gameOpener: (_, _) => opens++,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('standings-round-header-5')), findsOneWidget);
+      expect(find.text('5 · 1'), findsNothing);
+      expect(find.text('5 · 2'), findsNothing);
+      expect(find.text('?'), findsNWidgets(2));
+      await tester.tap(find.byKey(const Key('standings-round-1503014-5')));
+      await tester.pumpAndSettle();
+      expect(opens, 0);
+      expect(
+        find.text(TournamentStandingsRoundCell.conflictMessage),
+        findsOneWidget,
+      );
+      expect(classificationReads, scenario.selectedId == 'event-1' ? 1 : 0);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  test(
+    'explicit knockout policy preserves named stages and official-only cells',
+    () {
+      final player = _standing(
+        name: 'Player',
+        fideId: 1,
+        rating: 2500,
+        rank: 1,
+      );
+      final opponent = _standing(
+        name: 'Opponent',
+        fideId: 2,
+        rating: 2400,
+        rank: 2,
+      );
+      final white = _card(player.name, 1, 2500);
+      final black = _card(opponent.name, 2, 2400);
+      final games = [
+        _game(
+          id: 'final-b',
+          round: 'Finals',
+          white: black,
+          black: white,
+          status: GameStatus.draw,
+        ),
+        _game(
+          id: 'final-a',
+          round: 'Finals',
+          white: white,
+          black: black,
+          status: GameStatus.whiteWins,
+        ),
+      ];
+      for (final input in [games, games.reversed.toList()]) {
+        final table = buildTournamentStandingsRoundTable(
+          standings: [player, opponent],
+          games: input,
+          allowMultipleGamesPerStage: true,
+          officialResults: [
+            OfficialRoundResults(
+              roundId: 'round-1',
+              roundName: 'Round 1',
+              roundNumber: 1,
+              tourId: 'event-1',
+              results: [
+                const OfficialRoundResult(
+                  playerName: 'Player',
+                  playerFideId: '1',
+                  roundId: 'round-1',
+                  roundName: 'Round 1',
+                  roundNumber: 1,
+                  tourId: 'event-1',
+                  color: 'white',
+                  points: 1,
+                  opponentName: 'Opponent',
+                  nonPlayed: true,
+                ),
+              ],
+            ),
+          ],
+        );
+        expect(table.columns.map((c) => c.label), [
+          '1',
+          'Finals · 1',
+          'Finals · 2',
+        ]);
+        expect(table.columns.map((c) => c.round), [1, null, null]);
+        expect(table.cellsFor(player).map((c) => c.recordedGame?.gameId), [
+          null,
+          'final-a',
+          'final-b',
+        ]);
+        expect(table.cellsFor(player).first.nonPlayed, isTrue);
+        expect(table.cellsFor(player).first.resultText, '1');
+        expect(table.cellsFor(opponent).map((c) => c.game.gameId), [
+          'final-a',
+          'final-b',
+        ]);
+        expect(table.cellsFor(player).every((c) => !c.isConflicted), isTrue);
+      }
+    },
+  );
+
+  test('Brazil Round 5 conflicting pairings never synthesize round columns', () {
+    final cards = [
+      _card('Jardim, Frederico Rodrigues', 22798404, 2306),
+      _card('Ribeiro, Matheus Mendes Domingues', 324226923, 2402),
+      _card('Silva, Caio Henrique Angelico', 22777210, 2275),
+      _card('Filgueiras, Nathan Felipe', 2188562, 2356),
+      _card('Petti, Luca Giovanni', 161241, 2387),
+      _card('Saiz Rodriguez, Daniel Evelio', 3523420, 2312),
+      _card('Silva, Kaua Marques', 22701168, 2336),
+      _card('Delgado Ramirez, Neuris', 3503631, 2493),
+    ];
+    final standings = [
+      for (var i = 0; i < cards.length; i++)
+        _standing(
+          name: cards[i].name,
+          fideId: cards[i].fideId!,
+          rating: cards[i].rating,
+          rank: i + 1,
+        ),
+    ];
+    // Captured production rows: PGN rounds 5.1–5.5 identify boards,
+    // while all five records belong to broadcast round mrLSOhHy.
+    final games = [
+      for (final row in [
+        ('3oVrzcCV', 0, 1, 5),
+        ('7DAIVRKz', 2, 3, 4),
+        ('fB26EfZz', 4, 5, 2),
+        ('kZZRILbD', 6, 7, 3),
+        ('ZruEO6kC', 7, 4, 1),
+      ])
+        _game(
+          id: row.$1,
+          round: 'Round 5',
+          white: cards[row.$2],
+          black: cards[row.$3],
+          status: GameStatus.ongoing,
+        ).copyWith(
+          tourId: 'eAhfBfzx',
+          roundId: 'mrLSOhHy',
+          roundSlug: 'round-5',
+          boardNr: row.$4,
+          pgn: '[Round "5.${row.$4}"]\n*',
+        ),
+    ];
+    for (final input in [games, games.reversed.toList()]) {
+      final table = buildTournamentStandingsRoundTable(
+        standings: standings,
+        games: input,
+        officialResults: [
+          OfficialRoundResults(
+            roundId: 'mrLSOhHy',
+            roundName: 'Round 5',
+            roundNumber: 5,
+            tourId: 'eAhfBfzx',
+            results: [
+              // Even a verified official result must not hide ambiguous records.
+              OfficialRoundResult(
+                playerName: cards[4].name,
+                playerFideId: '${cards[4].fideId}',
+                roundId: 'mrLSOhHy',
+                roundName: 'Round 5',
+                roundNumber: 5,
+                tourId: 'eAhfBfzx',
+                color: 'white',
+                points: .5,
+                opponentName: cards[5].name,
+              ),
+            ],
+          ),
+        ],
+      );
+      expect(table.columns.map((c) => c.label), ['5']);
+      expect(table.columns.map((c) => c.id), ['5']);
+      expect(table.rounds, [5]);
+      for (final index in [4, 7]) {
+        final cell = table.cellsFor(standings[index]).single;
+        expect(cell.isConflicted, isTrue);
+        expect(cell.recordedGame, isNull);
+        expect(cell.resultText, '?');
+        expect(cell.opponentName, isEmpty);
+        expect(cell.opponentRank, isNull);
+        expect(cell.opponentRating, isNull);
+        expect(cell.nonPlayed, isFalse);
+        expect(cell.isOngoing, isFalse);
+        expect(cell.tooltipMessage, 'Conflicting game records for this round.');
+      }
+      // Every unambiguous player's cell keeps its exact source game.
+      for (final entry in {0: 0, 1: 0, 2: 1, 3: 1, 5: 2, 6: 3}.entries) {
+        expect(
+          table.cellsFor(standings[entry.key]).single.isConflicted,
+          isFalse,
+        );
+        expect(
+          table.cellsFor(standings[entry.key]).single.recordedGame,
+          same(games[entry.value]),
+        );
+      }
+    }
+  });
+
   test('double forfeits replace live rows and show zero for both players', () {
     final white = _standing(name: 'White', fideId: 1, rating: 2000, rank: 1);
     final black = _standing(name: 'Black', fideId: 2, rating: 2000, rank: 2);
@@ -102,80 +477,95 @@ void main() {
     },
   );
 
-  test('keeps named stages and repeated round games deterministically', () {
-    final player = _standing(
-      name: 'Carlsen, Magnus',
-      fideId: 1503014,
-      rating: 2830,
-      rank: 1,
-    );
-    final opponent = _standing(
-      name: 'Opponent',
-      fideId: 46616543,
-      rating: 2750,
-      rank: 2,
-    );
-    final white = _card(player.name, player.fideId!, player.score);
-    final black = _card(opponent.name, opponent.fideId!, opponent.score);
-    final games = [
-      _game(
-        id: 'round-1-b',
-        round: 'Round 1',
-        white: white,
-        black: black,
-        status: GameStatus.draw,
-      ),
-      _game(
-        id: 'armageddon',
-        round: 'Armageddon',
-        white: black,
-        black: white,
-        status: GameStatus.blackWins,
-      ),
-      _game(
-        id: 'finals',
-        round: 'Finals',
-        white: white,
-        black: black,
-        status: GameStatus.whiteWins,
-      ),
-      _game(
-        id: 'round-1-a',
-        round: 'Round 1',
-        white: black,
-        black: white,
-        status: GameStatus.whiteWins,
-      ),
-      _game(
-        id: 'tiebreak',
-        round: 'Tiebreak',
-        white: white,
-        black: black,
-        status: GameStatus.draw,
-      ),
-    ];
+  test(
+    'keeps named stages but flags repeated round games deterministically',
+    () {
+      final player = _standing(
+        name: 'Carlsen, Magnus',
+        fideId: 1503014,
+        rating: 2830,
+        rank: 1,
+      );
+      final opponent = _standing(
+        name: 'Opponent',
+        fideId: 46616543,
+        rating: 2750,
+        rank: 2,
+      );
+      final white = _card(player.name, player.fideId!, player.score);
+      final black = _card(opponent.name, opponent.fideId!, opponent.score);
+      final games = [
+        _game(
+          id: 'round-1-b',
+          round: 'Round 1',
+          white: white,
+          black: black,
+          status: GameStatus.draw,
+        ),
+        _game(
+          id: 'armageddon',
+          round: 'Armageddon',
+          white: black,
+          black: white,
+          status: GameStatus.blackWins,
+        ),
+        _game(
+          id: 'finals',
+          round: 'Finals',
+          white: white,
+          black: black,
+          status: GameStatus.whiteWins,
+        ),
+        _game(
+          id: 'round-1-a',
+          round: 'Round 1',
+          white: black,
+          black: white,
+          status: GameStatus.whiteWins,
+        ),
+        _game(
+          id: 'tiebreak',
+          round: 'Tiebreak',
+          white: white,
+          black: black,
+          status: GameStatus.draw,
+        ),
+      ];
 
-    final table = buildTournamentStandingsRoundTable(
-      standings: [player, opponent],
-      games: games,
-    );
-    final reversed = buildTournamentStandingsRoundTable(
-      standings: [player, opponent],
-      games: games.reversed.toList(),
-    );
+      final table = buildTournamentStandingsRoundTable(
+        standings: [player, opponent],
+        games: games,
+      );
+      final reversed = buildTournamentStandingsRoundTable(
+        standings: [player, opponent],
+        games: games.reversed.toList(),
+      );
 
-    expect(table.cellsFor(player).map((cell) => cell.game.gameId), [
-      'round-1-a',
-      'round-1-b',
-      'finals',
-      'tiebreak',
-      'armageddon',
-    ]);
-    expect(
-      reversed.cellsFor(player).map((cell) => cell.game.gameId),
-      table.cellsFor(player).map((cell) => cell.game.gameId),
-    );
-  });
+      expect(table.columns.map((column) => column.label), [
+        '1',
+        'Finals',
+        'Tiebreak',
+        'Armageddon',
+      ]);
+      expect(table.columns.map((column) => column.round), [
+        1,
+        null,
+        null,
+        null,
+      ]);
+      expect(table.cellsFor(player).first.isConflicted, isTrue);
+      expect(table.cellsFor(player).first.recordedGame, isNull);
+      expect(table.cellsFor(player).skip(1).map((cell) => cell.game.gameId), [
+        'finals',
+        'tiebreak',
+        'armageddon',
+      ]);
+      expect(
+        reversed.cellsFor(player).map((cell) => cell.recordedGame?.gameId),
+        table.cellsFor(player).map((cell) => cell.recordedGame?.gameId),
+      );
+    },
+  );
 
   test('retains scoped games through loading and error then accepts empty', () {
     final game = _game(
@@ -837,11 +1227,9 @@ void main() {
     );
     final container = _roundOpenContainer(repository, [roundOne, roundTwo]);
     addTearDown(container.dispose);
-    _seedStandingsTabContext(container);
+    final tabId = _seedStandingsTabContext(container);
 
-    await tester.pumpWidget(
-      _standingsHarness(container, tabId: 'tournaments-default'),
-    );
+    await tester.pumpWidget(_standingsHarness(container, tabId: tabId));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('standings-round-1503014-1')));
@@ -855,19 +1243,16 @@ void main() {
 
     repository.complete('delayed-b', roundTwo);
     await tester.pumpAndSettle();
+
     expect(
-      container
-          .read(boardTabGameArgsByTabIdProvider)['tournaments-default']
-          ?.gameId,
+      container.read(boardTabGameArgsByTabIdProvider)[tabId]?.gameId,
       'delayed-b',
     );
 
     repository.complete('delayed-a', roundOne);
     await tester.pumpAndSettle();
     expect(
-      container
-          .read(boardTabGameArgsByTabIdProvider)['tournaments-default']
-          ?.gameId,
+      container.read(boardTabGameArgsByTabIdProvider)[tabId]?.gameId,
       'delayed-b',
     );
   });
@@ -885,11 +1270,9 @@ void main() {
     );
     final container = _roundOpenContainer(repository, [game]);
     addTearDown(container.dispose);
-    _seedStandingsTabContext(container);
+    final tabId = _seedStandingsTabContext(container);
 
-    await tester.pumpWidget(
-      _standingsHarness(container, tabId: 'tournaments-default'),
-    );
+    await tester.pumpWidget(_standingsHarness(container, tabId: tabId));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('standings-round-1503014-1')));
     await tester.pump();
@@ -958,12 +1341,13 @@ void main() {
     await mouse.moveTo(tester.getCenter(result));
     await tester.pump(const Duration(milliseconds: 400));
 
+    expect(find.text('#2'), findsOneWidget);
+    expect(find.text('(2750)'), findsOneWidget);
     expect(
-      find.text(
-        '#2 A Very Long Opponent Name That Must Not Move Rating · 2750',
-      ),
-      findsOneWidget,
+      find.text('A Very Long Opponent Name That Must Not Move Rating'),
+      findsWidgets,
     );
+    expect(find.text('Only the result is available.'), findsNothing);
   });
 
   testWidgets('tapping a standings player name opens a score card tab', (
@@ -1013,12 +1397,38 @@ void main() {
   });
 }
 
+void _setStandingsDetail(ProviderContainer container, String selectedId) {
+  container
+      .read(tourDetailScreenProvider.notifier)
+      .setDataState(
+        TourDetailViewModel(
+          aboutTourModel: AboutTourModel(
+            id: selectedId,
+            slug: selectedId,
+            name: 'Event',
+            description: '',
+            imageUrl: '',
+            players: const [],
+            timeControl: '',
+            date: '',
+            location: '',
+            websiteUrl: '',
+            standingsUrl: '',
+            tourUrl: '',
+          ),
+          liveTourIds: const [],
+          tours: const [],
+        ),
+      );
+}
+
 ProviderContainer _roundOpenContainer(
   _ControlledGameHydrationRepository gameRepository,
   List<GamesTourModel> games,
 ) {
   return ProviderContainer(
     overrides: [
+      currentBroadcastGames,
       gameRepositoryProvider.overrideWithValue(gameRepository),
       tourRepositoryProvider.overrideWithValue(_StaticLayoutRosterRepository()),
       playerTourStandingsSnapshotProvider.overrideWith(
@@ -1032,12 +1442,13 @@ ProviderContainer _roundOpenContainer(
   );
 }
 
-void _seedStandingsTabContext(ProviderContainer container) {
-  container
-      .read(desktopTabsProvider.notifier)
-      .navigateActive(TabKind.tournamentDetail, title: 'Event');
-  container.read(tournamentByTabIdProvider.notifier).state = const {
-    'tournaments-default': GroupEventCardModel(
+String _seedStandingsTabContext(ProviderContainer container) {
+  final tabId =
+      container
+          .read(desktopTabsProvider.notifier)
+          .navigateActive(TabKind.tournamentDetail, title: 'Event')!;
+  container.read(tournamentByTabIdProvider.notifier).state = {
+    tabId: const GroupEventCardModel(
       id: 'event-1',
       title: 'Event',
       dates: '',
@@ -1049,11 +1460,9 @@ void _seedStandingsTabContext(ProviderContainer container) {
       startDate: null,
     ),
   };
-  container
-      .read(
-        tournamentDetailSegmentByTabIdProvider('tournaments-default').notifier,
-      )
-      .state = TournamentDetailSegment.standings;
+  container.read(tournamentDetailSegmentByTabIdProvider(tabId).notifier).state =
+      TournamentDetailSegment.standings;
+  return tabId;
 }
 
 Widget _standingsHarness(ProviderContainer container, {required String tabId}) {

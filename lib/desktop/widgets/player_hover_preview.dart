@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/services/official_round_results.dart';
+import 'package:chessever/screens/tour_detail/official_round_results_provider.dart';
+import 'official_player_result_row.dart';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -61,13 +65,15 @@ class PlayerHoverPreviewIdentity {
 /// The trigger and popover share a short dismissal grace period so crossing the
 /// portal gap does not flicker. The popover owns a real vertical scroll view;
 /// wheel events stay inside the card and do not dismiss it.
-class PlayerHoverPreview extends StatefulWidget {
+class PlayerHoverPreview extends ConsumerStatefulWidget {
   const PlayerHoverPreview({
     super.key,
     required this.player,
     required this.games,
     required this.onOpenOpponentInNewTab,
     this.rounds = const [],
+    this.officialResults,
+    this.eventTourIds = const [],
     required this.onOpenGameInNewTab,
     this.onOpenPlayerInNewTab,
     this.onOpenScoreCard,
@@ -88,6 +94,12 @@ class PlayerHoverPreview extends StatefulWidget {
   final ValueChanged<PlayerHoverPreviewIdentity>? onOpenPlayerInNewTab;
   final List<PlayerHoverRound> rounds;
 
+  /// Optional detached snapshot; null watches the shared tour-level provider.
+  final List<OfficialRoundResults>? officialResults;
+
+  /// Explicit event scope for players with no games, never inferred from names.
+  final List<String> eventTourIds;
+
   /// Event report activation stays separate from public-profile navigation.
   final VoidCallback? onOpenScoreCard;
   final ValueChanged<PlayerHoverPreviewIdentity> onOpenOpponentInNewTab;
@@ -100,10 +112,10 @@ class PlayerHoverPreview extends StatefulWidget {
   final TextStyle textStyle;
 
   @override
-  State<PlayerHoverPreview> createState() => _PlayerHoverPreviewState();
+  ConsumerState<PlayerHoverPreview> createState() => _PlayerHoverPreviewState();
 }
 
-class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
+class _PlayerHoverPreviewState extends ConsumerState<PlayerHoverPreview>
     with
         SingleTickerProviderStateMixin,
         DeferredPointerStateMixin<PlayerHoverPreview> {
@@ -274,6 +286,26 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
   @override
   Widget build(BuildContext context) {
     final filteredGames = playerHoverPreviewGames(widget.player, widget.games);
+    final tourIds =
+        <String>{
+            ...widget.eventTourIds,
+            for (final game in widget.games)
+              if (game.tourId.isNotEmpty) game.tourId,
+          }.where((id) => id.isNotEmpty).toList()
+          ..sort();
+    final official =
+        widget.officialResults ??
+        [
+          if (_active)
+            for (final tourId in tourIds)
+              ...?ref.watch(officialRoundResultsProvider(tourId)).asData?.value,
+        ];
+    final missing = playerHoverMissingOfficialResults(
+      widget.player,
+      widget.games,
+      official,
+      tourIds: tourIds,
+    );
     final triggerAnchor =
         widget.openAbove ? Alignment.topLeft : Alignment.bottomLeft;
     final popoverAnchor =
@@ -312,6 +344,7 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
                         : () => _hideBeforeAction(widget.onOpenScoreCard!),
                 games: filteredGames,
                 rounds: widget.rounds,
+                officialResults: missing,
                 isLoading: widget.isLoading,
                 scrollController: _scrollController,
                 onOpenOpponent:
@@ -372,6 +405,59 @@ class _PlayerHoverPreviewState extends State<PlayerHoverPreview>
   }
 }
 
+/// Verified missing outcomes only. Ambiguous rounds fail closed, and genuine
+/// player games retain precedence even when they have no notation yet.
+@visibleForTesting
+List<OfficialRoundResult> playerHoverMissingOfficialResults(
+  PlayerHoverPreviewIdentity player,
+  List<TournamentGameSummary> games,
+  List<OfficialRoundResults> rounds, {
+  required List<String> tourIds,
+}) {
+  final scope = tourIds.toSet();
+  final existing = playerHoverPreviewGames(player, games);
+  final groups = <(String, String), List<OfficialRoundResults>>{};
+  for (final round in rounds) {
+    final tour = round.tourId;
+    if (tour == null || !scope.contains(tour) || round.roundId.isEmpty) {
+      continue;
+    }
+    groups.putIfAbsent((tour, round.roundId), () => []).add(round);
+  }
+  final output = <OfficialRoundResult>[];
+  for (final entry in groups.entries) {
+    if (entry.value.length != 1) continue;
+    final round = entry.value.single;
+    if (existing.any(
+      (g) =>
+          g.roundId == round.roundId &&
+          (g.tourId.isEmpty || g.tourId == round.tourId),
+    )) {
+      continue;
+    }
+    final matches =
+        round.results
+            .where(
+              (r) => officialResultMatchesPlayer(
+                r,
+                playerName: player.name,
+                playerFideId: player.fideId,
+              ),
+            )
+            .toList();
+    if (matches.length != 1) continue;
+    final result = matches.single;
+    if (result.roundId != round.roundId ||
+        result.tourId != round.tourId ||
+        result.roundNumber != round.roundNumber) {
+      continue;
+    }
+    output.add(result);
+  }
+  output.sort((a, b) => b.roundNumber.compareTo(a.roundNumber));
+  return output;
+}
+
 /// Shared identity-safe, newest-round-first card and Board ordering.
 List<TournamentGameSummary> playerHoverPreviewGames(
   PlayerHoverPreviewIdentity player,
@@ -418,6 +504,7 @@ class _PlayerPreviewCard extends StatelessWidget {
     required this.rounds,
     required this.isLoading,
     required this.scrollController,
+    required this.officialResults,
     this.onOpenScoreCard,
     required this.onOpenOpponent,
     required this.onOpenGame,
@@ -428,6 +515,7 @@ class _PlayerPreviewCard extends StatelessWidget {
   final bool isLoading;
   final List<PlayerHoverRound> rounds;
   final ScrollController scrollController;
+  final List<OfficialRoundResult> officialResults;
   final VoidCallback? onOpenScoreCard;
   final ValueChanged<PlayerHoverPreviewIdentity> onOpenOpponent;
   final ValueChanged<TournamentGameSummary> onOpenGame;
@@ -435,6 +523,21 @@ class _PlayerPreviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final roundLabels = playerHoverRoundLabels(rounds);
+    final rows = <Object>[...games, ...officialResults];
+    if (officialResults.isNotEmpty) {
+      List<int> order(Object row) =>
+          row is OfficialRoundResult
+              ? [row.roundNumber]
+              : _roundSortParts(row as TournamentGameSummary);
+      final indexed = rows.indexed.toList();
+      indexed.sort((a, b) {
+        final cmp = _compareRoundParts(order(b.$2), order(a.$2));
+        return cmp != 0 ? cmp : a.$1.compareTo(b.$1);
+      });
+      rows
+        ..clear()
+        ..addAll(indexed.map((e) => e.$2));
+    }
     final roundNames = {for (final round in rounds) round.id: round.name};
     return Material(
       color: Colors.transparent,
@@ -471,25 +574,7 @@ class _PlayerPreviewCard extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: kBlack3Color,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '${games.length}',
-                      style: const TextStyle(
-                        color: kLightGreyColor,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
+
                   const Spacer(),
                   const Text(
                     'Opponent · result',
@@ -498,7 +583,7 @@ class _PlayerPreviewCard extends StatelessWidget {
                 ],
               ),
             ),
-            if (isLoading && games.isEmpty)
+            if (isLoading && rows.isEmpty)
               const SizedBox(
                 height: 92,
                 child: Center(
@@ -508,7 +593,7 @@ class _PlayerPreviewCard extends StatelessWidget {
                   ),
                 ),
               )
-            else if (games.isEmpty)
+            else if (rows.isEmpty)
               const SizedBox(
                 height: 82,
                 child: Center(
@@ -523,7 +608,7 @@ class _PlayerPreviewCard extends StatelessWidget {
                 constraints: const BoxConstraints(maxHeight: 260),
                 child: Scrollbar(
                   controller: scrollController,
-                  thumbVisibility: games.length > 4,
+                  thumbVisibility: rows.length > 4,
                   interactive: true,
                   thickness: 10,
                   radius: const Radius.circular(5),
@@ -534,7 +619,7 @@ class _PlayerPreviewCard extends StatelessWidget {
                     shrinkWrap: true,
                     physics: const DesktopScrollPhysics(),
                     padding: const EdgeInsets.only(bottom: 8),
-                    itemCount: games.length,
+                    itemCount: rows.length,
                     separatorBuilder:
                         (_, __) => const Divider(
                           height: 1,
@@ -542,7 +627,30 @@ class _PlayerPreviewCard extends StatelessWidget {
                           color: kDividerColor,
                         ),
                     itemBuilder: (context, index) {
-                      final game = games[index];
+                      final row = rows[index];
+                      if (row is OfficialRoundResult) {
+                        return OfficialPlayerResultRow(
+                          key: ValueKey(('official', row.tourId, row.roundId)),
+                          result: row,
+                          compact: true,
+                          roundLabel: roundLabels[row.roundId],
+                          onOpenOpponent:
+                              row.color == null
+                                  ? null
+                                  : () => onOpenOpponent(
+                                    PlayerHoverPreviewIdentity(
+                                      name: row.opponentName,
+                                      fideId: int.tryParse(
+                                        row.opponentFideId ?? '',
+                                      ),
+                                      federation: row.opponentFed ?? '',
+                                      title: row.opponentTitle ?? '',
+                                      rating: row.opponentRating?.round() ?? 0,
+                                    ),
+                                  ),
+                        );
+                      }
+                      final game = row as TournamentGameSummary;
                       final side = _playerSide(player, game)!;
                       final opponent = _opponentFor(game, side);
                       return _PreviewGameRow(
