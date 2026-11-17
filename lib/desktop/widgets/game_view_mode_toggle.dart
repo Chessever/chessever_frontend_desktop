@@ -120,36 +120,29 @@ class _ToggleButtonState extends State<_ToggleButton> {
           // assert never fires. See CLAUDE.md §3.
           child: DesktopTooltip(
             message: widget.tooltip,
-            // Fill and glyph colour ease together on hover / selection
-            // instead of swapping in a single frame.
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              curve: Curves.easeOutCubic,
-              width: widget.size,
-              height: widget.size,
-              decoration: BoxDecoration(
-                color:
-                    selected
-                        ? kPrimaryColor.withValues(alpha: 0.15)
-                        : (_hovered ? kBlack3Color : Colors.transparent),
-                borderRadius: BorderRadius.circular(widget.size >= 34 ? 8 : 5),
-                border: Border.all(
-                  color: selected ? kPrimaryColor : kDividerColor,
+            // Unboxed, like the rest of the list chrome: no tile or edge
+            // around the glyph. Ink alone carries the state: cyan when
+            // selected, white on hover, dimmed at rest. The square stays as
+            // the hit target only.
+            child: SizedBox.square(
+              dimension: widget.size,
+              child: Center(
+                child: TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(
+                    end:
+                        selected
+                            ? kPrimaryColor
+                            : (_hovered ? kWhiteColor : kWhiteColor70),
+                  ),
+                  duration: const Duration(milliseconds: 120),
+                  curve: Curves.easeOutCubic,
+                  builder:
+                      (context, color, _) => Icon(
+                        widget.icon,
+                        size: widget.size >= 34 ? 18 : 16,
+                        color: color,
+                      ),
                 ),
-              ),
-              alignment: Alignment.center,
-              child: TweenAnimationBuilder<Color?>(
-                tween: ColorTween(
-                  end: selected ? kPrimaryColor : kWhiteColor70,
-                ),
-                duration: const Duration(milliseconds: 120),
-                curve: Curves.easeOutCubic,
-                builder:
-                    (context, color, _) => Icon(
-                      widget.icon,
-                      size: widget.size >= 34 ? 18 : 14,
-                      color: color,
-                    ),
               ),
             ),
           ),

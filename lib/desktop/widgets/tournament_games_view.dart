@@ -46,7 +46,10 @@ import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/desktop_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_grouped_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
+import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart'
+    as header_icon;
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
+import 'package:chessever/desktop/widgets/live_first_mark.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_team_match_grouping.dart';
 import 'package:chessever/desktop/widgets/motion_translate.dart';
@@ -174,9 +177,9 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
   final matchKeysByRound = <String, Set<String>>{};
   for (final entry in entries) {
     for (final game in entry.value) {
-      matchKeysByRound.putIfAbsent(game.roundId, () => <String>{}).add(
-        entry.key,
-      );
+      matchKeysByRound
+          .putIfAbsent(game.roundId, () => <String>{})
+          .add(entry.key);
     }
   }
   final roundCountByMatch = <String, int>{};
@@ -342,17 +345,16 @@ List<DesktopKnockoutMatchSection> desktopKnockoutMatchSections(
 
 /// The header reads names and score from the chronological games; the cards
 /// render in [knockoutMatchGamesForDisplay] order.
-MatchHeaderModel _withDisplayGames(MatchHeaderModel header) =>
-    MatchHeaderModel(
-      matchKey: header.matchKey,
-      player1Card: header.player1Card,
-      player2Card: header.player2Card,
-      player1Score: header.player1Score,
-      player2Score: header.player2Score,
-      games: knockoutMatchGamesForDisplay(header.games),
-      roundName: header.roundName,
-      isComplete: header.isComplete,
-    );
+MatchHeaderModel _withDisplayGames(MatchHeaderModel header) => MatchHeaderModel(
+  matchKey: header.matchKey,
+  player1Card: header.player1Card,
+  player2Card: header.player2Card,
+  player1Score: header.player1Score,
+  player2Score: header.player2Score,
+  games: knockoutMatchGamesForDisplay(header.games),
+  roundName: header.roundName,
+  isComplete: header.isComplete,
+);
 
 int? _latestKnockoutStageOrder(List<GamesTourModel> matchGames) {
   int? latest;
@@ -908,26 +910,68 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
           !ref.read(_tournamentRoundExpandedProvider(expansionKey));
     }
 
+    // One click folds or opens every round, the desktop counterpart of the
+    // phone's Collapse all / Expand all menu entry. All rounds folded reads
+    // as "Expand all"; anything open reads as "Collapse all".
+    final allRoundsCollapsed =
+        displayRounds.isNotEmpty &&
+        displayRounds.every((round) => !isRoundExpanded(round));
+    void setAllRoundsExpanded(bool expanded) {
+      for (final round in displayRounds) {
+        ref
+            .read(
+              _tournamentRoundExpandedProvider((
+                id: round.id,
+                initiallyExpanded: initialExpanded(round),
+              )).notifier,
+            )
+            .state = expanded;
+      }
+    }
+
     Widget searchField({required EdgeInsetsGeometry padding}) {
       return Padding(
         padding: padding,
-        child: DesktopSearchField(
-          controller: _searchController,
-          hintText: 'Search games in this tournament (player, opening, ECO)…',
-          onChanged: _runSearch,
-          onClear: () {
-            _debounce?.cancel();
-            ref
-                .read(
-                  tournamentDetailGamesSearchByTabIdProvider(
-                    widget.tabId,
-                  ).notifier,
-                )
-                .state = '';
-            if (!combinedSelected) {
-              ref.read(gamesTourScreenProvider.notifier).clearSearch();
-            }
-          },
+        child: Row(
+          children: [
+            Expanded(
+              child: DesktopSearchField(
+                controller: _searchController,
+                hintText:
+                    'Search games in this tournament (player, opening, ECO)…',
+                onChanged: _runSearch,
+                onClear: () {
+                  _debounce?.cancel();
+                  ref
+                      .read(
+                        tournamentDetailGamesSearchByTabIdProvider(
+                          widget.tabId,
+                        ).notifier,
+                      )
+                      .state = '';
+                  if (!combinedSelected) {
+                    ref.read(gamesTourScreenProvider.notifier).clearSearch();
+                  }
+                },
+              ),
+            ),
+            if (displayRounds.length > 1) ...[
+              const SizedBox(width: 8),
+              header_icon.DesktopHeaderIconButton(
+                key: const ValueKey<String>('tournament-games-collapse-all'),
+                unboxed: true,
+                message:
+                    allRoundsCollapsed
+                        ? 'Expand all rounds'
+                        : 'Collapse all rounds',
+                icon:
+                    allRoundsCollapsed
+                        ? Icons.unfold_more_rounded
+                        : Icons.unfold_less_rounded,
+                onPress: () => setAllRoundsExpanded(allRoundsCollapsed),
+              ),
+            ],
+          ],
         ),
       );
     }
@@ -1205,7 +1249,7 @@ class TournamentGamesHeaderControls extends ConsumerWidget {
             DesktopSegmentedTab(
               value: _TournamentGamesQuickFilter.live,
               label: 'Live',
-              icon: Icons.radio_button_checked_rounded,
+              mark: LiveFirstMark(),
             ),
           ],
           selected: selectedQuickFilter,

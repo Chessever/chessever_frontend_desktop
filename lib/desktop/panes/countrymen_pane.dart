@@ -6,6 +6,9 @@ import 'package:cue/cue.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/state/game_list_live_first.dart';
+import 'package:chessever/desktop/widgets/desktop_quick_list_toggles.dart';
+import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/providers/country_dropdown_provider.dart';
@@ -124,34 +127,47 @@ class CountrymenPane extends HookConsumerWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-            child: Cue.onMount(
-              motion: const CueMotion.smooth(),
-              acts: [const Act.fadeIn(), const Act.slideY(from: 0.25)],
-              child: DesktopSegmentedTabs<CountrymenScreenMode>(
-                selected: selectedMode,
-                onChanged: (mode) {
-                  ref
-                      .read(selectedCountrymenModeProvider.notifier)
-                      .update((_) => mode);
-                },
-                tabs: const [
-                  DesktopSegmentedTab(
-                    value: CountrymenScreenMode.events,
-                    label: 'Events',
-                    icon: Icons.event_outlined,
+            // The games controls ride the tabs row, so the list starts one
+            // row higher. A narrow pane wraps them under the tabs instead of
+            // overflowing.
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                Cue.onMount(
+                  motion: const CueMotion.smooth(),
+                  acts: [const Act.fadeIn(), const Act.slideY(from: 0.25)],
+                  child: DesktopSegmentedTabs<CountrymenScreenMode>(
+                    selected: selectedMode,
+                    onChanged: (mode) {
+                      ref
+                          .read(selectedCountrymenModeProvider.notifier)
+                          .update((_) => mode);
+                    },
+                    tabs: const [
+                      DesktopSegmentedTab(
+                        value: CountrymenScreenMode.events,
+                        label: 'Events',
+                        icon: Icons.event_outlined,
+                      ),
+                      DesktopSegmentedTab(
+                        value: CountrymenScreenMode.games,
+                        label: 'Games',
+                        icon: Icons.grid_4x4_outlined,
+                      ),
+                      DesktopSegmentedTab(
+                        value: CountrymenScreenMode.players,
+                        label: 'Players',
+                        icon: Icons.groups_2_outlined,
+                      ),
+                    ],
                   ),
-                  DesktopSegmentedTab(
-                    value: CountrymenScreenMode.games,
-                    label: 'Games',
-                    icon: Icons.grid_4x4_outlined,
-                  ),
-                  DesktopSegmentedTab(
-                    value: CountrymenScreenMode.players,
-                    label: 'Players',
-                    icon: Icons.groups_2_outlined,
-                  ),
-                ],
-              ),
+                ),
+                if (selectedMode == CountrymenScreenMode.games)
+                  const _CountrymenGamesControls(),
+              ],
             ),
           ),
           const SizedBox(height: 12),
@@ -175,6 +191,71 @@ class CountrymenPane extends HookConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Live first, Classical, Filters and the card layout for the Games tab,
+/// carried on the tabs row.
+class _CountrymenGamesControls extends ConsumerWidget {
+  const _CountrymenGamesControls();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(countrymenCombinedGamesProvider);
+    final liveFirst = ref.watch(
+      gameListLiveFirstProvider(GameListLiveFirstSurface.countrymen),
+    );
+    final classicalOnly =
+        state.filter.timeControl == GameTimeControlFilter.classical;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DesktopLiveFirstButton(
+          key: const ValueKey<String>('countrymen-live-first'),
+          pressed: liveFirst,
+          onPress:
+              () => pressGameListLiveFirst(
+                context: context,
+                ref: ref,
+                surface: GameListLiveFirstSurface.countrymen,
+                games: state.filteredGames,
+              ),
+        ),
+        const SizedBox(width: 8),
+        DesktopClassicalOnlyButton(
+          key: const ValueKey<String>('countrymen-classical-only'),
+          pressed: classicalOnly,
+          onPress:
+              () => ref
+                  .read(countrymenCombinedGamesProvider.notifier)
+                  .applyFilter(
+                    state.filter.copyWith(
+                      timeControl:
+                          classicalOnly
+                              ? GameTimeControlFilter.all
+                              : GameTimeControlFilter.classical,
+                    ),
+                  ),
+        ),
+        const SizedBox(width: 8),
+        DesktopGameFilterButton(
+          filter: state.filter,
+          onPress: () async {
+            final result = await showDesktopGameFilterDialog(
+              context: context,
+              currentFilter: state.filter,
+              showFormatFilter: false,
+            );
+            if (result == null || !context.mounted) return;
+            ref
+                .read(countrymenCombinedGamesProvider.notifier)
+                .applyFilter(result);
+          },
+        ),
+        const SizedBox(width: 12),
+        const GameViewModeToggle(),
+      ],
     );
   }
 }
@@ -228,23 +309,6 @@ class _CountrymenGamesView extends HookConsumerWidget {
                   },
                 ),
               ),
-              const SizedBox(width: 12),
-              DesktopGameFilterButton(
-                filter: state.filter,
-                onPress: () async {
-                  final result = await showDesktopGameFilterDialog(
-                    context: context,
-                    currentFilter: state.filter,
-                    showFormatFilter: false,
-                  );
-                  if (result == null || !context.mounted) return;
-                  ref
-                      .read(countrymenCombinedGamesProvider.notifier)
-                      .applyFilter(result);
-                },
-              ),
-              const SizedBox(width: 12),
-              const GameViewModeToggle(),
             ],
           ),
         ),
@@ -283,6 +347,11 @@ class _CountrymenGamesView extends HookConsumerWidget {
                   : _CountrymenGames(
                     key: const ValueKey('list'),
                     games: games,
+                    liveFirst: ref.watch(
+                      gameListLiveFirstProvider(
+                        GameListLiveFirstSurface.countrymen,
+                      ),
+                    ),
                     routeTitle:
                         (state.countryName?.trim().isNotEmpty ?? false)
                             ? '${state.countryName!.trim()} games'
@@ -1289,7 +1358,7 @@ class _CountrymenHero extends StatelessWidget {
     final hasCountry = countryName != null && countryName!.isNotEmpty;
     final code = countryCode == null ? '' : countryCode!.toUpperCase();
     return Container(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+      padding: const EdgeInsets.fromLTRB(24, 14, 24, 12),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kDividerColor)),
       ),
@@ -1322,10 +1391,10 @@ class _CountrymenHero extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: kWhiteColor,
-                        fontSize: 22,
+                        fontSize: 17,
                         fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                        height: 1.1,
+                        letterSpacing: -0.2,
+                        height: 1.15,
                       ),
                     ),
                   ),
@@ -1341,17 +1410,21 @@ class _CountrymenHero extends StatelessWidget {
                           size: 13,
                         ),
                         const SizedBox(width: 6),
-                        Text(
-                          hasCountry
-                              ? code.isEmpty
-                                  ? 'Live games from your countrymen'
-                                  : 'Live games from your countrymen · $code'
-                              : 'Pick a country in Settings → Account.',
-                          style: const TextStyle(
-                            color: kLightGreyColor,
-                            fontSize: 12,
-                            letterSpacing: 0.1,
-                            fontFeatures: [FontFeature.tabularFigures()],
+                        Flexible(
+                          child: Text(
+                            hasCountry
+                                ? code.isEmpty
+                                    ? 'Live games from your countrymen'
+                                    : 'Live games from your countrymen · $code'
+                                : 'Pick a country in Settings → Account.',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: kLightGreyColor,
+                              fontSize: 12,
+                              letterSpacing: 0.1,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
                           ),
                         ),
                       ],
@@ -1430,8 +1503,10 @@ class _FlagBadgeState extends State<_FlagBadge> {
 
   @override
   Widget build(BuildContext context) {
-    const w = 96.0;
-    const h = 64.0;
+    // Sized with the 17px country name, so the hero band stays a slim
+    // header and the games list starts higher.
+    const w = 66.0;
+    const h = 44.0;
     // Lift, edge and shadow ride ONE hover spring, so the plate rises and
     // lights up together instead of a 160 ms ease finishing before the lift.
     return MouseRegion(
@@ -1492,7 +1567,7 @@ class _FlagBadgeState extends State<_FlagBadge> {
                 : const Icon(
                   Icons.public_outlined,
                   color: kLightGreyColor,
-                  size: 28,
+                  size: 22,
                 ),
       ),
     );
@@ -1675,6 +1750,7 @@ class _CountrymenGames extends ConsumerStatefulWidget {
   const _CountrymenGames({
     super.key,
     required this.games,
+    this.liveFirst = false,
     required this.routeTitle,
     required this.hasMore,
     required this.isLoading,
@@ -1682,6 +1758,9 @@ class _CountrymenGames extends ConsumerStatefulWidget {
   });
 
   final List<GamesTourModel> games;
+
+  /// Lifts the games in play to the top of their day.
+  final bool liveFirst;
   final String routeTitle;
   final bool hasMore;
   final bool isLoading;
@@ -1769,7 +1848,10 @@ class _CountrymenGamesState extends ConsumerState<_CountrymenGames> {
       activeTabKindProvider.select((kind) => kind == TabKind.countrymen),
     );
     final cardStreamingEnabled = streamingEnabled;
-    final groups = buildDesktopGameDateGroups(widget.games);
+    final groups = buildDesktopGameDateGroups(
+      widget.games,
+      liveFirst: widget.liveFirst,
+    );
     final keyboardGroups = [
       for (final group in groups)
         DesktopGameKeyboardGroup(

@@ -12,6 +12,7 @@ import 'package:chessever/desktop/services/gamebase_position_games_loader.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
+import 'package:chessever/desktop/widgets/live_first_mark.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/gamebase/search/gamebase_search_models.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
@@ -1083,6 +1084,14 @@ void main() {
       expect(
         find.byKey(const Key('event-rail-live-first-toggle')),
         findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('event-rail-live-first-toggle')),
+          matching: find.byType(LiveFirstMark),
+        ),
+        findsOneWidget,
+        reason: 'The rail wears the same Live first mark as every list.',
       );
 
       await tester.tap(find.text('Standings'));

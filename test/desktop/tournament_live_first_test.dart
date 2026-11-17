@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:chessever/desktop/state/tournament_live_first.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/live_first_mark.dart';
 import 'package:chessever/desktop/widgets/tournament_live_first_toggle.dart';
 import 'package:chessever/providers/group_event_category.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
@@ -246,8 +247,11 @@ void main() {
       tester.widget<Text>(find.text('Live first')).style!.color,
       kPrimaryColor,
     );
+    // The web's Live mark, not a lightning bolt (which reads as Blitz), in
+    // the pill's own ink.
+    expect(find.byIcon(Icons.bolt_rounded), findsNothing);
     expect(
-      tester.widget<Icon>(find.byIcon(Icons.bolt_rounded)).color,
+      IconTheme.of(tester.element(find.byType(LiveFirstMark))).color,
       kPrimaryColor,
     );
 

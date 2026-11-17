@@ -1,6 +1,7 @@
 import 'package:intl/intl.dart';
 
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 
 class DesktopGameDateGroup {
   const DesktopGameDateGroup({
@@ -20,6 +21,7 @@ List<DesktopGameDateGroup> buildDesktopGameDateGroups(
   bool includeToday = false,
   bool excludeFuture = false,
   bool preserveGameOrder = false,
+  bool liveFirst = false,
 }) {
   const unknownKey = '0000-00-00';
   final clock = now ?? DateTime.now();
@@ -44,6 +46,26 @@ List<DesktopGameDateGroup> buildDesktopGameDateGroups(
   if (!preserveGameOrder) {
     for (final dayGames in byDay.values) {
       dayGames.sort(_compareGamesByAverageRatingThenTime);
+    }
+  }
+
+  // Live first lifts the games in play to the top of their day and keeps the
+  // day's own order on both sides of the split. Only today can hold a live
+  // game, so the day groups themselves never move.
+  if (liveFirst) {
+    for (final key in byDay.keys.toList()) {
+      final dayGames = byDay[key]!;
+      final live = [
+        for (final game in dayGames)
+          if (GameFilterHelper.isLiveNow(game, now: clock)) game,
+      ];
+      if (live.isEmpty || live.length == dayGames.length) continue;
+      final liveSet = Set<GamesTourModel>.identity()..addAll(live);
+      byDay[key] = [
+        ...live,
+        for (final game in dayGames)
+          if (!liveSet.contains(game)) game,
+      ];
     }
   }
 

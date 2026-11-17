@@ -48,6 +48,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/live_first_mark.dart';
 import 'package:chessever/desktop/widgets/new_tab_modifier.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
@@ -7935,9 +7936,8 @@ class _EventRoundHeaderState extends State<_EventRoundHeader> {
                               height: 28,
                               alignment: Alignment.center,
                               // Web unboxed `.ce-gameslist__live-first`: no edge
-                              // or fill, the sensors ink carries the state.
-                              child: Icon(
-                                Icons.sensors_rounded,
+                              // or fill, the mark's ink carries the state.
+                              child: LiveFirstMark(
                                 size: 16,
                                 color:
                                     widget.liveFirst
