@@ -4,6 +4,7 @@ import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/widgets/backfilled_federation_flag.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -499,6 +500,229 @@ void main() {
         expect(player2Score.right, lessThan(player2Name.left));
       },
     );
+
+    testWidgets(
+      'centers the pairing on the header the way chessever.com does',
+      (tester) async {
+        final startsAt = DateTime(2026, 11, 15, 19, 40);
+        final vachier = _player(
+          'Vachier-Lagrave, Maxime',
+          federation: 'FRA',
+          title: 'GM',
+          rating: 2712,
+        );
+        final giri = _player(
+          'Giri, Anish',
+          federation: 'NED',
+          title: 'GM',
+          rating: 2656,
+        );
+        final header = KnockoutMatchDetector.createMatchHeader('pairing', [
+          _game(
+            'g1',
+            vachier.name,
+            giri.name,
+            whitePlayer: vachier,
+            blackPlayer: giri,
+            gameStatus: GameStatus.blackWins,
+            roundStartsAt: startsAt,
+          ),
+        ]);
+        const headerKey = ValueKey<String>('match-header');
+        tester.view.physicalSize = const Size(1600, 600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        Future<void> pumpAt(double width) => tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  key: headerKey,
+                  width: width,
+                  child: buildKnockoutMatchSectionHeaderForTesting(header),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await pumpAt(1400);
+        await tester.pumpAndSettle();
+
+        final box = tester.getRect(find.byKey(headerKey));
+        final separator = tester.getRect(find.text('–'));
+        final player1Score = tester.getRect(find.text('0'));
+        final player2Score = tester.getRect(find.text('1'));
+        final player1Rating = tester.getRect(find.text('(2712)'));
+        final player2Flag = tester.getRect(
+          find.byType(BackfilledFederationFlag).last,
+        );
+        final date = tester.getRect(find.text('Nov 15 · 19:40'));
+        final clock = tester.getRect(find.byIcon(Icons.schedule_rounded));
+        final count = tester.getRect(find.text('1 game'));
+
+        // The score sits on the header's center axis, and each player hugs it
+        // from their own side: left name ends where the right name starts,
+        // mirrored around the score, never pinned to the left edge.
+        expect(separator.center.dx, closeTo(box.center.dx, 0.5));
+        expect(
+          player1Score.left - player1Rating.right,
+          closeTo(player2Flag.left - player2Score.right, 0.5),
+        );
+        expect(
+          player1Rating.right,
+          greaterThan(box.left + box.width / 4),
+          reason: 'the left player must not be left-aligned',
+        );
+        // The schedule and game count read as one centered caption under
+        // the pairing, so they never push the pairing off center.
+        expect(date.top, greaterThan(separator.bottom));
+        expect((clock.left + count.right) / 2, closeTo(box.center.dx, 0.5));
+
+        // A narrow browser window truncates names instead of overflowing the
+        // header.
+        await pumpAt(320);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(
+          tester.getRect(find.text('–')).center.dx,
+          closeTo(tester.getRect(find.byKey(headerKey)).center.dx, 0.5),
+        );
+      },
+    );
+
+    testWidgets(
+      'names stay put from vs through half points to a decisive score',
+      (tester) async {
+        tester.view.physicalSize = const Size(1600, 600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final carlsen = _player(
+          'Carlsen, Magnus',
+          federation: 'NOR',
+          title: 'GM',
+          rating: 2839,
+        );
+        final nepo = _player(
+          'Nepomniachtchi, Ian',
+          federation: 'RUS',
+          title: 'GM',
+          rating: 2758,
+        );
+        MatchHeaderModel headerFor(List<GameStatus> results) =>
+            KnockoutMatchDetector.createMatchHeader('pairing', [
+              for (final (index, result) in results.indexed)
+                _game(
+                  'g$index',
+                  index.isEven ? carlsen.name : nepo.name,
+                  index.isEven ? nepo.name : carlsen.name,
+                  roundSlug: 'game-${index + 1}',
+                  whitePlayer: index.isEven ? carlsen : nepo,
+                  blackPlayer: index.isEven ? nepo : carlsen,
+                  gameStatus: result,
+                ),
+            ]);
+
+        Future<({Rect left, Rect right})> namesFor(
+          MatchHeaderModel header,
+        ) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: 1400,
+                    child: buildKnockoutMatchSectionHeaderForTesting(header),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          return (
+            left: tester.getRect(find.text('Carlsen, Magnus')),
+            right: tester.getRect(find.text('Nepomniachtchi, Ian')),
+          );
+        }
+
+        final unplayed = await namesFor(
+          headerFor(const [GameStatus.ongoing, GameStatus.unknown]),
+        );
+        for (final results in const [
+          [GameStatus.draw, GameStatus.unknown],
+          [GameStatus.draw, GameStatus.whiteWins],
+          [GameStatus.whiteWins, GameStatus.blackWins],
+        ]) {
+          final scored = await namesFor(headerFor(results));
+          expect(scored.left, rectMoreOrLessEquals(unplayed.left));
+          expect(scored.right, rectMoreOrLessEquals(unplayed.right));
+        }
+        expect(find.text('0.5'), findsNothing);
+        expect(find.text('2'), findsOneWidget);
+        expect(find.text('0'), findsOneWidget);
+      },
+    );
+
+    testWidgets('at phone widths the extras give way so the names keep room', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final hou = _player(
+        'Hou, Yifan',
+        federation: 'CHN',
+        title: 'WGM',
+        rating: 2633,
+      );
+      final ju = _player(
+        'Ju, Wenjun',
+        federation: 'CHN',
+        title: 'WGM',
+        rating: 2560,
+      );
+      final header = KnockoutMatchDetector.createMatchHeader('pairing', [
+        _game(
+          'g1',
+          hou.name,
+          ju.name,
+          whitePlayer: hou,
+          blackPlayer: ju,
+          gameStatus: GameStatus.draw,
+          roundStartsAt: DateTime(2026, 11, 15, 19, 40),
+        ),
+      ]);
+      for (final width in const [240.0, 260.0, 300.0, 360.0, 480.0]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: width,
+                  child: buildKnockoutMatchSectionHeaderForTesting(header),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: 'width $width');
+        for (final name in const ['Hou, Yifan', 'Ju, Wenjun']) {
+          expect(
+            tester.getSize(find.text(name)).width,
+            greaterThan(0),
+            reason: '$name at width $width',
+          );
+        }
+      }
+    });
   });
 }
 

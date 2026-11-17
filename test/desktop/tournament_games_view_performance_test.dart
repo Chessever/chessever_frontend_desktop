@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -528,6 +529,97 @@ void main() {
     // Drain the tooltip's exit timer the taps started.
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets(
+    'a knockout match shorter than a row sits centered under its pairing',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final alpha = _player('Alpha, Anna');
+      final beta = _player('Beta, Boris');
+      GamesTourModel game(String id, PlayerCard white, PlayerCard black) =>
+          GamesTourModel(
+            gameId: id,
+            whitePlayer: white,
+            blackPlayer: black,
+            whiteTimeDisplay: '05:00',
+            blackTimeDisplay: '05:00',
+            whiteClockCentiseconds: 30000,
+            blackClockCentiseconds: 30000,
+            gameStatus: GameStatus.draw,
+            roundId: 'final',
+            roundSlug: 'final',
+            tourId: '',
+          );
+      final games = [game('m1', alpha, beta), game('m2', beta, alpha)];
+      final round = GamesAppBarModel(
+        id: 'final',
+        name: 'Final',
+        startsAt: DateTime.utc(2026, 11, 15, 12),
+        roundStatus: RoundStatus.completed,
+      );
+      final grouped = GroupedGamesData(
+        filteredRounds: [round],
+        gamesByRound: {round.id: games},
+        isKnockoutTournament: true,
+        isMultiStageKnockout: false,
+        isLoading: false,
+        rounds: [round],
+        allGames: games,
+        providerGameCount: games.length,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          gamesTourGroupedProvider.overrideWith((ref) => grouped),
+          gamesTourScreenProvider.overrideWith(
+            (ref) => _SearchFocusGamesNotifier(ref),
+          ),
+          boardSettingsProviderNew.overrideWith(_EvaluationBarOffNotifier.new),
+          engineSettingsProviderNew.overrideWith(
+            _EngineSettingsOffNotifier.new,
+          ),
+          gameStreamRepositoryProvider.overrideWithValue(
+            _TrackingGameStreamRepository(),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(
+              body: TournamentGamesView(
+                tabId: 'sparse-match-tab',
+                tournamentId: 'sparse-match-tour',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final cards = [
+        for (final element in find.byType(DesktopGameCard).evaluate())
+          tester.getRect(find.byWidget(element.widget)),
+      ];
+      expect(cards, hasLength(2));
+      final separator = tester.getRect(find.text('–').first);
+      final cardsLeft = cards.map((rect) => rect.left).reduce(math.min);
+      final cardsRight = cards.map((rect) => rect.right).reduce(math.max);
+      expect((cardsLeft + cardsRight) / 2, closeTo(separator.center.dx, 1));
+      expect(
+        cardsLeft,
+        greaterThan(tester.getRect(find.byType(RoundHeaderCard)).left + 100),
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
 }
 
 class _SearchFocusGamesNotifier extends GamesTourScreenProvider {

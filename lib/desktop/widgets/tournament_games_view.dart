@@ -2067,6 +2067,9 @@ class _MatchSliverSection extends ConsumerWidget {
             tournamentTitle: tournamentTitle,
             layout: layout,
             columns: columns,
+            // A match shorter than one row sits centered under its pairing,
+            // like the web's `.ce-komatch__boards` grid.
+            centerSparseRow: true,
             roundStartsAtById: roundStartsAtById,
             roundNameById: roundNameById,
             streamingEnabled: streamingEnabled,
@@ -2109,6 +2112,9 @@ class _MatchSectionHeader extends StatefulWidget {
 class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
   bool _hovered = false;
 
+  static const double _chevronSize = 18;
+  static const double _chevronGap = 12;
+
   @override
   Widget build(BuildContext context) {
     final h = widget.header;
@@ -2136,116 +2142,54 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
             ),
             child: Row(
               children: [
+                // An empty slot the size of the chevron keeps the pairing on
+                // the header's true center axis.
+                const SizedBox(width: _chevronSize + _chevronGap),
                 Expanded(
-                  child: Row(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Flexible(
-                        child: _MatchPlayerIdentity(player: h.player1Card),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 7),
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 180),
-                          switchInCurve: Curves.easeOutCubic,
-                          switchOutCurve: Curves.easeInCubic,
-                          // A ~6 px rise on small score glyphs: MotionTranslate
-                          // rasterizes only while moving, so the digits glide
-                          // instead of stepping whole pixels (flutter#149652).
-                          transitionBuilder:
-                              (child, animation) => FadeTransition(
-                                opacity: animation,
-                                child: AnimatedBuilder(
-                                  animation: animation,
-                                  builder:
-                                      (context, child) => MotionTranslate(
-                                        offset: Offset(
-                                          0,
-                                          (1 - animation.value) * 6,
-                                        ),
-                                        child: child,
-                                      ),
-                                  child: child,
-                                ),
+                      // chessever.com's `1fr auto 1fr` match head: the score
+                      // owns the center, the left player ends against it and
+                      // the right player starts from it.
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Align(
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: _MatchPlayerIdentity(
+                                player: h.player1Card,
                               ),
-                          child:
-                              h.hasReportedScore
-                                  ? Row(
-                                    key: const ValueKey<String>('scores'),
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      _MatchScoreText(
-                                        label: h.player1ScoreLabel,
-                                        tone: h.player1ResultTone,
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 7,
-                                        ),
-                                        child: Text(
-                                          '–',
-                                          style: TextStyle(
-                                            color: kWhiteColor.withValues(
-                                              alpha: 0.42,
-                                            ),
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                      _MatchScoreText(
-                                        label: h.player2ScoreLabel,
-                                        tone: h.player2ResultTone,
-                                      ),
-                                    ],
-                                  )
-                                  : Text(
-                                    'vs',
-                                    key: ValueKey<bool>(h.hasReportedScore),
-                                    style: TextStyle(
-                                      color: kWhiteColor.withValues(
-                                        alpha: 0.42,
-                                      ),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                        ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: _MatchScoreSlot(header: h),
+                          ),
+                          Expanded(
+                            child: Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: _MatchPlayerIdentity(
+                                player: h.player2Card,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      Flexible(
-                        child: _MatchPlayerIdentity(player: h.player2Card),
+                      const SizedBox(height: 3),
+                      _MatchHeaderCaption(
+                        startsAt: startsAt,
+                        gameCount: h.games.length,
                       ),
                     ],
                   ),
                 ),
-                if (startsAt != null) ...[
-                  const SizedBox(width: 16),
-                  Icon(
-                    Icons.schedule_rounded,
-                    size: 13,
-                    color: kWhiteColor.withValues(alpha: 0.36),
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    DateFormat('MMM d · HH:mm').format(startsAt.toLocal()),
-                    style: TextStyle(
-                      color: kWhiteColor.withValues(alpha: 0.46),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
-                const SizedBox(width: 12),
-                Text(
-                  '${h.games.length} game${h.games.length == 1 ? '' : 's'}',
-                  style: const TextStyle(color: kLightGreyColor, fontSize: 11),
-                ),
-                const SizedBox(width: 8),
+                const SizedBox(width: _chevronGap),
                 Icon(
                   widget.expanded
                       ? Icons.keyboard_arrow_down_rounded
                       : Icons.keyboard_arrow_right_rounded,
-                  size: 18,
+                  size: _chevronSize,
                   color: kWhiteColor70,
                 ),
               ],
@@ -2253,6 +2197,174 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The center of a match header: the running score, or `vs` before any game
+/// has a result.
+///
+/// The slot is as wide as the widest score this match can reach (`0.5 – 0.5`
+/// wide for a match of up to nine games, `00.5 – 00.5` up to 99, in tabular
+/// figures) and as tall as a score line, so neither the names nor the header
+/// height move when the first result replaces `vs` or as half points come and
+/// go. The web reserves the same room with
+/// `.ce-komatch__score`'s min-width.
+class _MatchScoreSlot extends StatelessWidget {
+  const _MatchScoreSlot({required this.header});
+
+  final MatchHeaderModel header;
+
+  static const double _dashGap = 7;
+  static const TextStyle _dashStyle = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w700,
+  );
+
+  Size _widestScoreSize(BuildContext context) {
+    // A side scores at most one point per game, so the game count bounds the
+    // integer digits of either label; `.5` covers a half point.
+    final label = '${'0' * '${header.games.length}'.length}.5';
+    final base = DefaultTextStyle.of(context).style;
+    final scoreStyle = base.merge(_MatchScoreText.textStyle);
+    final painter = TextPainter(
+      text: TextSpan(
+        children: [
+          TextSpan(text: label, style: scoreStyle),
+          TextSpan(text: '–', style: base.merge(_dashStyle)),
+          TextSpan(text: label, style: scoreStyle),
+        ],
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final size = Size(
+      (painter.width + 2 * _dashGap).ceilToDouble(),
+      painter.height.ceilToDouble(),
+    );
+    painter.dispose();
+    return size;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final h = header;
+    final reserved = _widestScoreSize(context);
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        minWidth: reserved.width,
+        minHeight: reserved.height,
+      ),
+      child: Center(
+        widthFactor: 1,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          // A ~6 px rise on small score glyphs: MotionTranslate rasterizes
+          // only while moving, so the digits glide instead of stepping whole
+          // pixels (flutter#149652).
+          transitionBuilder:
+              (child, animation) => FadeTransition(
+                opacity: animation,
+                child: AnimatedBuilder(
+                  animation: animation,
+                  builder:
+                      (context, child) => MotionTranslate(
+                        offset: Offset(0, (1 - animation.value) * 6),
+                        child: child,
+                      ),
+                  child: child,
+                ),
+              ),
+          child:
+              h.hasReportedScore
+                  ? Row(
+                    key: const ValueKey<String>('scores'),
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _MatchScoreText(
+                        label: h.player1ScoreLabel,
+                        tone: h.player1ResultTone,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: _dashGap,
+                        ),
+                        child: Text(
+                          '–',
+                          style: _dashStyle.copyWith(
+                            color: kWhiteColor.withValues(alpha: 0.42),
+                          ),
+                        ),
+                      ),
+                      _MatchScoreText(
+                        label: h.player2ScoreLabel,
+                        tone: h.player2ResultTone,
+                      ),
+                    ],
+                  )
+                  : Text(
+                    'vs',
+                    key: ValueKey<bool>(h.hasReportedScore),
+                    style: TextStyle(
+                      color: kWhiteColor.withValues(alpha: 0.42),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+        ),
+      ),
+    );
+  }
+}
+
+/// When the match starts and how many games it holds, centered under the
+/// pairing like the web's match state line. The date gives way first when
+/// the header is narrow.
+class _MatchHeaderCaption extends StatelessWidget {
+  const _MatchHeaderCaption({required this.startsAt, required this.gameCount});
+
+  final DateTime? startsAt;
+  final int gameCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final startsAt = this.startsAt;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (startsAt != null) ...[
+          Icon(
+            Icons.schedule_rounded,
+            size: 12,
+            color: kWhiteColor.withValues(alpha: 0.36),
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              DateFormat('MMM d · HH:mm').format(startsAt.toLocal()),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              style: TextStyle(
+                color: kWhiteColor.withValues(alpha: 0.46),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+        ],
+        Text(
+          '$gameCount game${gameCount == 1 ? '' : 's'}',
+          maxLines: 1,
+          softWrap: false,
+          style: const TextStyle(color: kLightGreyColor, fontSize: 11),
+        ),
+      ],
     );
   }
 }
@@ -2266,51 +2378,66 @@ class _MatchPlayerIdentity extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasFlag =
         player.federation.trim().isNotEmpty || (player.fideId ?? 0) > 0;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (hasFlag) ...[
-          BackfilledFederationFlag(
-            federation: player.federation,
-            fideId: player.fideId,
-            playerName: player.name,
-            width: 18,
-            height: 12,
-            borderRadius: BorderRadius.circular(2),
-          ),
-          const SizedBox(width: 6),
-        ],
-        if (player.title.trim().isNotEmpty) ...[
-          DesktopPlainPlayerTitle(title: player.title, compact: true),
-          const SizedBox(width: 5),
-        ],
-        Flexible(
-          child: Text(
-            player.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            softWrap: false,
-            style: const TextStyle(
-              color: kWhiteColor,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w700,
-              height: 1.15,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Each player owns half of a centered header. When that half is
+        // narrow (a phone-width browser window) the extras give way before
+        // the name does: the rating first, as in the board rail's
+        // _PlayerCell, then the title, then the flag. The name always keeps
+        // room and ellipsizes; the row never overflows.
+        final width = constraints.maxWidth;
+        final unbounded = !width.isFinite;
+        final showRating = player.rating > 0 && (unbounded || width >= 160);
+        final showTitle =
+            player.title.trim().isNotEmpty && (unbounded || width >= 100);
+        final showFlag = hasFlag && (unbounded || width >= 60);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (showFlag) ...[
+              BackfilledFederationFlag(
+                federation: player.federation,
+                fideId: player.fideId,
+                playerName: player.name,
+                width: 18,
+                height: 12,
+                borderRadius: BorderRadius.circular(2),
+              ),
+              const SizedBox(width: 6),
+            ],
+            if (showTitle) ...[
+              DesktopPlainPlayerTitle(title: player.title, compact: true),
+              const SizedBox(width: 5),
+            ],
+            Flexible(
+              child: Text(
+                player.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+                style: const TextStyle(
+                  color: kWhiteColor,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  height: 1.15,
+                ),
+              ),
             ),
-          ),
-        ),
-        if (player.rating > 0) ...[
-          const SizedBox(width: 5),
-          Text(
-            '(${player.rating})',
-            style: TextStyle(
-              color: kWhiteColor.withValues(alpha: 0.48),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ],
+            if (showRating) ...[
+              const SizedBox(width: 5),
+              Text(
+                '(${player.rating})',
+                style: TextStyle(
+                  color: kWhiteColor.withValues(alpha: 0.48),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -2328,16 +2455,14 @@ class _MatchScoreText extends StatelessWidget {
       MatchPlayerResultTone.trailing => kRedColor,
       MatchPlayerResultTone.neutral => kWhiteColor,
     };
-    return Text(
-      label,
-      style: TextStyle(
-        color: color,
-        fontSize: 13.5,
-        fontWeight: FontWeight.w800,
-        fontFeatures: const [FontFeature.tabularFigures()],
-      ),
-    );
+    return Text(label, style: textStyle.copyWith(color: color));
   }
+
+  static const TextStyle textStyle = TextStyle(
+    fontSize: 13.5,
+    fontWeight: FontWeight.w800,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
 }
 
 class _MatchHeaderBanner extends StatelessWidget {
