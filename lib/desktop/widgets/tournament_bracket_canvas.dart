@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:chessever/desktop/widgets/desktop_tappable.dart';
 import 'package:chessever/screens/tour_detail/bracket/models/knockout_bracket.dart';
 import 'package:chessever/screens/tour_detail/bracket/widgets/bracket_graph_layout.dart';
+import 'package:chessever/screens/tour_detail/bracket/widgets/bracket_connector_painter.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
 
@@ -29,6 +30,14 @@ class DesktopKnockoutBracketCanvas extends StatelessWidget {
     final stages = List<KnockoutStage>.of(bracket.stages)
       ..sort((a, b) => a.order.compareTo(b.order));
 
+    final hasSeededRoutes = stages.any(
+      (stage) => stage.matches.any((match) => match.feederMatchKeys.isNotEmpty),
+    );
+    final plannedSources =
+        layout.connections
+            .where((c) => !c.isConfirmed)
+            .map((c) => c.sourceMatchKey)
+            .toSet();
     return RepaintBoundary(
       child: SizedBox.fromSize(
         key: const ValueKey('desktop-knockout-bracket-canvas'),
@@ -38,10 +47,18 @@ class DesktopKnockoutBracketCanvas extends StatelessWidget {
           children: [
             Positioned.fill(
               child: CustomPaint(
-                painter: _DesktopBracketConnectorPainter(
-                  edges: bracket.edges,
+                painter: BracketConnectorPainter(
+                  connections: layout.connections,
+                  arrowheads: hasSeededRoutes,
                   matchRects: layout.matchRects,
                   focusedMatchKey: focusedMatchKey,
+                  futureColor: kWhiteColor.withValues(alpha: 0.4),
+                  confirmedColor: kWhiteColor.withValues(
+                    alpha: hasSeededRoutes ? 0.75 : 0.24,
+                  ),
+                  focusedColor: kPrimaryColor.withValues(
+                    alpha: hasSeededRoutes ? 0.9 : 0.82,
+                  ),
                 ),
               ),
             ),
@@ -52,6 +69,7 @@ class DesktopKnockoutBracketCanvas extends StatelessWidget {
                   child: _DesktopBracketStageHeader(
                     stage: stage,
                     isCurrent: bracket.currentStageKey == stage.key,
+                    isPlacement: rect.top > BracketGraphMetrics.headerTop,
                   ),
                 ),
             for (final stage in stages)
@@ -63,6 +81,11 @@ class DesktopKnockoutBracketCanvas extends StatelessWidget {
                       key: ValueKey('desktop-bracket-match-${match.key}'),
                       match: match,
                       focused: focusedMatchKey == match.key,
+                      upcoming:
+                          match.isUpcoming &&
+                          (match.isProjected ||
+                              match.feederMatchKeys.isNotEmpty ||
+                              plannedSources.contains(match.key)),
                       onActivate: () => onMatchActivate(match),
                     ),
                   ),
@@ -77,17 +100,20 @@ class _DesktopBracketStageHeader extends StatelessWidget {
   const _DesktopBracketStageHeader({
     required this.stage,
     required this.isCurrent,
+    this.isPlacement = false,
   });
 
   final KnockoutStage stage;
   final bool isCurrent;
+  final bool isPlacement;
 
   @override
   Widget build(BuildContext context) {
     final matchLabel = stage.matches.length == 1 ? 'match' : 'matches';
     return Semantics(
       header: true,
-      label: '${stage.label}, ${stage.matches.length} $matchLabel',
+      label:
+          '${stage.label}${isPlacement ? ', semifinal losers' : ''}, ${stage.matches.length} $matchLabel',
       child: Row(
         children: [
           Container(
@@ -101,7 +127,7 @@ class _DesktopBracketStageHeader extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              stage.label,
+              isPlacement ? '${stage.label} (losers)' : stage.label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -151,11 +177,13 @@ class _DesktopBracketMatchCard extends StatelessWidget {
     super.key,
     required this.match,
     required this.focused,
+    required this.upcoming,
     required this.onActivate,
   });
 
   final KnockoutMatch match;
   final bool focused;
+  final bool upcoming;
   final VoidCallback onActivate;
 
   @override
@@ -168,9 +196,9 @@ class _DesktopBracketMatchCard extends StatelessWidget {
             match.isProjected
                 ? '${match.participant1.displayName}, ${match.participant2.displayName}. Not played yet'
                 : '${match.participant1.displayName} '
-                  '${_formatBracketScore(match.participant1Score)}, '
-                  '${match.participant2.displayName} '
-                  '${_formatBracketScore(match.participant2Score)}',
+                    '${_formatBracketScore(match.participant1Score)}, '
+                    '${match.participant2.displayName} '
+                    '${_formatBracketScore(match.participant2Score)}',
           );
     if (match.winner != null) {
       semantics.write('. ${match.winner!.displayName} advances');
@@ -193,12 +221,17 @@ class _DesktopBracketMatchCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color:
-                focused ? kPrimaryColor.withValues(alpha: 0.78) : kDividerColor,
+                focused
+                    ? kPrimaryColor.withValues(alpha: 0.78)
+                    : kDividerColor.withValues(alpha: upcoming ? 0.55 : 1),
             width: focused ? 1.4 : 1,
           ),
         ),
         decoration: BoxDecoration(
-          color: focused ? kBlack3Color : kBlack2Color,
+          color:
+              focused
+                  ? kBlack3Color
+                  : kBlack2Color.withValues(alpha: upcoming ? 0.55 : 1),
           borderRadius: BorderRadius.circular(10),
           boxShadow:
               focused
@@ -219,6 +252,7 @@ class _DesktopBracketMatchCard extends StatelessWidget {
                   Expanded(
                     child: _DesktopBracketParticipantRow(
                       participant: match.participant1,
+                      upcoming: upcoming,
                       score: match.isProjected ? null : match.participant1Score,
                       winner: winnerId == match.participant1.id,
                       eliminated:
@@ -230,6 +264,7 @@ class _DesktopBracketMatchCard extends StatelessWidget {
                   Expanded(
                     child: _DesktopBracketParticipantRow(
                       participant: match.participant2,
+                      upcoming: upcoming,
                       score: match.isProjected ? null : match.participant2Score,
                       winner: winnerId == match.participant2.id,
                       eliminated:
@@ -269,6 +304,7 @@ class _DesktopBracketParticipantRow extends StatelessWidget {
     required this.winner,
     required this.eliminated,
     required this.leader,
+    required this.upcoming,
   });
 
   final BracketParticipant participant;
@@ -276,10 +312,16 @@ class _DesktopBracketParticipantRow extends StatelessWidget {
   final bool winner;
   final bool eliminated;
   final bool leader;
+  final bool upcoming;
 
   @override
   Widget build(BuildContext context) {
-    final foreground = eliminated ? kLightGreyColor : kWhiteColor;
+    final foreground =
+        eliminated
+            ? kLightGreyColor
+            : upcoming
+            ? kWhiteColor70
+            : kWhiteColor;
     final metadata = <String>[
       if ((participant.title ?? '').trim().isNotEmpty)
         participant.title!.trim(),
@@ -352,22 +394,25 @@ class _DesktopBracketParticipantRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          if (score != null) Text(
-            _formatBracketScore(score!),
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              color:
-                  winner || leader
-                      ? kPrimaryColor
-                      : eliminated
-                      ? kLightGreyColor
-                      : kWhiteColor,
-              fontSize: 15,
-              height: 1,
-              fontWeight: FontWeight.w700,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          if (score != null)
+            Text(
+              _formatBracketScore(score!),
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color:
+                    winner || leader
+                        ? kPrimaryColor
+                        : eliminated
+                        ? kLightGreyColor
+                        : upcoming
+                        ? kWhiteColor70
+                        : kWhiteColor,
+                fontSize: 15,
+                height: 1,
+                fontWeight: FontWeight.w700,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -378,68 +423,3 @@ String _formatBracketScore(double score) =>
     score == score.roundToDouble()
         ? score.toInt().toString()
         : score.toStringAsFixed(1);
-
-class _DesktopBracketConnectorPainter extends CustomPainter {
-  const _DesktopBracketConnectorPainter({
-    required this.edges,
-    required this.matchRects,
-    required this.focusedMatchKey,
-  });
-
-  final List<KnockoutEdge> edges;
-  final Map<String, Rect> matchRects;
-  final String? focusedMatchKey;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final basePaint =
-        Paint()
-          ..color = kWhiteColor.withValues(alpha: 0.24)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round;
-    final focusPaint =
-        Paint()
-          ..color = kPrimaryColor.withValues(alpha: 0.82)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.1
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round;
-
-    for (final edge in edges) {
-      if (_isFocused(edge)) continue;
-      _paintEdge(canvas, edge, basePaint);
-    }
-    for (final edge in edges) {
-      if (!_isFocused(edge)) continue;
-      _paintEdge(canvas, edge, focusPaint);
-    }
-  }
-
-  bool _isFocused(KnockoutEdge edge) =>
-      focusedMatchKey != null &&
-      (edge.sourceMatchKey == focusedMatchKey ||
-          edge.destinationMatchKey == focusedMatchKey);
-
-  void _paintEdge(Canvas canvas, KnockoutEdge edge, Paint paint) {
-    final source = matchRects[edge.sourceMatchKey];
-    final destination = matchRects[edge.destinationMatchKey];
-    if (source == null || destination == null) return;
-
-    final start = source.centerRight;
-    final end = destination.centerLeft;
-    final middleX = (start.dx + end.dx) / 2;
-    final path =
-        Path()
-          ..moveTo(start.dx, start.dy)
-          ..cubicTo(middleX, start.dy, middleX, end.dy, end.dx, end.dy);
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _DesktopBracketConnectorPainter oldDelegate) =>
-      oldDelegate.edges != edges ||
-      oldDelegate.matchRects != matchRects ||
-      oldDelegate.focusedMatchKey != focusedMatchKey;
-}

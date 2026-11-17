@@ -281,7 +281,7 @@ LogicalKnockoutStage? _recognizedStage(String value) {
     );
   }
   if (RegExp(
-    r'^(?:third[ -]?place|bronze)(?:[ -]?match)?$',
+    r'^(?:third[ -]?place|bronze|consolation)(?:[ -]?match)?$',
     caseSensitive: false,
   ).hasMatch(cleanValue)) {
     return const LogicalKnockoutStage(

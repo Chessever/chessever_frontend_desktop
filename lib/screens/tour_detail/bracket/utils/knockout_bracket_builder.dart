@@ -133,27 +133,12 @@ KnockoutBracket buildKnockoutBracket({
     );
   }
 
-  final progressedStages = applyMatchPlayAdvancement(baseStages, {
+  final publishedStages = _withKnownWinners(baseStages, _inferEdges(baseStages));
+  final progressedStages = applyMatchPlayAdvancement(publishedStages, {
     for (final tour in [...siblingTours, selectedTour]) tour.id: tour.info.matchPlayBracket,
   });
   final edgeResult = _inferEdges(progressedStages);
-  final stages = <KnockoutStage>[];
-  for (var stageIndex = 0; stageIndex < progressedStages.length; stageIndex++) {
-    final stage = progressedStages[stageIndex];
-    final matches =
-        stage.matches.map((match) {
-          BracketParticipant? winner = match.winner;
-          final advanced = edgeResult.advancedBySourceMatch[match.key];
-          if (advanced != null && advanced.length == 1) {
-            winner = match.participantById(advanced.single);
-          }
-          if (winner == null && stage.isComplete && match.isComplete) {
-            winner = match.leader;
-          }
-          return winner == null ? match : match.copyWith(winner: winner);
-        }).toList();
-    stages.add(stage.copyWith(matches: matches));
-  }
+  final stages = _withKnownWinners(progressedStages, edgeResult);
 
   String? currentStageKey;
   for (final stage in stages.reversed) {
@@ -195,6 +180,27 @@ KnockoutBracket buildKnockoutBracket({
     currentStageKey: currentStageKey,
     isPartial: isPartial,
   );
+}
+
+List<KnockoutStage> _withKnownWinners(List<KnockoutStage> baseStages, _EdgeInferenceResult edgeResult) {
+  final stages = <KnockoutStage>[];
+  for (var stageIndex = 0; stageIndex < baseStages.length; stageIndex++) {
+    final stage = baseStages[stageIndex];
+    final matches =
+        stage.matches.map((match) {
+          BracketParticipant? winner = match.winner;
+          final advanced = edgeResult.advancedBySourceMatch[match.key];
+          if (advanced != null && advanced.length == 1) {
+            winner = match.participantById(advanced.single);
+          }
+          if (winner == null && stage.isComplete && match.isComplete) {
+            winner = match.leader;
+          }
+          return winner == null ? match : match.copyWith(winner: winner);
+        }).toList();
+    stages.add(stage.copyWith(matches: matches));
+  }
+  return stages;
 }
 
 _StageSeedResult _multiTourStageSeeds(
