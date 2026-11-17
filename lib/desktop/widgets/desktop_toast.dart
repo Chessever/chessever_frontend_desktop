@@ -14,7 +14,7 @@ import 'desktop_dialog_button.dart';
 /// [actionLabel] + [onAction] attach one explicit action to the toast (for
 /// example `Refresh` after a local database failed to open). A toast with an
 /// action stays up long enough to be clicked and dismisses itself when the
-/// action runs.
+/// action runs. [icon] replaces the default success / error glyph.
 void showDesktopToast(
   BuildContext context,
   String message, {
@@ -22,6 +22,7 @@ void showDesktopToast(
   Duration? duration,
   String? actionLabel,
   VoidCallback? onAction,
+  Widget? icon,
 }) {
   if (!context.mounted) return;
 
@@ -34,11 +35,13 @@ void showDesktopToast(
       context: context,
       alignment: FToastAlignment.bottomRight,
       duration: duration ?? Duration(seconds: hasAction ? 8 : 2),
-      icon: Icon(
-        error ? Icons.error_outline_rounded : Icons.check_circle_outline,
-        color: error ? kRedColor : kPrimaryColor,
-        size: 18,
-      ),
+      icon:
+          icon ??
+          Icon(
+            error ? Icons.error_outline_rounded : Icons.check_circle_outline,
+            color: error ? kRedColor : kPrimaryColor,
+            size: 18,
+          ),
       title: Text(message),
       suffixBuilder:
           hasAction

@@ -158,7 +158,15 @@ class _DesktopToolbarPillButtonState extends State<DesktopToolbarPillButton>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              widget.leading ?? Icon(widget.icon, size: 16, color: fg),
+              // A custom leading mark (such as `LiveFirstMark`) reads the
+              // pill's colour and size from the icon theme, like an [Icon].
+              if (widget.leading case final leading?)
+                IconTheme.merge(
+                  data: IconThemeData(color: fg, size: 16),
+                  child: leading,
+                )
+              else
+                Icon(widget.icon, size: 16, color: fg),
               const SizedBox(width: 8),
               Text(
                 widget.label,

@@ -11,11 +11,16 @@ class DesktopSegmentedTab<T> {
     required this.value,
     required this.label,
     this.icon,
+    this.mark,
   });
 
   final T value;
   final String label;
   final IconData? icon;
+
+  /// A drawn glyph used instead of [icon], such as `LiveFirstMark`. It reads
+  /// the segment's colour and size from the ambient icon theme.
+  final Widget? mark;
 }
 
 /// forui-backed segmented control for desktop pane chrome.
@@ -100,7 +105,7 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
     bool compact = false,
   }) {
     final isSelected = tab.value == selected;
-    final icon = tab.icon;
+    final icon = tab.mark ?? (tab.icon == null ? null : Icon(tab.icon));
     if (compact && icon != null) {
       return DesktopTooltip(
         message: tab.label,
@@ -115,7 +120,7 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
             ),
             mainAxisSize: MainAxisSize.max,
             onPress: () => onChanged(tab.value),
-            child: Icon(icon),
+            child: icon,
           ),
         ),
       );
@@ -129,7 +134,7 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
       ),
       mainAxisSize: (expand && !wrap) ? MainAxisSize.max : MainAxisSize.min,
       onPress: () => onChanged(tab.value),
-      prefix: icon == null ? null : Icon(icon),
+      prefix: icon,
       child: Text(
         tab.label,
         maxLines: 1,

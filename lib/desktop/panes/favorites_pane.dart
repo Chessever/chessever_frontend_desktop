@@ -8,6 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:chessever/desktop/state/game_list_live_first.dart';
+import 'package:chessever/desktop/widgets/desktop_quick_list_toggles.dart';
+import 'package:chessever/widgets/game_filter/game_filter_model.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/state/active_player.dart';
@@ -71,20 +74,40 @@ class FavoritesPane extends HookConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          // The Games controls sit right after the title, so the list starts
+          // one row higher. A narrow pane wraps the tabs, then the controls,
+          // onto their own lines instead of overflowing.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 16,
+            runSpacing: 8,
             children: [
-              const Icon(Icons.favorite_rounded, size: 18, color: kRedColor),
-              const SizedBox(width: 10),
-              const Text(
-                'Favorites',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  height: 1,
-                ),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 20,
+                runSpacing: 8,
+                children: [
+                  const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.favorite_rounded, size: 18, color: kRedColor),
+                      SizedBox(width: 10),
+                      Text(
+                        'Favorites',
+                        style: TextStyle(
+                          color: kWhiteColor,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          height: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (selectedMode == FavoritesScreenMode.games)
+                    const _FavoritesGamesControls(),
+                ],
               ),
-              const Spacer(),
               DesktopSegmentedTabs<FavoritesScreenMode>(
                 selected: selectedMode,
                 onChanged: (mode) {
@@ -230,6 +253,71 @@ class _FavoritePlayersList extends StatelessWidget {
   }
 }
 
+/// Live first, Classical, Filters and the card layout for the Games tab,
+/// carried next to the pane title.
+class _FavoritesGamesControls extends ConsumerWidget {
+  const _FavoritesGamesControls();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(favoritesCombinedGamesProvider);
+    final liveFirst = ref.watch(
+      gameListLiveFirstProvider(GameListLiveFirstSurface.favorites),
+    );
+    final classicalOnly =
+        state.filter.timeControl == GameTimeControlFilter.classical;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DesktopLiveFirstButton(
+          key: const ValueKey<String>('favorites-live-first'),
+          pressed: liveFirst,
+          onPress:
+              () => pressGameListLiveFirst(
+                context: context,
+                ref: ref,
+                surface: GameListLiveFirstSurface.favorites,
+                games: state.filteredGames,
+              ),
+        ),
+        const SizedBox(width: 8),
+        DesktopClassicalOnlyButton(
+          key: const ValueKey<String>('favorites-classical-only'),
+          pressed: classicalOnly,
+          onPress:
+              () => ref
+                  .read(favoritesCombinedGamesProvider.notifier)
+                  .applyFilter(
+                    state.filter.copyWith(
+                      timeControl:
+                          classicalOnly
+                              ? GameTimeControlFilter.all
+                              : GameTimeControlFilter.classical,
+                    ),
+                  ),
+        ),
+        const SizedBox(width: 8),
+        DesktopGameFilterButton(
+          filter: state.filter,
+          onPress: () async {
+            final result = await showDesktopGameFilterDialog(
+              context: context,
+              currentFilter: state.filter,
+              showFormatFilter: false,
+            );
+            if (result == null || !context.mounted) return;
+            ref
+                .read(favoritesCombinedGamesProvider.notifier)
+                .applyFilter(result);
+          },
+        ),
+        const SizedBox(width: 12),
+        const GameViewModeToggle(),
+      ],
+    );
+  }
+}
+
 class _FavoritesGamesTab extends HookConsumerWidget {
   const _FavoritesGamesTab({super.key});
 
@@ -290,23 +378,6 @@ class _FavoritesGamesTab extends HookConsumerWidget {
                 },
               ),
             ),
-            const SizedBox(width: 12),
-            DesktopGameFilterButton(
-              filter: state.filter,
-              onPress: () async {
-                final result = await showDesktopGameFilterDialog(
-                  context: context,
-                  currentFilter: state.filter,
-                  showFormatFilter: false,
-                );
-                if (result == null || !context.mounted) return;
-                ref
-                    .read(favoritesCombinedGamesProvider.notifier)
-                    .applyFilter(result);
-              },
-            ),
-            const SizedBox(width: 12),
-            const GameViewModeToggle(),
           ],
         ),
         if (favoritePlayers.length > 1 && !state.isSearching) ...[
@@ -380,6 +451,11 @@ class _FavoritesGamesTab extends HookConsumerWidget {
                     : _FavoritesGamesList(
                       key: const ValueKey('list'),
                       games: games,
+                      liveFirst: ref.watch(
+                        gameListLiveFirstProvider(
+                          GameListLiveFirstSurface.favorites,
+                        ),
+                      ),
                       hasMore: state.hasMore,
                       isLoading: state.isLoading,
                       onLoadMore: () {
@@ -404,12 +480,16 @@ class _FavoritesGamesList extends ConsumerStatefulWidget {
   const _FavoritesGamesList({
     super.key,
     required this.games,
+    this.liveFirst = false,
     required this.hasMore,
     required this.isLoading,
     required this.onLoadMore,
   });
 
   final List<GamesTourModel> games;
+
+  /// Lifts the games in play to the top of their day.
+  final bool liveFirst;
   final bool hasMore;
   final bool isLoading;
   final VoidCallback onLoadMore;
@@ -493,7 +573,10 @@ class _FavoritesGamesListState extends ConsumerState<_FavoritesGamesList> {
   @override
   Widget build(BuildContext context) {
     final layout = ref.watch(gamesListViewModeProvider).desktopLayout;
-    final groups = buildDesktopGameDateGroups(widget.games);
+    final groups = buildDesktopGameDateGroups(
+      widget.games,
+      liveFirst: widget.liveFirst,
+    );
     final keyboardGroups = [
       for (final group in groups)
         DesktopGameKeyboardGroup(

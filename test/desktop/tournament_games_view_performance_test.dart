@@ -7,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/round_header_card.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
@@ -426,6 +427,107 @@ void main() {
       await tester.pump();
     },
   );
+  testWidgets('one click beside the search folds and opens every round', (
+    tester,
+  ) async {
+    GamesTourModel game(String id, String roundId) => GamesTourModel(
+      gameId: id,
+      whitePlayer: _player('White $id'),
+      blackPlayer: _player('Black $id'),
+      whiteTimeDisplay: '05:00',
+      blackTimeDisplay: '05:00',
+      whiteClockCentiseconds: 30000,
+      blackClockCentiseconds: 30000,
+      gameStatus: GameStatus.whiteWins,
+      roundId: roundId,
+      tourId: '',
+    );
+    final rounds = [
+      GamesAppBarModel(
+        id: 'round-2',
+        name: 'Round 2',
+        startsAt: DateTime.utc(2026, 7, 25, 12),
+        roundStatus: RoundStatus.completed,
+      ),
+      GamesAppBarModel(
+        id: 'round-1',
+        name: 'Round 1',
+        startsAt: DateTime.utc(2026, 7, 24, 12),
+        roundStatus: RoundStatus.completed,
+      ),
+    ];
+    final games = {
+      'round-2': [game('g2', 'round-2')],
+      'round-1': [game('g1', 'round-1')],
+    };
+    final grouped = GroupedGamesData(
+      filteredRounds: rounds,
+      gamesByRound: games,
+      isKnockoutTournament: false,
+      isMultiStageKnockout: false,
+      isLoading: false,
+      rounds: rounds,
+      allGames: [for (final list in games.values) ...list],
+      providerGameCount: 2,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        gamesTourGroupedProvider.overrideWith((ref) => grouped),
+        gamesTourScreenProvider.overrideWith(
+          (ref) => _SearchFocusGamesNotifier(ref),
+        ),
+        boardSettingsProviderNew.overrideWith(_EvaluationBarOffNotifier.new),
+        engineSettingsProviderNew.overrideWith(_EngineSettingsOffNotifier.new),
+        gameStreamRepositoryProvider.overrideWithValue(
+          _TrackingGameStreamRepository(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: TournamentGamesView(
+              tabId: 'collapse-all-tab',
+              tournamentId: 'collapse-all-tour',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    List<bool> expanded() => [
+      for (final header in tester.widgetList<RoundHeaderCard>(
+        find.byType(RoundHeaderCard),
+      ))
+        header.expanded,
+    ];
+    final toggle = find.byKey(
+      const ValueKey<String>('tournament-games-collapse-all'),
+    );
+
+    // Only the top round opens on first paint, so the control collapses.
+    expect(expanded(), [true, false]);
+    expect(find.byIcon(Icons.unfold_less_rounded), findsOneWidget);
+
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(expanded(), [false, false]);
+    expect(find.byIcon(Icons.unfold_more_rounded), findsOneWidget);
+
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(expanded(), [true, true]);
+    expect(find.byIcon(Icons.unfold_less_rounded), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    // Drain the tooltip's exit timer the taps started.
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
 
 class _SearchFocusGamesNotifier extends GamesTourScreenProvider {

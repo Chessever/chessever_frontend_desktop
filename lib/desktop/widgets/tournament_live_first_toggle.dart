@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/tournament_live_first.dart';
-import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
+import 'package:chessever/desktop/widgets/desktop_quick_list_toggles.dart';
 
 class TournamentLiveFirstToggle extends ConsumerWidget {
   const TournamentLiveFirstToggle({super.key});
@@ -13,20 +13,14 @@ class TournamentLiveFirstToggle extends ConsumerWidget {
     final readOnly = SignedOutEventsPresentationScope.maybeOf(context) != null;
     final enabled = !readOnly && ref.watch(tournamentLiveFirstProvider);
 
-    return DesktopToolbarPillButton(
-      key: const ValueKey<String>('tournament-live-first-chrome'),
-      label: 'Live first',
-      icon: Icons.bolt_rounded,
+    return DesktopLiveFirstButton(
+      pillKey: const ValueKey<String>('tournament-live-first-chrome'),
+      pressed: enabled,
+      subject: 'events',
       height: 38,
-      tone:
-          enabled
-              ? DesktopToolbarPillTone.primary
-              : DesktopToolbarPillTone.neutral,
-      tooltip:
-          enabled
-              ? 'Live events are shown first'
-              : 'Keep the current event order',
-      onPress: () { if (!readOnly) ref.read(tournamentLiveFirstProvider.notifier).toggle(); },
+      onPress: () {
+        if (!readOnly) ref.read(tournamentLiveFirstProvider.notifier).toggle();
+      },
     );
   }
 }

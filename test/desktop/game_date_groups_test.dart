@@ -23,11 +23,7 @@ void main() {
         excludeFuture: true,
       );
 
-      expect(groups.map((g) => g.label), [
-        'Today',
-        'Yesterday',
-        '12 Jun 2026',
-      ]);
+      expect(groups.map((g) => g.label), ['Today', 'Yesterday', '12 Jun 2026']);
       expect(groups.first.games, isEmpty);
       expect(groups[1].games.map((g) => g.gameId), ['yesterday']);
       expect(groups[2].games.map((g) => g.gameId), ['older-high', 'older-low']);
@@ -47,14 +43,73 @@ void main() {
       'high-second',
     ]);
   });
+
+  test('Live first lifts games in play to the top of today only', () {
+    final now = DateTime(2026, 6, 14, 15);
+    final today = DateTime(2026, 6, 14, 12);
+    final yesterday = DateTime(2026, 6, 13, 12);
+    final games = [
+      _game('today-finished-high', today, 2800, 2800, GameStatus.whiteWins),
+      _game(
+        'today-live-low',
+        today,
+        2400,
+        2400,
+        GameStatus.ongoing,
+        now.subtract(const Duration(minutes: 3)),
+      ),
+      _game(
+        'today-live-mid',
+        today,
+        2600,
+        2600,
+        GameStatus.ongoing,
+        now.subtract(const Duration(minutes: 1)),
+      ),
+      _game('today-finished-low', today, 2500, 2500, GameStatus.draw),
+      _game('yesterday-high', yesterday, 2750, 2750, GameStatus.blackWins),
+      _game('yesterday-low', yesterday, 2450, 2450, GameStatus.whiteWins),
+    ];
+
+    List<List<String>> order({required bool liveFirst}) => [
+      for (final group in buildDesktopGameDateGroups(
+        games,
+        now: now,
+        liveFirst: liveFirst,
+      ))
+        [for (final game in group.games) game.gameId],
+    ];
+
+    expect(order(liveFirst: false), [
+      [
+        'today-finished-high',
+        'today-live-mid',
+        'today-finished-low',
+        'today-live-low',
+      ],
+      ['yesterday-high', 'yesterday-low'],
+    ]);
+    // Live games lead, each side keeps the rating order, other days stay put.
+    expect(order(liveFirst: true), [
+      [
+        'today-live-mid',
+        'today-live-low',
+        'today-finished-high',
+        'today-finished-low',
+      ],
+      ['yesterday-high', 'yesterday-low'],
+    ]);
+  });
 }
 
 GamesTourModel _game(
   String id,
   DateTime day,
   int whiteRating,
-  int blackRating,
-) {
+  int blackRating, [
+  GameStatus status = GameStatus.unknown,
+  DateTime? lastMoveTime,
+]) {
   return GamesTourModel(
     gameId: id,
     whitePlayer: _player('White $id', whiteRating),
@@ -63,10 +118,11 @@ GamesTourModel _game(
     blackTimeDisplay: '--:--',
     whiteClockCentiseconds: 0,
     blackClockCentiseconds: 0,
-    gameStatus: GameStatus.unknown,
+    gameStatus: status,
     roundId: 'round-$id',
     tourId: 'tour-$id',
     gameDay: day,
+    lastMoveTime: lastMoveTime,
   );
 }
 
