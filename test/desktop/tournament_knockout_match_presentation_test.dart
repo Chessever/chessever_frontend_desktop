@@ -66,15 +66,60 @@ void main() {
           game.copyWith(
             roundId: 'round-${game.roundSlug}',
             // Caruana-Firouzja started and finished later, on board 2.
-            boardNr: game.whitePlayer.name.startsWith('Caruana') ||
-                    game.blackPlayer.name.startsWith('Caruana')
-                ? 2
-                : 1,
+            boardNr:
+                game.whitePlayer.name.startsWith('Caruana') ||
+                        game.blackPlayer.name.startsWith('Caruana')
+                    ? 2
+                    : 1,
           ),
       ];
       expect(
         [
           for (final section in desktopKnockoutMatchSections(withBoards))
+            section.header.player1,
+        ],
+        ['Giri, Anish', 'Caruana, Fabiano'],
+      );
+    });
+
+    test('side by side, board order holds while another match plays', () {
+      // Giri-MVL (board 1) finished Game 5 first; Caruana-Firouzja (board 2)
+      // is still playing a game.
+      final sideBySide = [
+        for (final game in games)
+          if (!(game.roundSlug == 'game-5' &&
+              game.whitePlayer.name.startsWith('Caruana') ||
+                  game.blackPlayer.name.startsWith('Caruana')))
+            game.copyWith(
+              roundId: 'round-${game.roundSlug}',
+              boardNr:
+                  game.whitePlayer.name.startsWith('Giri') ||
+                          game.blackPlayer.name.startsWith('Giri')
+                      ? 1
+                      : 2,
+              gameStatus:
+                  game.roundSlug == 'game-5'
+                      ? GameStatus.draw
+                      : game.gameStatus,
+            ),
+        _game(
+          'caruana-live',
+          'Caruana, Fabiano',
+          'Firouzja, Alireza',
+          roundSlug: 'game-5',
+          boardNr: 2,
+          gameStatus: GameStatus.ongoing,
+        ).copyWith(
+          roundId: 'round-game-5',
+          lastMove: 'e2e4',
+          lastMoveTime: DateTime.utc(2026, 11, 17, 15, 40),
+          whiteClockSeconds: 300,
+          blackClockSeconds: 300,
+        ),
+      ];
+      expect(
+        [
+          for (final section in desktopKnockoutMatchSections(sideBySide))
             section.header.player1,
         ],
         ['Giri, Anish', 'Caruana, Fabiano'],
@@ -90,16 +135,19 @@ void main() {
       final giri = desktopKnockoutMatchSections(
         games,
       ).firstWhere((section) => section.header.player1 == 'Giri, Anish');
-      expect([for (final game in giri.header.games) game.roundSlug], [
-        'game-5',
-        'game-4',
-        'game-3',
-        'game-2',
-        'game-1',
-        'game-6',
-        'game-7',
-        'game-8',
-      ]);
+      expect(
+        [for (final game in giri.header.games) game.roundSlug],
+        [
+          'game-5',
+          'game-4',
+          'game-3',
+          'game-2',
+          'game-1',
+          'game-6',
+          'game-7',
+          'game-8',
+        ],
+      );
     });
   });
 

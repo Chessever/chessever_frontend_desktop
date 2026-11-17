@@ -209,8 +209,15 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
       }
     }
 
+    // Side by side, the event's board order is the order in every state: a
+    // match whose game ended first must not drop below the ones still
+    // playing (Giri-MVL, board 1).
+    if (playedSideBySide) {
+      final byBoard = left.firstBoard.compareTo(right.firstBoard);
+      return byBoard != 0 ? byBoard : left.index.compareTo(right.index);
+    }
     if (left.isLive != right.isLive) return left.isLive ? -1 : 1;
-    if (left.isLive || playedSideBySide) {
+    if (left.isLive) {
       final byBoard = left.firstBoard.compareTo(right.firstBoard);
       return byBoard != 0 ? byBoard : left.index.compareTo(right.index);
     }
