@@ -145,6 +145,7 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
       int? stageOrder,
       DateTime? startsAt,
       bool isLive,
+      int firstBoard,
     })
   >[
     for (var index = 0; index < entries.length; index += 1)
@@ -158,8 +159,38 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
               entries[index].value,
             ).startsAt,
         isLive: entries[index].value.any(isKnockoutGameLive),
+        firstBoard: entries[index].value.fold<int>(
+          1 << 30,
+          (lowest, game) =>
+              game.boardNr != null && game.boardNr! < lowest
+                  ? game.boardNr!
+                  : lowest,
+        ),
       ),
   ];
+  // Matches played side by side share source rounds (Total Chess: every
+  // "Game N" round holds one board of each match). They keep board order in
+  // every state; their per-board PGN start times are not an order.
+  final matchKeysByRound = <String, Set<String>>{};
+  for (final entry in entries) {
+    for (final game in entry.value) {
+      matchKeysByRound.putIfAbsent(game.roundId, () => <String>{}).add(
+        entry.key,
+      );
+    }
+  }
+  final roundCountByMatch = <String, int>{};
+  for (final keys in matchKeysByRound.values) {
+    for (final key in keys) {
+      roundCountByMatch[key] = (roundCountByMatch[key] ?? 0) + 1;
+    }
+  }
+  // One board per match in each of several shared rounds. Matches that share
+  // a single round file but play at different times (Esports World Cup) keep
+  // their recency order.
+  final playedSideBySide =
+      matchKeysByRound.values.any((keys) => keys.length > 1) &&
+      roundCountByMatch.values.every((count) => count > 1);
   final resolvedStageOrders =
       ranked.map((item) => item.stageOrder).whereType<int>().toSet();
   final shouldOrderByStage = resolvedStageOrders.length > 1;
@@ -179,7 +210,10 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
     }
 
     if (left.isLive != right.isLive) return left.isLive ? -1 : 1;
-    if (left.isLive) return left.index.compareTo(right.index);
+    if (left.isLive || playedSideBySide) {
+      final byBoard = left.firstBoard.compareTo(right.firstBoard);
+      return byBoard != 0 ? byBoard : left.index.compareTo(right.index);
+    }
 
     final leftStart = left.startsAt;
     final rightStart = right.startsAt;
