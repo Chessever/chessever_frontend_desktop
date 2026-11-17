@@ -56,6 +56,31 @@ void main() {
         ),
     ];
 
+    test('between games, matches keep board order', () {
+      final finishedOnly = [
+        for (final game in games)
+          if (game.roundSlug != 'game-5') game,
+      ];
+      final withBoards = [
+        for (final game in finishedOnly)
+          game.copyWith(
+            roundId: 'round-${game.roundSlug}',
+            // Caruana-Firouzja started and finished later, on board 2.
+            boardNr: game.whitePlayer.name.startsWith('Caruana') ||
+                    game.blackPlayer.name.startsWith('Caruana')
+                ? 2
+                : 1,
+          ),
+      ];
+      expect(
+        [
+          for (final section in desktopKnockoutMatchSections(withBoards))
+            section.header.player1,
+        ],
+        ['Giri, Anish', 'Caruana, Fabiano'],
+      );
+    });
+
     test('a match with a game in play comes first', () {
       final sections = desktopKnockoutMatchSections(games);
       expect(sections.first.header.player1, 'Giri, Anish');
