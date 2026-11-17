@@ -10977,6 +10977,7 @@ class DesktopBoardPlayerHeader extends HookConsumerWidget {
             photoUrl: photoUrl,
           ),
           games: hoverGames,
+          eventTourIds: historyKey?.tourIds ?? const <String>[],
           rounds: hoverRounds,
           isLoading: hoverIsLoading,
           openAbove: openAbove,

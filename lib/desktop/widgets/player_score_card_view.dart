@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'package:chessever/desktop/services/player_score_card_results.dart';
+import 'package:chessever/desktop/widgets/official_player_result_row.dart';
+import 'package:chessever/services/official_round_results.dart';
+import 'package:chessever/screens/tour_detail/official_round_results_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 import 'dart:math' as math;
@@ -918,6 +922,39 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
       player: player,
       hasEventContext: hasEventContext,
     );
+    final officialTourIds = <String>{
+      if (hasEventContext && (selectedBroadcast?.id ?? '').isNotEmpty)
+        selectedBroadcast!.id,
+      if (hasEventContext)
+        ...games.games.map((game) => game.tourId).where((id) => id.isNotEmpty),
+    };
+    final official = <OfficialRoundResults>[
+      for (final id in officialTourIds)
+        ...ref.watch(officialRoundResultsProvider(id)).valueOrNull ??
+            const <OfficialRoundResults>[],
+    ];
+    final results = buildPlayerScoreCardResults(
+      playerName: player.name,
+      playerFideId: player.fideId,
+      games: filtered,
+      officialResults: official,
+      sortByRound: hasEventContext,
+    );
+    final timeControl = filtered.firstOrNull?.timeControl ?? 'standard';
+    final kFactor =
+        ratingsAsync.valueOrNull?.getK(timeControl)?.toDouble() ??
+        (timeControl == 'rapid' || timeControl == 'blitz'
+            ? 20.0
+            : player.score >= 2400 ||
+                player.title == 'GM' ||
+                player.title == 'IM'
+            ? 10.0
+            : 20.0);
+    final metrics = calculateScorecardMetrics(
+      playerRating: player.score.toDouble(),
+      kFactor: kFactor,
+      games: results.map((entry) => entry.metricGame),
+    );
     List<GamesTourModel> boardRailGamesFor(GamesTourModel selectedGame) {
       return selectPlayerScoreCardBoardRailGames<GamesTourModel>(
         displayedGames: filtered,
@@ -950,6 +987,8 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
                   ratingsAsync: ratingsAsync,
                   hasEventContext: hasEventContext,
                   games: filtered,
+                  results: results,
+                  metrics: metrics,
                   ratings: ratingsAsync.valueOrNull,
                   onOpenProfile: () => _openProfile(player),
                   ratingForSide: _ratingForSide,
@@ -964,6 +1003,8 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
                   child: _GamesPanel(
                     player: player,
                     games: filtered,
+                    results: results,
+                    metrics: metrics,
                     isLoading: games.isLoading,
                     hasEventContext: hasEventContext,
                     listController: _listController,
@@ -997,6 +1038,17 @@ class _PlayerScoreCardViewState extends ConsumerState<PlayerScoreCardView>
                           eventGames: boardRailGamesFor(g),
                         ),
                     onOpenOpponent: _openOpponentScoreCard,
+                    onOpenOfficialOpponent:
+                        (result) => openPlayerScoreCard(
+                          ref,
+                          synthesizePlayerStandingModel(
+                            name: result.opponentName,
+                            title: result.opponentTitle ?? '',
+                            countryCode: result.opponentFed ?? '',
+                            rating: result.opponentRating?.toInt() ?? 0,
+                            fideId: int.tryParse(result.opponentFideId ?? ''),
+                          ),
+                        ),
                   ),
                 ),
               ],
@@ -1549,6 +1601,8 @@ class _PopoverShell extends StatelessWidget {
 
 class _LeftIdentityColumn extends StatelessWidget {
   const _LeftIdentityColumn({
+    required this.results,
+    required this.metrics,
     required this.player,
     required this.ratingsAsync,
     required this.hasEventContext,
@@ -1561,6 +1615,8 @@ class _LeftIdentityColumn extends StatelessWidget {
 
   final PlayerStandingModel player;
   final AsyncValue<AllRatingsResult> ratingsAsync;
+  final List<PlayerScoreCardResult> results;
+  final ScorecardMetricResult metrics;
   final bool hasEventContext;
   final List<GamesTourModel> games;
   final AllRatingsResult? ratings;
@@ -1670,83 +1726,36 @@ class _LeftIdentityColumn extends StatelessWidget {
     );
   }
 
-  // Performance / Score / Δ rating computation, mirrors mobile screen.
   _PerformanceData? _computePerformance({
     required List<GamesTourModel> games,
     required PlayerStandingModel player,
     required AllRatingsResult? ratings,
   }) {
-    double totalOpp = 0.0;
-    double playerScore = 0.0;
-    int valid = 0;
-    double totalDiff = 0.0;
-    for (final g in games) {
-      if (g.gameStatus == GameStatus.ongoing ||
-          g.gameStatus == GameStatus.unknown) {
-        continue;
-      }
-      // We compare on names — fideId-aware matching already happened upstream
-      // when filtering this player's rows.
-      final isWhite =
-          g.whitePlayer.name == player.name ||
-          g.whitePlayer.fideId == player.fideId;
-      final oppRating = ratingForSide(g, !isWhite);
-      if (oppRating <= 0) continue;
-      totalOpp += oppRating;
-      valid += 1;
-      switch (g.gameStatus) {
-        case GameStatus.whiteWins:
-          playerScore += isWhite ? 1.0 : 0.0;
-        case GameStatus.blackWins:
-          playerScore += isWhite ? 0.0 : 1.0;
-        case GameStatus.draw:
-          playerScore += 0.5;
-        default:
-          break;
-      }
-      final pRating = ratingForSide(g, isWhite);
-      if (pRating > 0) {
-        final tc = g.timeControl;
-        final fideK = tc != null ? ratings?.getK(tc) : null;
-        final pOverride =
-            tc != null ? ratings?.getRating(tc)?.toDouble() : null;
-        totalDiff += eloChange(
-          pRating,
-          oppRating,
-          g.gameStatus,
-          isWhite,
-          g,
-          fideK: fideK,
-          playerRatingOverride: pOverride,
-        );
-      }
-    }
-    if (valid == 0) return null;
-    final avg = totalOpp / valid;
-    final pct = playerScore / valid;
-    final double dp =
-        pct >= 1.0 ? 800.0 : (pct <= 0.0 ? -800.0 : 400.0 * (2 * pct - 1));
+    final completed = results.where((row) => row.points != null).toList();
+    if (completed.isEmpty) return null;
     return _PerformanceData(
-      performance: (avg + dp).round(),
-      score: playerScore,
-      games: valid,
-      ratingDiff:
-          player.scoreChange != 0 ? player.scoreChange : totalDiff.round(),
+      performance: metrics.performanceRating,
+      score: completed.fold(0.0, (sum, row) => sum + row.points!),
+      games: completed.length,
+      scoreText: player.matchScore,
+      ratingDiff: metrics.ratingChange,
     );
   }
 }
 
 class _PerformanceData {
   const _PerformanceData({
+    this.scoreText,
     required this.performance,
     required this.score,
     required this.games,
     required this.ratingDiff,
   });
-  final int performance;
+  final int? performance;
   final double score;
   final int games;
-  final int ratingDiff;
+  final int? ratingDiff;
+  final String? scoreText;
 }
 
 String _initialsFor(String name) {
@@ -1936,8 +1945,8 @@ class _PerformanceCard extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           _PerfStat(
-            label: 'Performance',
-            value: perf?.performance.toString() ?? '–',
+            label: 'Est. perf.',
+            value: perf?.performance?.toString() ?? '–',
             color: kWhiteColor,
           ),
           _PerfStat(
@@ -1945,21 +1954,22 @@ class _PerformanceCard extends StatelessWidget {
             value:
                 perf == null
                     ? '–'
-                    : '${_fmtScore(perf!.score)} / ${perf!.games}',
+                    : perf!.scoreText ??
+                        '${_fmtScore(perf!.score)} / ${perf!.games}',
             color: kWhiteColor,
           ),
           _PerfStat(
-            label: 'Δ Rating',
+            label: 'Est. Elo Δ',
             value:
-                perf == null
+                perf?.ratingDiff == null
                     ? '–'
-                    : (perf!.ratingDiff >= 0
+                    : (perf!.ratingDiff! >= 0
                         ? '+${perf!.ratingDiff}'
                         : '${perf!.ratingDiff}'),
             color:
-                perf == null
+                perf?.ratingDiff == null
                     ? kWhiteColor
-                    : (perf!.ratingDiff >= 0 ? kGreenColor : kRedColor),
+                    : (perf!.ratingDiff! >= 0 ? kGreenColor : kRedColor),
           ),
         ],
       ),
@@ -2018,6 +2028,9 @@ class _PerfStat extends StatelessWidget {
 
 class _GamesPanel extends ConsumerWidget {
   const _GamesPanel({
+    required this.results,
+    required this.metrics,
+    required this.onOpenOfficialOpponent,
     required this.player,
     required this.games,
     required this.isLoading,
@@ -2063,13 +2076,16 @@ class _GamesPanel extends ConsumerWidget {
   final void Function(GamesTourModel game, bool isWhite) onOpenBackground;
   final void Function(Offset pos, GamesTourModel game, bool isWhite) onContext;
   final void Function(GamesTourModel game, bool playerIsWhite) onOpenOpponent;
+  final List<PlayerScoreCardResult> results;
+  final ScorecardMetricResult metrics;
+  final ValueChanged<OfficialRoundResult> onOpenOfficialOpponent;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _GamesHeader(gameCount: games.length, isLoading: isLoading),
+        _GamesHeader(gameCount: results.length, isLoading: isLoading),
         const Divider(height: 1, thickness: 1, color: kDividerColor),
         Expanded(child: _buildBody(context, ref)),
       ],
@@ -2077,8 +2093,7 @@ class _GamesPanel extends ConsumerWidget {
   }
 
   Widget _buildBody(BuildContext context, WidgetRef ref) {
-    final utils = ref.read(playerUtilsProvider);
-    if (isLoading && games.isEmpty) {
+    if (isLoading && results.isEmpty) {
       return const Center(
         child: SizedBox(
           width: 18,
@@ -2090,7 +2105,7 @@ class _GamesPanel extends ConsumerWidget {
         ),
       );
     }
-    if (games.isEmpty) {
+    if (results.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -2126,19 +2141,19 @@ class _GamesPanel extends ConsumerWidget {
         }
         final key = event.logicalKey;
         if (key == LogicalKeyboardKey.arrowDown) {
-          final next = (selectedIndex + 1).clamp(0, games.length - 1);
+          final next = (selectedIndex + 1).clamp(0, results.length - 1);
           onSelect(next);
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.arrowUp) {
-          final next = (selectedIndex - 1).clamp(0, games.length - 1);
+          final next = (selectedIndex - 1).clamp(0, results.length - 1);
           onSelect(next);
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.pageDown) {
           final next = (selectedIndex + kDesktopListPageStep).clamp(
             0,
-            games.length - 1,
+            results.length - 1,
           );
           onSelect(next);
           return KeyEventResult.handled;
@@ -2146,7 +2161,7 @@ class _GamesPanel extends ConsumerWidget {
         if (key == LogicalKeyboardKey.pageUp) {
           final next = (selectedIndex - kDesktopListPageStep).clamp(
             0,
-            games.length - 1,
+            results.length - 1,
           );
           onSelect(next);
           return KeyEventResult.handled;
@@ -2156,20 +2171,15 @@ class _GamesPanel extends ConsumerWidget {
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.end) {
-          onSelect(games.length - 1);
+          onSelect(results.length - 1);
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.enter ||
             key == LogicalKeyboardKey.space) {
-          if (selectedIndex >= 0 && selectedIndex < games.length) {
-            final g = games[selectedIndex];
-            final isWhite = utils.isSamePlayerWithFideId(
-              g.whitePlayer.name,
-              player.name,
-              fideId1: g.whitePlayer.fideId,
-              fideId2: player.fideId,
-            );
-            onOpen(g, isWhite);
+          if (selectedIndex >= 0 && selectedIndex < results.length) {
+            final entry = results[selectedIndex];
+            final game = entry.game;
+            if (game != null) onOpen(game, entry.playerIsWhite);
           }
           return KeyEventResult.handled;
         }
@@ -2179,41 +2189,34 @@ class _GamesPanel extends ConsumerWidget {
         controller: listController,
         physics: const DesktopScrollPhysics(),
         padding: const EdgeInsets.symmetric(vertical: 4),
-        itemCount: games.length,
+        itemCount: results.length,
         itemBuilder: (context, index) {
-          final g = games[index];
-          final isWhite = utils.isSamePlayerWithFideId(
-            g.whitePlayer.name,
-            player.name,
-            fideId1: g.whitePlayer.fideId,
-            fideId2: player.fideId,
-          );
-          final pRating = ratingForSide(g, isWhite);
-          final oRating = ratingForSide(g, !isWhite);
-          double change = 0.0;
-          if (pRating > 0 && oRating > 0) {
-            final tc = g.timeControl;
-            final fideK = tc != null ? ratings?.getK(tc) : null;
-            final pOverride =
-                tc != null ? ratings?.getRating(tc)?.toDouble() : null;
-            change = eloChange(
-              pRating,
-              oRating,
-              g.gameStatus,
-              isWhite,
-              g,
-              fideK: fideK,
-              playerRatingOverride: pOverride,
+          final entry = results[index];
+          final g = entry.game;
+          if (g == null) {
+            final official = entry.official!;
+            return OfficialPlayerResultRow(
+              key: ValueKey('official:${official.tourId}:${official.roundId}'),
+              result: official,
+              roundLabel: entry.roundLabel,
+              ratingChange: metrics.gameRatingChanges[index],
+              onOpenOpponent:
+                  official.color == null
+                      ? null
+                      : () => onOpenOfficialOpponent(official),
             );
           }
+          final isWhite = entry.playerIsWhite;
+          final change = metrics.gameRatingChanges[index];
           return _GameRow(
             index: index,
             game: g,
             playerIsWhite: isWhite,
             playerName: player.name,
             roundLabel: hasEventContext ? roundLabel(g) : null,
-            opponentRatingChange: change != 0.0 ? change : null,
-            result: resultGlyph(g, isWhite),
+            opponentRatingChange: change?.toDouble(),
+            opponentOverride: entry.opponent,
+            result: '${resultGlyph(g, isWhite)}${entry.nonPlayed ? ' NP' : ''}',
             selected: index == selectedIndex,
             onTap: () {
               onSelect(index);
@@ -2250,24 +2253,6 @@ class _GamesHeader extends StatelessWidget {
               letterSpacing: -0.1,
             ),
           ),
-          const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: kBlack2Color,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: kDividerColor),
-            ),
-            child: Text(
-              '$gameCount',
-              style: const TextStyle(
-                color: kLightGreyColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
           const Spacer(),
           if (isLoading)
             const SizedBox(
@@ -2298,6 +2283,7 @@ const String hasEventContextHint =
 
 class _GameRow extends StatefulWidget {
   const _GameRow({
+    this.opponentOverride,
     required this.index,
     required this.game,
     required this.playerIsWhite,
@@ -2313,6 +2299,7 @@ class _GameRow extends StatefulWidget {
   });
 
   final int index;
+  final PlayerCard? opponentOverride;
   final GamesTourModel game;
   final bool playerIsWhite;
   final String playerName;
@@ -2335,7 +2322,9 @@ class _GameRowState extends State<_GameRow> {
   @override
   Widget build(BuildContext context) {
     final game = widget.game;
-    final opponent = widget.playerIsWhite ? game.blackPlayer : game.whitePlayer;
+    final opponent =
+        widget.opponentOverride ??
+        (widget.playerIsWhite ? game.blackPlayer : game.whitePlayer);
     final bg =
         widget.selected
             ? kPrimaryColor.withValues(alpha: 0.10)

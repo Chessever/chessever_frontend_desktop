@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/player_score_card_view.dart';
+import 'package:chessever/services/official_round_results.dart';
+import 'package:chessever/screens/tour_detail/official_round_results_provider.dart';
 import 'package:chessever/providers/player_backfill_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/repository/favorites/models/favorite_player.dart';
@@ -59,6 +61,15 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            officialRoundResultsProvider.overrideWith((ref, tourId) async => [
+              OfficialRoundResults(roundId: 'round-2', roundName: 'Round 2',
+                roundNumber: 2, tourId: 'event-1', results: [
+                  const OfficialRoundResult(playerName: 'Guttkin, Ilya',
+                    roundId: 'round-2', roundName: 'Round 2', roundNumber: 2,
+                    tourId: 'event-1', points: 0, color: 'black',
+                    opponentName: 'Official Opponent', opponentRating: 2100),
+                ]),
+            ]),
             backfilledStandingPlayerProvider.overrideWith(
               (ref, player) async => player,
             ),
@@ -103,6 +114,8 @@ void main() {
       final resultFinder = find.text('1').last;
 
       expect(nameFinder, findsOneWidget);
+      expect(find.text('Official Opponent'), findsOneWidget);
+      expect(find.text('Only the result is available.'), findsNothing);
       expect(ratingFinder, findsOneWidget);
       expect(changeFinder, findsOneWidget);
 

@@ -212,12 +212,15 @@ class LibraryPane extends HookConsumerWidget {
     final localState = ref.watch(localChessLibraryProvider);
     final mainSplitController = useMemoized(ResizableSplitViewController.new);
     final currentLibraryFolderId = useState<String?>(null);
+    final libraryHomeSelected = useState(true);
+    final libraryHomeRevision = useState(0);
     final selectedFolderId = useState<String?>(null);
     final selectedLocalPath = useState<String?>(null);
     final localFullViewPath = useState<String?>(null);
     final requestedDestination = ref.watch(libraryDestinationRequestProvider);
     useEffect(() {
       if (requestedDestination != null) {
+        libraryHomeSelected.value = false;
         selectedFolderId.value = requestedDestination.$2;
         currentLibraryFolderId.value = null;
         selectedLocalPath.value = null;
@@ -393,11 +396,13 @@ class LibraryPane extends HookConsumerWidget {
         openCloudDatabase(folder);
         return;
       }
+      libraryHomeSelected.value = false;
       currentLibraryFolderId.value = folder.id;
       selectCloudFolder(folder);
     }
 
     void navigateToLibraryFolder(String? folderId) {
+      libraryHomeSelected.value = folderId == null;
       currentLibraryFolderId.value = folderId;
       selectedFolderId.value = folderId ?? kTwicBookId;
       selectedLocalPath.value = null;
@@ -524,7 +529,15 @@ class LibraryPane extends HookConsumerWidget {
                     error: foldersAsync.asError?.error,
                     selectedId: selectedFolderId.value,
                     selectedLocalPath: selectedLocalPath.value,
+                    homeSelected: libraryHomeSelected.value,
+                    onHome: () {
+                      navigateToLibraryFolder(null);
+                      // Reset local folder/search/source scope as well as the
+                      // parent cloud destination. Keep saved split sizes.
+                      libraryHomeRevision.value++;
+                    },
                     onSelect: (id) {
+                      libraryHomeSelected.value = false;
                       selectedFolderId.value = id;
                       selectedLocalPath.value = null;
                       localFullViewPath.value = null;
@@ -574,6 +587,7 @@ class LibraryPane extends HookConsumerWidget {
                                     ),
                           )
                           : _MyDatabasesHomeView(
+                            key: ValueKey(libraryHomeRevision.value),
                             folders: allFolders,
                             onPastePgn: () {
                               unawaited(openClipboardPgnDatabase());
@@ -703,8 +717,12 @@ class _FolderRail extends StatelessWidget {
     required this.onOpen,
     required this.onAction,
     required this.onCollapse,
+    required this.onHome,
+    required this.homeSelected,
   });
 
+  final VoidCallback onHome;
+  final bool homeSelected;
   final List<LibraryFolder> ownedFolders;
   final List<LibraryFolder> subscribedFolders;
   final bool isLoading;
@@ -724,6 +742,37 @@ class _FolderRail extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: kDividerColor)),
+            ),
+            child: FocusableActionDetector(
+              shortcuts: const {
+                SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+                SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+              },
+              actions: {
+                ActivateIntent: CallbackAction<ActivateIntent>(
+                  onInvoke: (_) {
+                    onHome();
+                    return null;
+                  },
+                ),
+              },
+              child: Semantics(
+                button: true,
+                selected: homeSelected,
+                child: _PinnedSystemFolderRow(
+                  label: 'Library Home',
+                  icon: Icons.home_outlined,
+                  selected: homeSelected,
+                  onTap: onHome,
+                  onOpen: onHome,
+                ),
+              ),
+            ),
+          ),
           _RailHeader(onCollapse: onCollapse),
           Expanded(child: _body()),
         ],
@@ -746,7 +795,7 @@ class _FolderRail extends StatelessWidget {
             icon: Icons.public_rounded,
             trailingIcon: Icons.lock_outline_rounded,
             trailingTooltip: 'System database (read-only)',
-            selected: kTwicBookId == selectedId,
+            selected: !homeSelected && kTwicBookId == selectedId,
             onTap: () => onSelect(kTwicBookId),
             onOpen: () => onOpen(kTwicFolder),
           ),
@@ -894,6 +943,8 @@ Widget buildLibraryFolderRailForTest({
   Object? error,
   String? selectedId,
   String? selectedLocalPath,
+  bool homeSelected = true,
+  VoidCallback? onHome,
 }) {
   return SizedBox(
     width: 260,
@@ -905,6 +956,8 @@ Widget buildLibraryFolderRailForTest({
       error: error,
       selectedId: selectedId,
       selectedLocalPath: selectedLocalPath,
+      homeSelected: homeSelected,
+      onHome: onHome ?? () {},
       onSelect: (_) {},
       onOpen: (_) {},
       onAction: (_, _) {},
@@ -1864,6 +1917,7 @@ enum _LocalDatabaseBoardAction {
 
 class _MyDatabasesHomeView extends HookConsumerWidget {
   const _MyDatabasesHomeView({
+    super.key,
     required this.folders,
     required this.onPastePgn,
     required this.currentFolderId,

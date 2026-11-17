@@ -10,6 +10,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:forui/forui.dart';
+import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
+import 'package:chessever/services/official_round_results.dart';
+import 'package:chessever/screens/tour_detail/official_round_results_provider.dart';
 
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart'
     show tournamentDetailStandingsSearchByTabIdProvider;
@@ -30,6 +34,7 @@ import 'package:chessever/screens/standings/score_card_screen.dart'
         scoreCardGamesContextProvider,
         scoreCardPlayerProfileDataSourceProvider;
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/screens/tour_detail/games_tour/providers/knockout_tournament_state_provider.dart';
 import 'package:chessever/screens/tour_detail/player_tour/player_tour_screen_provider.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/location_service_provider.dart';
@@ -60,6 +65,8 @@ List<GamesTourModel> scopeTournamentStandingsGames(
 TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
   required List<PlayerStandingModel> standings,
   required List<GamesTourModel> games,
+  List<OfficialRoundResults> officialResults = const [],
+  bool allowMultipleGamesPerStage = false,
 }) {
   final standingIndex = _TournamentStandingIdentityIndex(standings);
 
@@ -110,6 +117,9 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
         opponentName: opponentStanding?.name ?? opponentCard.name,
         opponentRank: opponentRank,
         opponentRating: opponentRating,
+        opponentTitle: opponentStanding?.title ?? opponentCard.title,
+        opponentFed: opponentStanding?.countryCode ?? opponentCard.federation,
+        nonPlayed: game.isDoubleForfeit,
         isOngoing:
             !game.isDoubleForfeit &&
             (game.gameStatus == GameStatus.ongoing ||
@@ -122,16 +132,78 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
     addForSide(playedWhite: false);
   }
 
+  // Provenance validation happens once per section in the shared provider.
+  // A real or ambiguous recorded round is never replaced by a result-only row.
+  for (final round in officialResults) {
+    for (final result in round.results) {
+      final matches =
+          standings
+              .where(
+                (player) => officialResultMatchesPlayer(
+                  result,
+                  playerName: player.name,
+                  playerFideId: player.fideId,
+                ),
+              )
+              .toList();
+      if (matches.length != 1) continue;
+      final player = matches.single;
+      final playerKey = _primaryStandingKey(player.fideId, player.name);
+      final stage = _TournamentStandingsStage(
+        key: 'round:${round.roundNumber}',
+        id: '${round.roundNumber}',
+        label: '${round.roundNumber}',
+        round: round.roundNumber,
+      );
+      final playerStages = cellsByPlayerAndStage.putIfAbsent(
+        playerKey,
+        () => {},
+      );
+      if (playerStages.containsKey(stage.key)) continue;
+      final opponents =
+          standings.where((p) {
+            final fideId = int.tryParse(result.opponentFideId ?? '');
+            if (fideId != null && fideId > 0 && (p.fideId ?? 0) > 0) {
+              return p.fideId == fideId;
+            }
+            return p.name.trim().toLowerCase() ==
+                result.opponentName.trim().toLowerCase();
+          }).toList();
+      final opponent = opponents.length == 1 ? opponents.single : null;
+      stages.putIfAbsent(stage.key, () => stage);
+      playerStages[stage.key] = [
+        TournamentStandingsRoundCell(
+          game: null,
+          round: round.roundNumber,
+          resultText:
+              result.points == .5 ? '½' : result.points.toInt().toString(),
+          playedWhite: result.color == 'white',
+          opponentName: opponent?.name ?? result.opponentName,
+          opponentRank: opponent?.overallRank ?? result.opponentRank,
+          opponentRating:
+              (opponent?.score ?? 0) > 0
+                  ? opponent!.score
+                  : result.opponentRating?.toInt(),
+          opponentTitle: opponent?.title ?? result.opponentTitle,
+          opponentFed: opponent?.countryCode ?? result.opponentFed,
+          nonPlayed: result.nonPlayed,
+          isOngoing: false,
+        ),
+      ];
+    }
+  }
+
   final sortedStages = stages.values.toList()..sort();
   final columns = <TournamentStandingsColumn>[];
   final cells = <String, Map<String, TournamentStandingsRoundCell>>{};
+  // Ordinary rounds stay single-column and conflict-safe. Only a confirmed
+  // knockout caller opts into the existing per-game stage columns.
   for (final stage in sortedStages) {
-    var slotCount = 0;
-    for (final playerStages in cellsByPlayerAndStage.values) {
-      final stageCells = playerStages[stage.key];
-      if (stageCells == null) continue;
-      stageCells.sort((a, b) => a.game.gameId.compareTo(b.game.gameId));
-      slotCount = math.max(slotCount, stageCells.length);
+    var slotCount = 1;
+    if (allowMultipleGamesPerStage) {
+      for (final playerStages in cellsByPlayerAndStage.values) {
+        slotCount = math.max(slotCount, playerStages[stage.key]?.length ?? 0);
+      }
     }
     for (var slot = 0; slot < slotCount; slot += 1) {
       columns.add(
@@ -150,9 +222,17 @@ TournamentStandingsRoundTable buildTournamentStandingsRoundTable({
     final playerCells = <String, TournamentStandingsRoundCell>{};
     for (final column in columns) {
       final stageCells = playerEntry.value[column.stageKey];
-      if (stageCells != null && column.slot < stageCells.length) {
-        playerCells[column.id] = stageCells[column.slot];
+      if (stageCells == null || stageCells.isEmpty) continue;
+      if (allowMultipleGamesPerStage) {
+        if (column.slot < stageCells.length) {
+          playerCells[column.id] = stageCells[column.slot];
+        }
+        continue;
       }
+      playerCells[column.id] =
+          stageCells.length == 1
+              ? stageCells.single
+              : TournamentStandingsRoundCell.conflicted(round: column.round);
     }
     cells[playerEntry.key] = playerCells;
   }
@@ -223,7 +303,7 @@ class TournamentStandingsColumn {
 
 class TournamentStandingsRoundCell {
   const TournamentStandingsRoundCell({
-    required this.game,
+    required GamesTourModel? game,
     required this.round,
     required this.resultText,
     required this.playedWhite,
@@ -231,9 +311,39 @@ class TournamentStandingsRoundCell {
     required this.opponentRank,
     required this.opponentRating,
     required this.isOngoing,
-  });
+    this.opponentTitle,
+    this.opponentFed,
+    this.nonPlayed = false,
+  }) : recordedGame = game,
+       isConflicted = false;
 
-  final GamesTourModel game;
+  const TournamentStandingsRoundCell.conflicted({required this.round})
+    : recordedGame = null,
+      isConflicted = true,
+      resultText = '?',
+      playedWhite = false,
+      opponentName = '',
+      opponentRank = null,
+      opponentRating = null,
+      opponentTitle = null,
+      opponentFed = null,
+      nonPlayed = false,
+      isOngoing = false;
+
+  static const conflictMessage = 'Conflicting game records for this round.';
+  final bool isConflicted;
+  final GamesTourModel? recordedGame;
+
+  /// Compatibility for existing board-backed consumers; result-only and
+  /// conflicted cells never call the Board opener.
+  GamesTourModel get game =>
+      recordedGame ??
+      (throw StateError(
+        isConflicted ? conflictMessage : 'Only the result is available.',
+      ));
+  final String? opponentTitle;
+  final String? opponentFed;
+  final bool nonPlayed;
   final int? round;
   final String resultText;
   final bool playedWhite;
@@ -243,6 +353,7 @@ class TournamentStandingsRoundCell {
   final bool isOngoing;
 
   String get tooltipMessage {
+    if (isConflicted) return conflictMessage;
     final rank = opponentRank == null ? '' : '#$opponentRank ';
     final rating = opponentRating == null ? '' : ' · $opponentRating';
     return '$rank$opponentName$rating';
@@ -458,6 +569,19 @@ class TournamentStandingsView extends HookConsumerWidget {
 
     final standings = ref.watch(playerTourStandingsSnapshotProvider);
     final standingsScope = standings.valueOrNull;
+    // Separate sections are not interchangeable. Combined/mirror tables keep
+    // their existing game-backed behavior until there is one canonical roster.
+    final officialResults =
+        standingsScope?.tourIds.length == 1
+            ? ref
+                    .watch(
+                      officialRoundResultsProvider(
+                        standingsScope!.tourIds.single,
+                      ),
+                    )
+                    .valueOrNull ??
+                const <OfficialRoundResults>[]
+            : const <OfficialRoundResults>[];
     final officialRosterByTourId =
         <String, AsyncValue<List<PlayerStandingModel>>>{
           for (final tourId in standingsScope?.tourIds ?? const <String>{})
@@ -465,6 +589,19 @@ class TournamentStandingsView extends HookConsumerWidget {
         };
     final detail = ref.watch(tourDetailScreenProvider).valueOrNull;
     final selectedTourId = detail?.aboutTourModel.id ?? '';
+    // Do not borrow a different tab/section's knockout classification. Combined
+    // snapshots cannot apply one tour's format to all their games either.
+    final knockoutState =
+        selectedTourId.isNotEmpty &&
+                standingsScope?.tourIds.length == 1 &&
+                standingsScope!.tourIds.contains(selectedTourId)
+            ? ref.watch(knockoutTournamentStateProvider(selectedTourId))
+            : null;
+    final allowMultipleGamesPerStage =
+        knockoutState != null &&
+        knockoutState.isKnockout &&
+        !knockoutState.isTeamEvent &&
+        !knockoutState.isDetectionPending;
     final selectedTour =
         detail?.tours
             .where((item) => item.tour.id == selectedTourId)
@@ -555,6 +692,8 @@ class TournamentStandingsView extends HookConsumerWidget {
               final roundTable = buildTournamentStandingsRoundTable(
                 standings: players,
                 games: scopedGames,
+                officialResults: officialResults,
+                allowMultipleGamesPerStage: allowMultipleGamesPerStage,
               );
               final q = query.trim().toLowerCase();
               final filtered =
@@ -1354,7 +1493,7 @@ class _StandingsPlayerRow extends StatelessWidget {
                     final cell = rounds.cellForColumn(player, column);
                     return cell == null
                         ? const SizedBox(width: 26, height: 26)
-                        : _StandingsRoundResult(
+                        : StandingsRoundResult(
                           cell: cell,
                           onOpen: () => onOpenGame(cell.game),
                         );
@@ -1446,63 +1585,230 @@ class _StandingsAvatarFallback extends StatelessWidget {
   }
 }
 
-class _StandingsRoundResult extends StatelessWidget {
-  const _StandingsRoundResult({required this.cell, required this.onOpen});
-
+class StandingsRoundResult extends StatefulWidget {
+  const StandingsRoundResult({
+    super.key,
+    required this.cell,
+    required this.onOpen,
+  });
   final TournamentStandingsRoundCell cell;
   final VoidCallback onOpen;
+  @override
+  State<StandingsRoundResult> createState() => _StandingsRoundResultState();
+}
+
+class _StandingsRoundResultState extends State<StandingsRoundResult>
+    with
+        SingleTickerProviderStateMixin,
+        DeferredPointerStateMixin<StandingsRoundResult> {
+  late final FPopoverController _controller = FPopoverController(vsync: this);
+  Timer? _dismiss;
+  bool _pinned = false;
+  void _show() {
+    _dismiss?.cancel();
+    if (mounted) _controller.show();
+  }
+
+  void _hideLater() {
+    _dismiss?.cancel();
+    if (!_pinned) {
+      _dismiss = Timer(const Duration(milliseconds: 140), () {
+        if (mounted) _controller.hide();
+      });
+    }
+  }
+
+  void _activate() {
+    if (widget.cell.recordedGame != null) {
+      _controller.hide();
+      widget.onOpen();
+    } else {
+      _pinned = true;
+      _show();
+    }
+  }
+
+  @override
+  void dispose() {
+    _dismiss?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final cell = widget.cell;
     final background =
-        cell.isOngoing
+        cell.isOngoing || cell.isConflicted
             ? Colors.transparent
-            : (cell.playedWhite ? const Color(0xFFE8E8E8) : kBlack3Color);
+            : cell.playedWhite
+            ? const Color(0xFFE8E8E8)
+            : kBlack3Color;
     final foreground =
-        cell.isOngoing
+        cell.isOngoing || cell.isConflicted
             ? kWhiteColor70
-            : (cell.playedWhite ? kBlack2Color : kWhiteColor);
-    return DesktopTooltip(
-      message: cell.tooltipMessage,
-      child: Semantics(
-        button: true,
-        label: 'Open round ${cell.round} game against ${cell.opponentName}',
-        child: Focus(
-          onKeyEvent: (node, event) {
-            if (event is! KeyDownEvent) return KeyEventResult.ignored;
-            if (event.logicalKey == LogicalKeyboardKey.enter ||
-                event.logicalKey == LogicalKeyboardKey.space) {
-              onOpen();
-              return KeyEventResult.handled;
-            }
-            return KeyEventResult.ignored;
-          },
-          child: ClickCursor(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onOpen,
+            : cell.playedWhite
+            ? kBlack2Color
+            : kWhiteColor;
+    return FTheme(
+      data: FThemes.zinc.dark,
+      child: FPopover(
+        controller: _controller,
+        childAnchor: Alignment.topCenter,
+        popoverAnchor: Alignment.bottomCenter,
+        spacing: const FPortalSpacing(6),
+        hideRegion: FPopoverHideRegion.anywhere,
+        popoverBuilder:
+            (context, _) => MouseRegion(
+              onEnter: (_) => runAfterPointerEvent(_show),
+              onExit: (_) => runAfterPointerEvent(_hideLater),
               child: Container(
-                width: 26,
-                height: 26,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: background,
-                  border: Border.all(
-                    color:
-                        cell.playedWhite && !cell.isOngoing
-                            ? const Color(0xFFCECECE)
-                            : kWhiteColor.withValues(alpha: 0.28),
+                padding: const EdgeInsets.all(10),
+                constraints: BoxConstraints(
+                  maxWidth: math.min(
+                    420,
+                    MediaQuery.sizeOf(context).width - 24,
                   ),
                 ),
-                child: Text(
-                  cell.resultText,
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    height: 1,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                decoration: BoxDecoration(
+                  color: kBlack2Color,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: kDividerColor),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (cell.isConflicted)
+                      const Text(
+                        TournamentStandingsRoundCell.conflictMessage,
+                        style: TextStyle(color: kWhiteColor70, fontSize: 11),
+                      ),
+                    if (!cell.isConflicted)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (cell.opponentRank != null) ...[
+                            Text(
+                              '#${cell.opponentRank}',
+                              style: const TextStyle(color: kWhiteColor70),
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          if ((cell.opponentFed ?? '').isNotEmpty) ...[
+                            FederationFlag(
+                              federation: cell.opponentFed!,
+                              width: 20,
+                              height: 14,
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          if ((cell.opponentTitle ?? '').isNotEmpty) ...[
+                            Text(
+                              cell.opponentTitle!,
+                              style: const TextStyle(
+                                color: kPrimaryColor,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                          ],
+                          Flexible(
+                            child: Text(
+                              cell.opponentName,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: kWhiteColor),
+                            ),
+                          ),
+                          if ((cell.opponentRating ?? 0) > 0) ...[
+                            const SizedBox(width: 5),
+                            Text(
+                              '(${cell.opponentRating})',
+                              style: const TextStyle(color: kWhiteColor70),
+                            ),
+                          ],
+                        ],
+                      ),
+                    if (cell.nonPlayed)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 5),
+                        child: Text(
+                          'NP',
+                          style: TextStyle(color: kWhiteColor70, fontSize: 11),
+                        ),
+                      ),
+                    if (cell.recordedGame == null && !cell.isConflicted)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: Text(
+                          'Only the result is available.',
+                          style: TextStyle(color: kWhiteColor70, fontSize: 11),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+        child: MouseRegion(
+          onEnter: (_) => runAfterPointerEvent(_show),
+          onExit: (_) => runAfterPointerEvent(_hideLater),
+          child: Semantics(
+            button: true,
+            label:
+                cell.isConflicted
+                    ? TournamentStandingsRoundCell.conflictMessage
+                    : '${cell.opponentName}: ${cell.resultText}${cell.nonPlayed ? ' NP' : ''}',
+            child: Focus(
+              onFocusChange: (focused) {
+                if (focused) {
+                  _show();
+                } else {
+                  _pinned = false;
+                  _hideLater();
+                }
+              },
+              onKeyEvent: (node, event) {
+                if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                if (event.logicalKey == LogicalKeyboardKey.escape) {
+                  _pinned = false;
+                  _controller.hide();
+                  return KeyEventResult.handled;
+                }
+                if (event.logicalKey == LogicalKeyboardKey.enter ||
+                    event.logicalKey == LogicalKeyboardKey.space) {
+                  _activate();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: ClickCursor(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _activate,
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: background,
+                      border: Border.all(
+                        color:
+                            cell.playedWhite && !cell.isOngoing
+                                ? const Color(0xFFCECECE)
+                                : kWhiteColor.withValues(alpha: .28),
+                      ),
+                    ),
+                    child: Text(
+                      cell.resultText,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
                   ),
                 ),
               ),
