@@ -48,6 +48,7 @@ import 'package:chessever/desktop/widgets/desktop_grouped_game_keyboard_focus.da
 import 'package:chessever/desktop/widgets/desktop_header_action_button.dart';
 import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart'
     as header_icon;
+import 'package:chessever/desktop/widgets/desktop_keyboard_action.dart';
 import 'package:chessever/desktop/widgets/desktop_search_field.dart';
 import 'package:chessever/desktop/widgets/live_first_mark.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
@@ -916,6 +917,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
     final allRoundsCollapsed =
         displayRounds.isNotEmpty &&
         displayRounds.every((round) => !isRoundExpanded(round));
+    final collapseAllLabel =
+        allRoundsCollapsed ? 'Expand all rounds' : 'Collapse all rounds';
     void setAllRoundsExpanded(bool expanded) {
       for (final round in displayRounds) {
         ref
@@ -957,18 +960,22 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
             ),
             if (displayRounds.length > 1) ...[
               const SizedBox(width: 8),
-              header_icon.DesktopHeaderIconButton(
-                key: const ValueKey<String>('tournament-games-collapse-all'),
-                unboxed: true,
-                message:
-                    allRoundsCollapsed
-                        ? 'Expand all rounds'
-                        : 'Collapse all rounds',
-                icon:
-                    allRoundsCollapsed
-                        ? Icons.unfold_more_rounded
-                        : Icons.unfold_less_rounded,
+              // One Tab stop that Enter and Space press, like the click.
+              DesktopKeyboardAction(
+                label: collapseAllLabel,
+                // The glyph is unboxed, so focus needs a ring of its own.
+                focusRingRadius: 6,
                 onPress: () => setAllRoundsExpanded(allRoundsCollapsed),
+                child: header_icon.DesktopHeaderIconButton(
+                  key: const ValueKey<String>('tournament-games-collapse-all'),
+                  unboxed: true,
+                  message: collapseAllLabel,
+                  icon:
+                      allRoundsCollapsed
+                          ? Icons.unfold_more_rounded
+                          : Icons.unfold_less_rounded,
+                  onPress: () => setAllRoundsExpanded(allRoundsCollapsed),
+                ),
               ),
             ],
           ],
