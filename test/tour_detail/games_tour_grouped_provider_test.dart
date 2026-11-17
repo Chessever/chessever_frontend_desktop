@@ -5,6 +5,48 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 
 void main() {
+  test('a completed shared stage keeps matches that have not played', () {
+    final games = [
+      _board(id: 'played', whiteName: 'A', blackName: 'B', lastMove: 'e2e4'),
+      _board(
+        id: 'played-return',
+        whiteName: 'B',
+        blackName: 'A',
+        lastMove: 'e2e4',
+      ),
+      _board(id: 'next', whiteName: 'C', blackName: 'D', fen: _initialFen),
+      _board(
+        id: 'next-return',
+        whiteName: 'D',
+        blackName: 'C',
+        fen: _initialFen,
+      ),
+    ];
+    expect(
+      matchPlayStagePairings(
+        roundStatus: RoundStatus.completed,
+        games: games,
+      ).map((g) => g.gameId),
+      ['played', 'played-return', 'next', 'next-return'],
+    );
+    expect(
+      matchPlayStagePairings(
+        roundStatus: RoundStatus.completed,
+        games: games.take(1),
+      ).isEmpty,
+      isTrue,
+    );
+    final decided = [
+      for (final g in games.take(2)) g.copyWith(gameStatus: GameStatus.draw),
+    ];
+    expect(
+      matchPlayStagePairings(
+        roundStatus: RoundStatus.completed,
+        games: [...decided, ...games.skip(2)],
+      ).map((g) => g.gameId),
+      ['next', 'next-return'],
+    );
+  });
   test(
     'empty Live result is ready when the tournament has completed games',
     () {
@@ -207,10 +249,10 @@ void main() {
       );
 
       expect(merge.markAsPairingOnly, isFalse);
-      expect(
-        merge.gamesToAdd.map((game) => game.gameId),
-        ['waiting-2', 'waiting-3'],
-      );
+      expect(merge.gamesToAdd.map((game) => game.gameId), [
+        'waiting-2',
+        'waiting-3',
+      ]);
     },
   );
 

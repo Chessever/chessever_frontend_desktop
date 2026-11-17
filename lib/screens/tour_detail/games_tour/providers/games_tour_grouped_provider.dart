@@ -340,12 +340,14 @@ final gamesTourGroupedProvider = Provider.autoDispose<GroupedGamesData>((ref) {
     // so they join the stage like an open round's pairings. Every other
     // multi-stage knockout keeps hiding 0-move boards, exactly as before.
     for (final round in rounds) {
-      if (round.roundStatus == RoundStatus.completed) continue;
-      final stageGames = [
-        for (final game in allGamesScreenModel)
-          if (stageRoundIdFor(game) == round.id) game,
-      ];
-      if (!hasMatchPlayPairing(stageGames)) continue;
+      final stageGames = matchPlayStagePairings(
+        roundStatus: round.roundStatus,
+        games: [
+          for (final game in allGamesScreenModel)
+            if (stageRoundIdFor(game) == round.id) game,
+        ],
+      );
+      if (stageGames.isEmpty) continue;
       ensureRoundEntry(round.id);
       final hadPlayedGames = seenGameIdsPerRound[round.id]!.isNotEmpty;
       var addedShells = false;
@@ -637,6 +639,46 @@ bool hasMatchPlayPairing(Iterable<GamesTourModel> games) {
     if (matches.values.any((match) => match.length > 1)) return true;
   }
   return false;
+}
+
+/// A stage's first start date cannot close matches scheduled weeks later.
+/// Keep only wholly unplayed or currently playing matches when the date-based
+/// status says completed. Stale shells alongside an already played match stay
+/// hidden, matching the phone's namedPairingPolicyForKnockoutStage.
+@visibleForTesting
+List<GamesTourModel> matchPlayStagePairings({
+  required RoundStatus roundStatus,
+  required Iterable<GamesTourModel> games,
+}) {
+  final named = games
+      .where(
+        (game) =>
+            _hasResolvedPlayer(game.whitePlayer) &&
+            _hasResolvedPlayer(game.blackPlayer),
+      )
+      .toList(growable: false);
+  if (!hasMatchPlayPairing(named)) return const [];
+  if (roundStatus != RoundStatus.completed) return named;
+  final byRound = <String, List<GamesTourModel>>{};
+  for (final game in named) {
+    byRound.putIfAbsent(game.roundId, () => []).add(game);
+  }
+  return [
+    for (final sourceGames in byRound.values)
+      for (final match
+          in KnockoutMatchDetector.groupByMatches(sourceGames).values)
+        if (match.every(
+              (game) =>
+                  !game.effectiveGameStatus.isFinished &&
+                  !_hasPlayedPosition(game),
+            ) ||
+            match.any(
+              (game) =>
+                  !game.effectiveGameStatus.isFinished &&
+                  _hasPlayedPosition(game),
+            ))
+          ...match,
+  ];
 }
 
 /// Whether a game row is renderable as an event board: placeholder rows
