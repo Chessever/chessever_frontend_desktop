@@ -12,6 +12,87 @@ const a = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const b = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
 
 void main() {
+  for (final scenario in [
+    (
+      name: 'waiting for a position',
+      fen: '',
+      foreground: true,
+      message: 'Select a position to start analysis.',
+    ),
+    (
+      name: 'in a background tab',
+      fen: a,
+      foreground: false,
+      message: 'Live analysis resumes when this tab is active.',
+    ),
+  ]) {
+    testWidgets(
+      'inactive analysis ${scenario.name} does not ask to install the engine '
+      'and resumes when a position is active',
+      (tester) async {
+        final target = ValueNotifier((
+          fen: scenario.fen,
+          foreground: scenario.foreground,
+        ));
+        final watchedPositions = <String>[];
+        final controller = GameAnalysisReportController();
+        addTearDown(target.dispose);
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              engineSettingsProviderNew.overrideWith(_Settings.new),
+              boardEvalProvider.overrideWith((ref, fen) {
+                watchedPositions.add(fen);
+                return _ManualEval(ref, fen);
+              }),
+            ],
+            child: MaterialApp(
+              home: Scaffold(
+                body: ValueListenableBuilder<({String fen, bool foreground})>(
+                  valueListenable: target,
+                  builder:
+                      (context, value, _) => EnginePanel(
+                        fen: value.fen,
+                        sideToMove: 'w',
+                        isForegroundTab: value.foreground,
+                        reportController: controller,
+                      ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(watchedPositions, isEmpty);
+        expect(find.text('Engine off'), findsNothing);
+        expect(find.textContaining('Open Settings'), findsNothing);
+        expect(find.textContaining('install via'), findsNothing);
+        expect(find.text(scenario.message), findsOneWidget);
+
+        target.value = (fen: a, foreground: true);
+        await tester.pump();
+        expect(watchedPositions, [a]);
+        expect(find.text('Searching…'), findsOneWidget);
+        expect(find.text(scenario.message), findsNothing);
+
+        await tester.tap(find.byIcon(Icons.power_settings_new_rounded));
+        await tester.pump();
+        expect(find.text('Searching…'), findsNothing);
+        await tester.tap(find.byIcon(Icons.power_settings_new_outlined));
+        await tester.pump();
+        expect(find.text('Searching…'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 1));
+      },
+    );
+  }
+
   testWidgets(
     'retarget keeps score depth and three rows, but rejects retained PV clicks',
     (tester) async {
@@ -114,4 +195,11 @@ class _Settings extends EngineSettingsNotifierNew {
   @override
   Future<EngineSettings> build() async =>
       const EngineSettings(showEngineAnalysis: true);
+
+  @override
+  Future<void> toggleEngineAnalysis(bool value) async {
+    state = AsyncValue.data(
+      state.requireValue.copyWith(showEngineAnalysis: value),
+    );
+  }
 }

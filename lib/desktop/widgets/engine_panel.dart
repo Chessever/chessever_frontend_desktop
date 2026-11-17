@@ -37,7 +37,6 @@ import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
-import 'package:chessever/screens/chessboard/provider/stockfish_singleton.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
 
@@ -430,14 +429,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       reportRunning: reportState.isRunning,
     );
 
-    // The engine readout (live dot / score / depth) only means anything once
-    // Stockfish can search this position. When it can't we still keep the
-    // header on screen so both independent toggles stay reachable.
-    final engineReady = StockfishSingleton().isEngineHealthy;
+    // A position starts the bundled engine on demand. An idle panel says
+    // nothing about engine availability; keep its controls reachable.
     final engineActive =
-        engineOn &&
-        runLiveBoardAnalysis &&
-        (engineReady || widget.fen.isNotEmpty);
+        engineOn && runLiveBoardAnalysis && widget.fen.isNotEmpty;
 
     final reportContent = GameReportView(
       state: reportState,
@@ -495,7 +490,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
               final engineContent =
                   liveAnalysisPausedForReport
-                      ? const _EnginePausedForReport()
+                      ? const _EngineStatusMessage(
+                        'Live analysis paused while the game report runs.',
+                      )
                       : engineActive
                       ? _EngineLinesSurface(
                         fen: _display.fen ?? widget.fen,
@@ -513,7 +510,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                                 ? playCurrent
                                 : null,
                       )
-                      : const _EngineNotReady();
+                      : _EngineStatusMessage(
+                        widget.isForegroundTab
+                            ? 'Select a position to start analysis.'
+                            : 'Live analysis resumes when this tab is active.',
+                      );
 
               final Widget? body =
                   engineOn && reportOn
@@ -2273,39 +2274,10 @@ class _EngineQuickToggle extends ConsumerWidget {
   }
 }
 
-class _EngineNotReady extends StatelessWidget {
-  const _EngineNotReady();
+class _EngineStatusMessage extends StatelessWidget {
+  const _EngineStatusMessage(this.message);
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: kBlack2Color,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          Text(
-            'Engine off',
-            style: TextStyle(
-              color: kWhiteColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'Open Settings → Engine to initialize Stockfish, '
-            'or install via brew (macOS) / put on PATH.',
-            style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EnginePausedForReport extends StatelessWidget {
-  const _EnginePausedForReport();
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -2313,9 +2285,9 @@ class _EnginePausedForReport extends StatelessWidget {
       color: kBlack2Color,
       padding: const EdgeInsets.all(16),
       alignment: Alignment.topLeft,
-      child: const Text(
-        'Live analysis paused while the game report runs.',
-        style: TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
+      child: Text(
+        message,
+        style: const TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
       ),
     );
   }
