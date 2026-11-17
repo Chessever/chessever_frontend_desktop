@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/shell/desktop_shell.dart';
@@ -524,6 +525,48 @@ void main() {
     await tester.pump();
     expect(expanded(), [true, true]);
     expect(find.byIcon(Icons.unfold_less_rounded), findsOneWidget);
+
+    // Tab from the search lands on the control as one stop, and Enter and
+    // Space press it like the click.
+    await tester.tap(find.byType(EditableText));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    final focused = FocusManager.instance.primaryFocus!.context!;
+    expect(
+      find.descendant(
+        of: find.byElementPredicate((element) => identical(element, focused)),
+        matching: toggle,
+      ),
+      findsOneWidget,
+      reason: 'The stop wraps the whole control, its tooltip included.',
+    );
+    // The glyph is unboxed, so keyboard focus has to draw its own ring.
+    final ring = find.ancestor(
+      of: toggle,
+      matching: find.byType(FFocusedOutline),
+    );
+    expect(ring, findsOneWidget);
+    expect(tester.widget<FFocusedOutline>(ring).focused, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(expanded(), [false, false]);
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(expanded(), [true, true]);
+    // The next Tab leaves the control instead of stopping on its tooltip.
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    final next = FocusManager.instance.primaryFocus!.context!;
+    expect(
+      find.descendant(
+        of: toggle,
+        matching: find.byElementPredicate(
+          (element) => identical(element, next),
+        ),
+      ),
+      findsNothing,
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     // Drain the tooltip's exit timer the taps started.

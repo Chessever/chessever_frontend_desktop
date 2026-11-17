@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:chessever/desktop/widgets/desktop_toolbar_metrics.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
@@ -102,9 +103,9 @@ class DesktopClassicalOnlyButton extends StatelessWidget {
 
 /// Keyboard reach and toggle semantics for a quick-toggle pill.
 ///
-/// The pill itself only answers the pointer. This adds a tab stop that Enter
-/// and Space activate, a focus ring drawn on the pill's own radius, and a
-/// `toggled` semantics flag so assistive tech reads the state.
+/// The pill itself only answers the pointer. This adds the pill's single tab
+/// stop, which Enter and Space activate, a focus ring drawn on the pill's own
+/// radius, and a `toggled` semantics flag so assistive tech reads the state.
 class _QuickToggleChrome extends StatefulWidget {
   const _QuickToggleChrome({
     required this.pressed,
@@ -135,8 +136,21 @@ class _QuickToggleChromeState extends State<_QuickToggleChrome> {
           enabled: onPress != null,
           onShowFocusHighlight:
               (value) => setState(() => _focusHighlight = value),
+          // Bound here, not left to the app's defaults: the browser build maps
+          // Enter to ButtonActivateIntent, which the actions below answer too.
+          shortcuts: const <ShortcutActivator, Intent>{
+            SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+            SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+            SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+          },
           actions: <Type, Action<Intent>>{
             ActivateIntent: CallbackAction<ActivateIntent>(
+              onInvoke: (_) {
+                onPress?.call();
+                return null;
+              },
+            ),
+            ButtonActivateIntent: CallbackAction<ButtonActivateIntent>(
               onInvoke: (_) {
                 onPress?.call();
                 return null;
@@ -154,7 +168,9 @@ class _QuickToggleChromeState extends State<_QuickToggleChrome> {
                         : const Color(0x00000000),
               ),
             ),
-            child: widget.child,
+            // The pill's tooltip has its own focus node; this detector is
+            // the one Tab stop.
+            child: ExcludeFocus(child: widget.child),
           ),
         ),
       ),
