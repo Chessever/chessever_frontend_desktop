@@ -126,8 +126,10 @@ bool shouldInitiallyExpandTournamentRound({
 /// puts quarterfinal boards ahead of a later semifinal/final.
 ///
 /// Stay conservative for legacy feeds: unless at least two distinct named
-/// stages can be resolved, do not apply stage ranking. Missing or equal start
-/// times preserve the detector's insertion order.
+/// stages can be resolved, do not apply stage ranking. Inside a stage, matches
+/// with a game in play come first, in the detector's insertion order (two
+/// matches played at once must not swap on every move). Missing or equal
+/// start times preserve the detector's insertion order.
 @visibleForTesting
 List<MapEntry<String, List<GamesTourModel>>>
 orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
@@ -142,6 +144,7 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
       int index,
       int? stageOrder,
       DateTime? startsAt,
+      bool isLive,
     })
   >[
     for (var index = 0; index < entries.length; index += 1)
@@ -154,6 +157,7 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
               entries[index].key,
               entries[index].value,
             ).startsAt,
+        isLive: entries[index].value.any(isKnockoutGameLive),
       ),
   ];
   final resolvedStageOrders =
@@ -174,6 +178,9 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
       }
     }
 
+    if (left.isLive != right.isLive) return left.isLive ? -1 : 1;
+    if (left.isLive) return left.index.compareTo(right.index);
+
     final leftStart = left.startsAt;
     final rightStart = right.startsAt;
     if (leftStart != null && rightStart != null) {
@@ -187,6 +194,41 @@ orderedKnockoutMatchEntriesForDisplay(List<GamesTourModel> games) {
     return left.index.compareTo(right.index);
   });
   return ranked.map((item) => item.entry).toList(growable: false);
+}
+
+/// Whether a knockout board has been played: it has a move or a move time.
+/// Organizers publish every game of a stage up front as 0-move `*` boards
+/// (Total Chess semifinals: Games 1-14 on day one); those are future games,
+/// never live ones.
+bool knockoutGameStarted(GamesTourModel game) =>
+    game.effectiveGameStatus.isFinished ||
+    game.lastMoveTime != null ||
+    game.hasStarted;
+
+/// A knockout board in play: started and not finished.
+bool isKnockoutGameLive(GamesTourModel game) =>
+    !game.effectiveGameStatus.isFinished && knockoutGameStarted(game);
+
+/// Display order of one legacy knockout match's boards: the game in play
+/// first, then finished games newest first, then games not started yet in
+/// game order. [chronologicalGames] is game 1 first, as the detector groups.
+@visibleForTesting
+List<GamesTourModel> knockoutMatchGamesForDisplay(
+  List<GamesTourModel> chronologicalGames,
+) {
+  final live = <GamesTourModel>[];
+  final finished = <GamesTourModel>[];
+  final unstarted = <GamesTourModel>[];
+  for (final game in chronologicalGames) {
+    if (game.effectiveGameStatus.isFinished) {
+      finished.add(game);
+    } else if (knockoutGameStarted(game)) {
+      live.add(game);
+    } else {
+      unstarted.add(game);
+    }
+  }
+  return [...live, ...finished.reversed, ...unstarted];
 }
 
 /// One player-pairing section of a knockout round on the Games tab.
@@ -232,9 +274,8 @@ List<DesktopKnockoutMatchSection> desktopKnockoutMatchSections(
       for (final entry in orderedKnockoutMatchEntriesForDisplay(games))
         DesktopKnockoutMatchSection(
           key: entry.key,
-          header: KnockoutMatchDetector.createMatchHeader(
-            entry.key,
-            entry.value,
+          header: _withDisplayGames(
+            KnockoutMatchDetector.createMatchHeader(entry.key, entry.value),
           ),
         ),
     ];
@@ -257,6 +298,20 @@ List<DesktopKnockoutMatchSection> desktopKnockoutMatchSections(
       ),
   ];
 }
+
+/// The header reads names and score from the chronological games; the cards
+/// render in [knockoutMatchGamesForDisplay] order.
+MatchHeaderModel _withDisplayGames(MatchHeaderModel header) =>
+    MatchHeaderModel(
+      matchKey: header.matchKey,
+      player1Card: header.player1Card,
+      player2Card: header.player2Card,
+      player1Score: header.player1Score,
+      player2Score: header.player2Score,
+      games: knockoutMatchGamesForDisplay(header.games),
+      roundName: header.roundName,
+      isComplete: header.isComplete,
+    );
 
 int? _latestKnockoutStageOrder(List<GamesTourModel> matchGames) {
   int? latest;

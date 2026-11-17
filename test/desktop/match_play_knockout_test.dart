@@ -690,7 +690,8 @@ void main() {
           for (final s in sections) [for (final g in s.header.games) g.gameId],
         ],
         [
-          for (final e in expected) [for (final g in e.value) g.gameId],
+          for (final e in expected)
+            [for (final g in knockoutMatchGamesForDisplay(e.value)) g.gameId],
         ],
       );
       expect(sections.every((s) => !s.isMatchPlay), isTrue);

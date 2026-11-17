@@ -8,6 +8,76 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  // Total Chess World Championship Tour Pilot 2026, Semifinals (qEXour3L) on
+  // 2026-11-17: every game of the stage published on day one as a 0-move `*`
+  // board. Games 1-4 played, Game 5 in play.
+  group('stages published up front', () {
+    GamesTourModel leg(
+      int n,
+      String white,
+      String black, {
+      required bool played,
+      required bool finished,
+      required DateTime roundStart,
+    }) => _game(
+      '$white-$n',
+      n.isOdd ? white : black,
+      n.isOdd ? black : white,
+      roundSlug: 'game-$n',
+      gameStatus: finished ? GameStatus.draw : GameStatus.ongoing,
+      roundStartsAt: roundStart,
+    ).copyWith(
+      lastMove: played ? 'e2e4' : null,
+      lastMoveTime: played ? roundStart.add(const Duration(minutes: 5)) : null,
+      whiteClockSeconds: played ? 300 : null,
+      blackClockSeconds: played ? 300 : null,
+    );
+
+    final day = DateTime.utc(2026, 11, 17, 14);
+    final games = [
+      for (var n = 1; n <= 8; n++)
+        leg(
+          n,
+          'Giri, Anish',
+          'Vachier-Lagrave, Maxime',
+          played: n <= 5,
+          finished: n <= 4,
+          roundStart: day.add(Duration(hours: n)),
+        ),
+      // A match that started later but has nothing in play right now.
+      for (var n = 1; n <= 8; n++)
+        leg(
+          n,
+          'Caruana, Fabiano',
+          'Firouzja, Alireza',
+          played: n <= 4,
+          finished: n <= 4,
+          roundStart: day.add(Duration(hours: n + 1)),
+        ),
+    ];
+
+    test('a match with a game in play comes first', () {
+      final sections = desktopKnockoutMatchSections(games);
+      expect(sections.first.header.player1, 'Giri, Anish');
+    });
+
+    test('live game, then finished newest first, then future games', () {
+      final giri = desktopKnockoutMatchSections(
+        games,
+      ).firstWhere((section) => section.header.player1 == 'Giri, Anish');
+      expect([for (final game in giri.header.games) game.roundSlug], [
+        'game-5',
+        'game-4',
+        'game-3',
+        'game-2',
+        'game-1',
+        'game-6',
+        'game-7',
+        'game-8',
+      ]);
+    });
+  });
+
   group('confirmed knockout presentation', () {
     test('groups complete player pairings without game-N round slugs', () {
       final games = [
