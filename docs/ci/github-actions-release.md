@@ -262,7 +262,7 @@ minutes:
 |---|---|---|
 | macOS (Apple Silicon, Intel) | 90 min | 75 min (build, notarize and publish) |
 | Windows | 75 min | 30 min |
-| Linux | 60 min | 20 min |
+| Linux | 60 min | 35 min |
 | Mac App Store | 75 min | 45 min, then 30 min for upload and review |
 | macOS on Flutter master | 60 min | 40 min |
 

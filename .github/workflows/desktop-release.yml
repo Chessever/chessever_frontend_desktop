@@ -579,7 +579,10 @@ jobs:
             GOOGLE_DESKTOP_CLIENT_ID GOOGLE_DESKTOP_CLIENT_SECRET SENTRY_FLUTTER
 
       - name: Build Linux release
-        timeout-minutes: 20
+        # A cold release build bundles the staged ONNX Runtime and the rest of
+        # the Linux plugin stack. 20 minutes ran out on 22.53.2+661, so leave
+        # the build real headroom inside the 60-minute job limit.
+        timeout-minutes: 35
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
