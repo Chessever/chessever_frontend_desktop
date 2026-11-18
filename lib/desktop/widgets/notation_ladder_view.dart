@@ -1578,7 +1578,9 @@ class _LineBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final children = <Widget>[];
     final owner = context.findAncestorStateOfType<_NotationLadderViewState>();
-    if (isMainlineRoot && depth == 0 && !(owner?._annotationsHidden ?? false)) {
+    final annotationsHidden = owner?._annotationsHidden ?? false;
+    final mainlineRoot = depth == 0 && isMainlineRoot;
+    if (mainlineRoot && !annotationsHidden) {
       final roots = _cleanPgnComments(owner?.widget.game.rootComments);
       if (roots.isNotEmpty) {
         children.add(_MoveComments(depth: 0, comments: roots));
@@ -1668,7 +1670,6 @@ class _LineBlock extends StatelessWidget {
             baseNags: blackMove?.nags ?? const <int>[],
             userNags: userNags[blackPointer.last] ?? const <int>[],
           );
-      final mainlineRoot = depth == 0 && isMainlineRoot;
       final result = showResultInBlackSlot ? gameResult : null;
       final variationHeadPointer =
           depth > 0 ? <int>[...pointerPrefix, 0] : null;
@@ -1837,27 +1838,24 @@ class _LineBlock extends StatelessWidget {
       pairChildren.add(row);
       if (showResultInBlackSlot) resultShown = true;
 
-      void appendMoveComments(ChessMove? move) {
-        if (move == null ||
-            (context
-                    .findAncestorStateOfType<_NotationLadderViewState>()
-                    ?._annotationsHidden ??
-                false)) {
-          return;
-        }
+      void appendMoveComments(
+        ChessMove? move,
+        LichessMoveAnnotation? annotation,
+      ) {
+        if (move == null || annotationsHidden) return;
         final sourceLabel = _sourceLabelFromComments(move.comments);
         if (sourceLabel != null) {
           pairChildren.add(
             _MoveSourceMetadata(depth: depth, sourceLabel: sourceLabel),
           );
         }
-        final comments = _cleanPgnComments(move.comments);
+        final comments = _notationMoveComments(move, annotation);
         if (comments.isEmpty) return;
         pairChildren.add(_MoveComments(depth: depth, comments: comments));
       }
 
-      appendMoveComments(whiteMove);
-      appendMoveComments(blackMove);
+      appendMoveComments(whiteMove, whiteAnnotation);
+      appendMoveComments(blackMove, blackAnnotation);
 
       // Display after the replaced move, but retain the original owner and
       // pointer for clicks, editing, collapse state and saved PGN identity.
@@ -2632,7 +2630,7 @@ class _InlineNotationBlock extends StatelessWidget {
       );
 
       if (!annotationsHidden) {
-        for (final comment in _cleanPgnComments(move.comments)) {
+        for (final comment in _notationMoveComments(move, annotation)) {
           // Bare text — flows with the move stream and breaks at word
           // boundaries when the column wraps, instead of forcing its own row.
           spans.add(TextSpan(text: '$comment ', style: commentStyle));
@@ -5121,6 +5119,20 @@ List<String> _cleanPgnComments(List<String>? comments) {
   // Shared cleaner strips clk/eval/arrows and [%chessever_annotation …] so
   // machine tags never appear as free-text comments under the SAN.
   return cleanPgnComments(comments);
+}
+
+List<String> _notationMoveComments(
+  ChessMove move,
+  LichessMoveAnnotation? annotation,
+) {
+  final comments = _cleanPgnComments(move.comments);
+  final advice = annotation?.comment;
+  if (advice == null || advice.isEmpty) return comments;
+  return [
+    ...comments,
+    for (final comment in cleanPgnComments(advice.split('\n')).toSet())
+      if (!comments.contains(comment)) comment,
+  ];
 }
 
 String? _sourceLabelFromComments(List<String>? comments) {

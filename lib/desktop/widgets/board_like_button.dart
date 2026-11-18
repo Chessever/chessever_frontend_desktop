@@ -16,6 +16,14 @@ import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/theme/app_theme.dart';
 
+final _boardGameLikedProvider = Provider.autoDispose
+    .family<bool, (String, String?)>((ref, ids) {
+      final (likeId, legacyLikeId) = ids;
+      return ref.watch(isGameLikedProvider(likeId)) ||
+          (legacyLikeId != null &&
+              ref.watch(isGameLikedProvider(legacyLikeId)));
+    });
+
 /// Like for the game on the board, the phone's notation Like button on
 /// desktop and the web port.
 ///
@@ -45,18 +53,31 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
   int _pops = 0;
   double _popFrom = 1;
 
+  String? get _legacyLikeId {
+    final game = widget.game;
+    return game.source == GameSource.gamebase && game.gameId != game.likeId
+        ? game.gameId
+        : null;
+  }
+
   Future<void> _toggle() async {
     if (_busy) return;
+    final game = widget.game;
+    final legacyLikeId = _legacyLikeId;
     setState(() => _busy = true);
     try {
       final result = await toggleDesktopGameLike(
         context: context,
         ref: ref,
-        game: widget.game,
+        game: game,
+        legacyLikeId: legacyLikeId,
       );
       // The count is the server's; re-read it once the write has landed.
       if (result != null && mounted) {
-        ref.invalidate(desktopGameLikeCountProvider(widget.game.likeId));
+        ref.invalidate(desktopGameLikeCountProvider(game.likeId));
+        if (legacyLikeId != null) {
+          ref.invalidate(desktopGameLikeCountProvider(legacyLikeId));
+        }
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -66,7 +87,9 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
   @override
   Widget build(BuildContext context) {
     final likeId = widget.game.likeId;
-    ref.listen<bool>(isGameLikedProvider(likeId), (previous, next) {
+    final legacyLikeId = _legacyLikeId;
+    final likedProvider = _boardGameLikedProvider((likeId, legacyLikeId));
+    ref.listen<bool>(likedProvider, (previous, next) {
       if (previous == null || previous == next) return;
       setState(() {
         _pops++;
@@ -74,8 +97,12 @@ class _DesktopBoardLikeButtonState extends ConsumerState<DesktopBoardLikeButton>
         _popFrom = next ? 0.45 : 0.8;
       });
     });
-    final liked = ref.watch(isGameLikedProvider(likeId));
-    final likes = ref.watch(desktopGameLikeCountProvider(likeId)).valueOrNull;
+    final liked = ref.watch(likedProvider);
+    final count = ref.watch(desktopGameLikeCountProvider(likeId)).valueOrNull;
+    final likes =
+        count == 0 && legacyLikeId != null
+            ? ref.watch(desktopGameLikeCountProvider(legacyLikeId)).valueOrNull
+            : count;
     final showCount = likes != null && likes > 0;
     final countLabel = showCount ? compactLikeCount(likes) : null;
     final countInside = showCount && likes < 100;

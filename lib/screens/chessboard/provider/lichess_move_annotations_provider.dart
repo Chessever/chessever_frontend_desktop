@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 class LichessMoveAnnotationsParams {
   final String? lichessGameId;
   final String? siteUrl;
+  final String? broadcastRoundId;
   final String signature;
   final List<String> moveSans;
   final bool isLiveGame;
@@ -12,6 +13,7 @@ class LichessMoveAnnotationsParams {
   const LichessMoveAnnotationsParams({
     required this.lichessGameId,
     this.siteUrl,
+    this.broadcastRoundId,
     required this.signature,
     required this.moveSans,
     required this.isLiveGame,
@@ -23,12 +25,18 @@ class LichessMoveAnnotationsParams {
       other is LichessMoveAnnotationsParams &&
           lichessGameId == other.lichessGameId &&
           siteUrl == other.siteUrl &&
+          broadcastRoundId == other.broadcastRoundId &&
           signature == other.signature &&
           isLiveGame == other.isLiveGame;
 
   @override
-  int get hashCode =>
-      Object.hash(lichessGameId, siteUrl, signature, isLiveGame);
+  int get hashCode => Object.hash(
+    lichessGameId,
+    siteUrl,
+    broadcastRoundId,
+    signature,
+    isLiveGame,
+  );
 }
 
 final lichessMoveAnnotationsProvider = FutureProvider.family.autoDispose<
@@ -56,6 +64,7 @@ final lichessMoveAnnotationsProvider = FutureProvider.family.autoDispose<
     moveSans: params.moveSans,
     signature: params.signature,
     siteUrl: params.siteUrl,
+    broadcastRoundId: params.broadcastRoundId,
   );
   debugPrint(
     '🔍 [AnnotationsProvider] Result: ${result?.length ?? 0} annotations',

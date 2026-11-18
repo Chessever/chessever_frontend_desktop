@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'support/current_broadcast_games.dart';
 
 import 'package:flutter/gestures.dart';
@@ -6,6 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart' as sqflite;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -13,6 +18,7 @@ import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
+import 'package:chessever/desktop/panes/board_pane.dart';
 import 'package:chessever/desktop/panes/desktop_smart_games_pane.dart';
 import 'package:chessever/desktop/panes/library_pane.dart'
     show openLibraryLikedAnalysis;
@@ -22,22 +28,29 @@ import 'package:chessever/desktop/shell/desktop_tab_bar.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/desktop_smart_games.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/game_like_count.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
+import 'package:chessever/desktop/widgets/board_like_button.dart';
 import 'package:chessever/desktop/widgets/desktop_date_gate_prompt.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart'
     show admitEventRailContentAction;
+import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
+import 'package:chessever/repository/liked_games/liked_games_provider.dart';
+import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/provider/current_eval_provider.dart';
+import 'package:chessever/screens/gamebase/models/gamebase_game.dart';
 import 'package:chessever/screens/premium_games/providers/premium_games_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 
@@ -45,6 +58,46 @@ const _kFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const _kTabId = 'smart-tab';
 const _lockedMiniatureId = '0b1c2d3e-0000-4000-8000-000000000001';
 const _todayMiniatureId = '0b1c2d3e-0000-4000-8000-000000000002';
+const _nextMiniatureId = '0b1c2d3e-0000-4000-8000-000000000003';
+const _miniatureBroadcastId = 'TestBd01';
+
+class _MiniatureGamebase implements GamebaseRepository {
+  @override
+  bool get isConfigured => false;
+
+  @override
+  Future<GamebaseGameWithPgn?> getGameWithPgn(String id) async {
+    if (id != _todayMiniatureId && id != _nextMiniatureId) return null;
+    final broadcastHeaders =
+        id == _todayMiniatureId
+            ? '[ChessEverSource "broadcasting_supabase"]\n'
+                '[ChessEverGameId "$_miniatureBroadcastId"]\n'
+            : '';
+    return GamebaseGameWithPgn(
+      id: id,
+      date: _todayUtcDay,
+      result: GameResult.whiteWins,
+      timeControl: TimeControl.classical,
+      pgn:
+          '[White "Anand"]\n[Black "Topalov"]\n[Result "1-0"]\n'
+          '$broadcastHeaders\n'
+          '1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0',
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _SeededLikes extends LikedGamesNotifier {
+  @override
+  Future<List<SavedAnalysis>> build() async => [
+    _like(
+      'broadcast-like',
+      _todayUtcDay,
+    ).copyWith(sourceGameId: _miniatureBroadcastId),
+  ];
+}
 
 /// Counts every PGN/game fetch a board open could start.
 class _CountingGameRepository implements GameRepository {
@@ -374,6 +427,113 @@ void main() {
   });
 
   tearDown(() => desktopWindowIsForeground = previousForeground);
+
+  testWidgets(
+    'opening and stepping through Miniatures shows each game’s likes',
+    (tester) async {
+      await tester.runAsync(() async {
+        SharedPreferences.setMockInitialValues({});
+        final directory = await Directory.systemTemp.createTemp(
+          'miniature-board-likes-',
+        );
+        const channel = MethodChannel('plugins.flutter.io/path_provider');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(
+          channel,
+          (_) async => directory.path,
+        );
+        sqfliteFfiInit();
+        sqflite.databaseFactory = databaseFactoryFfiNoIsolate;
+        addTearDown(() async {
+          await AppDatabase.instance.close();
+          messenger.setMockMethodCallHandler(channel, null);
+          await directory.delete(recursive: true);
+        });
+        await AppDatabase.instance.database;
+      });
+      _useDesktopSurface(tester);
+      final repository = _CountingGameRepository();
+      await tester.pumpWidget(
+        _shell(
+          overrides: [
+            ..._freeOverrides(repository),
+            desktopSmartGamesTypeByTabIdProvider.overrideWith(
+              (ref) => {_kTabId: PremiumGamesType.miniatures},
+            ),
+            premiumGamesProvider.overrideWith(
+              (ref, collection) =>
+                  _SeededPremiumGamesNotifier(ref, collection, [
+                    for (final id in [_todayMiniatureId, _nextMiniatureId])
+                      _miniature(id, _todayUtcDay).copyWith(
+                        pgn: '[White "Anand"]\n[Black "Topalov"]\n\n1-0',
+                      ),
+                  ]),
+            ),
+            gamebaseRepositoryProvider.overrideWithValue(_MiniatureGamebase()),
+            likedGamesProvider.overrideWith(_SeededLikes.new),
+            desktopGameLikeCountProvider.overrideWith(
+              (ref, id) async => switch (id) {
+                _miniatureBroadcastId => 7,
+                _nextMiniatureId => 3,
+                _ => 0,
+              },
+            ),
+          ],
+          body: Consumer(
+            builder: (context, ref, _) {
+              final tabId = ref.watch(
+                desktopTabsProvider.select((s) => s.activeId),
+              );
+              final args = ref.watch(boardTabGameArgsByTabIdProvider);
+              return args.containsKey(tabId)
+                  ? BoardPane(tabId: tabId)
+                  : const DesktopSmartGamesPane(tabId: _kTabId);
+            },
+          ),
+        ),
+      );
+      await _settle(tester);
+      await tester.tap(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is DesktopGameCard && widget.data.id == _todayMiniatureId,
+        ),
+      );
+      await _settle(tester);
+
+      expect(find.byType(BoardPane), findsOneWidget);
+      final button = find.byType(DesktopBoardLikeButton);
+      expect(
+        find.descendant(of: button, matching: find.text('7')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: button,
+          matching: find.byIcon(Icons.favorite_rounded),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(NotationOpeningPanel),
+          matching: find.byIcon(Icons.keyboard_double_arrow_right_rounded),
+        ),
+      );
+      await _settle(tester);
+
+      expect(
+        tester.widget<DesktopBoardLikeButton>(button).game.likeId,
+        _nextMiniatureId,
+      );
+      expect(
+        find.descendant(of: button, matching: find.text('3')),
+        findsOneWidget,
+      );
+    },
+  );
 
   group('locked Miniature, every entry path', () {
     testWidgets('opens no tab and starts no fetch on any entry path', (

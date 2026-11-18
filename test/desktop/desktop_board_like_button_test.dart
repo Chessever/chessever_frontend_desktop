@@ -28,9 +28,11 @@ const _pgn =
 
 GamesTourModel _game({
   String id = 'game-1',
+  String? sourceGameId,
   GameSource source = GameSource.supabase,
 }) => GamesTourModel(
   gameId: id,
+  sourceGameId: sourceGameId,
   source: source,
   whitePlayer: PlayerCard(
     name: 'Carlsen, Magnus',
@@ -80,9 +82,19 @@ class _FakeLikes extends LikedGamesNotifier {
 
   final List<SavedAnalysis> _initial;
   int toggles = 0;
+  List<SavedAnalysis> get savedLikes => state.requireValue;
 
   @override
   Future<List<SavedAnalysis>> build() async => _initial;
+
+  @override
+  Future<bool> removeAnalysis(SavedAnalysis analysis) async {
+    state = AsyncValue.data([
+      for (final like in state.requireValue)
+        if (like.id != analysis.id) like,
+    ]);
+    return true;
+  }
 
   @override
   Future<bool> toggle(GamesTourModel game) async {
@@ -102,19 +114,21 @@ class _FakeLikes extends LikedGamesNotifier {
 Future<_FakeLikes> _pump(
   WidgetTester tester, {
   AppUser? user,
+  GamesTourModel? game,
   List<SavedAnalysis> liked = const [],
   int? count,
-  int? Function()? readCount,
+  int? Function(String id)? readCount,
   double? railWidth,
 }) async {
   final likes = _FakeLikes(liked);
+  final button = DesktopBoardLikeButton(game: game ?? _game());
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         currentUserProvider.overrideWithValue(user),
         likedGamesProvider.overrideWith(() => likes),
         desktopGameLikeCountProvider.overrideWith(
-          (ref, id) async => readCount != null ? readCount() : count,
+          (ref, id) async => readCount != null ? readCount(id) : count,
         ),
       ],
       child: MaterialApp(
@@ -122,7 +136,7 @@ Future<_FakeLikes> _pump(
           body: Center(
             child:
                 railWidth == null
-                    ? DesktopBoardLikeButton(game: _game())
+                    ? button
                     : SizedBox(
                       key: const ValueKey('count-test-rail'),
                       width: railWidth,
@@ -136,7 +150,7 @@ Future<_FakeLikes> _pump(
                         onPlayPause: () {},
                         onPreviousGame: () {},
                         onNextGame: () {},
-                        leadingActions: DesktopBoardLikeButton(game: _game()),
+                        leadingActions: button,
                         secondaryActions:
                             boardSecondaryToolbarActionsForTesting(
                               onFlipBoard: () {},
@@ -240,7 +254,7 @@ void main() {
     'server count crosses 99 and 100 in both directions without recreating the button',
     (tester) async {
       var count = 99;
-      await _pump(tester, user: _member, readCount: () => count);
+      await _pump(tester, user: _member, readCount: (_) => count);
       final button = find.byType(DesktopBoardLikeButton);
       final state = tester.state(button);
       final container = ProviderScope.containerOf(tester.element(button));
@@ -364,6 +378,43 @@ void main() {
     // No count yet: a plain heart, no number.
     expect(find.byType(Text), findsNothing);
   });
+
+  for (final alsoLikedBroadcast in [false, true]) {
+    testWidgets(
+      'a miniature unlikes a saved Gamebase copy, broadcast also liked: $alsoLikedBroadcast',
+      (tester) async {
+        const copyId = 'gamebase-copy';
+        const broadcastId = 'broadcast-game';
+        final game = _game(
+          id: copyId,
+          source: GameSource.gamebase,
+          sourceGameId: broadcastId,
+        );
+        final likes = await _pump(
+          tester,
+          user: _member,
+          game: game,
+          liked: [_liked(copyId), if (alsoLikedBroadcast) _liked(broadcastId)],
+          readCount: (id) => id == copyId ? 1 : (alsoLikedBroadcast ? 7 : 0),
+        );
+        await tester.pumpAndSettle();
+        final button = find.byKey(const ValueKey('board-like-button'));
+        expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+        expect(find.text(alsoLikedBroadcast ? '7' : '1'), findsOneWidget);
+
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        expect(likes.savedLikes, isEmpty);
+        expect(find.byIcon(Icons.favorite_border_rounded), findsOneWidget);
+
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        expect(likes.savedLikes.single.sourceGameId, broadcastId);
+        expect(find.byIcon(Icons.favorite_rounded), findsOneWidget);
+        await tester.pump(const Duration(seconds: 5));
+      },
+    );
+  }
 
   testWidgets('a guest is asked to sign in and nothing is written', (
     tester,

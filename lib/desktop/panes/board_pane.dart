@@ -1859,6 +1859,26 @@ class _BoardPaneContent extends HookConsumerWidget {
           putIfMissing('BlackElo', tabArgs.blackRating);
         }
       }
+      // Keep the broadcast identity after the share-link rewrite removes
+      // upstream URLs from the working PGN.
+      for (final tag in const [
+        'GameURL',
+        'GameUrl',
+        'gameUrl',
+        'LichessURL',
+        'LichessUrl',
+        'Site',
+        'SiteUrl',
+        'Source',
+      ]) {
+        final ids = LichessMoveAnnotationsService.broadcastIdsFromUrl(
+          updatedMetadata[tag]?.toString(),
+        );
+        if (ids == null) continue;
+        updatedMetadata['LichessId'] = ids.gameId;
+        updatedMetadata['LichessRoundId'] = ids.roundId;
+        break;
+      }
       applyDesktopChessEverPgnLinks(
         updatedMetadata,
         game: tabArgs?.sourceGame,
@@ -5070,9 +5090,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     // ---- Lichess move annotations -----------------------------------
-    // Keyed off the *original* mainline SANs so the fetch signature
-    // stays stable across variation switches; we just suppress display
-    // when the user is exploring off-mainline.
+    // Variation navigation reuses the same analysis for the mainline SANs.
     final headers = pgnHeaders.value;
     final originalMainlineSans = useMemoized(
       () => List<String>.unmodifiable(
@@ -5085,6 +5103,12 @@ class _BoardPaneContent extends HookConsumerWidget {
         (headers['Result'] ?? '').isEmpty;
     final lichessGameId = _extractLichessGameId(headers);
     final lichessSiteUrl = _extractLichessSiteUrl(headers);
+    final lichessBroadcastRoundId =
+        headers['LichessRoundId'] ??
+        (headers['ChessEverSource'] == 'broadcasting_supabase' &&
+                headers['LichessId'] == lichessGameId
+            ? headers['ChessEverRoundId']
+            : null);
     final movesSignature = useMemoized(
       () => _buildMovesSignature(originalMainlineSans),
       [originalMainlineSans],
@@ -5092,14 +5116,19 @@ class _BoardPaneContent extends HookConsumerWidget {
     // We're "on the original mainline" when the pointer is exactly one
     // index deep — anything longer means we've descended into a sub-line.
     final isOnMainline = pointer.value.length == 1;
+    final skipLichessAnnotations =
+        (hasAnalysisRecovery || lichessGameId == null) ||
+        originalMainlineSans.isEmpty ||
+        isResultLive;
     final annotationsAsync =
-        (hasAnalysisRecovery || lichessGameId == null || originalMainlineSans.isEmpty || isResultLive)
+        skipLichessAnnotations
             ? const AsyncValue<Map<int, LichessMoveAnnotation>?>.data(null)
             : ref.watch(
               lichessMoveAnnotationsProvider(
                 LichessMoveAnnotationsParams(
                   lichessGameId: lichessGameId,
                   siteUrl: lichessSiteUrl,
+                  broadcastRoundId: lichessBroadcastRoundId,
                   signature: movesSignature,
                   moveSans: originalMainlineSans,
                   isLiveGame: false,
@@ -5139,10 +5168,10 @@ class _BoardPaneContent extends HookConsumerWidget {
           chessGame.value,
         );
         return mergeReportMoveAnnotations(
-          lichessAnnotations: {
-            ...lichessAnnotations,
-            ...pgnChesseverAnnotations,
-          },
+          lichessAnnotations: mergeReportMoveAnnotations(
+            lichessAnnotations: lichessAnnotations,
+            reportAnnotations: pgnChesseverAnnotations,
+          ),
           reportAnnotations: reportAnnotations,
           reportAnalyzedPlies: reportAnalyzedPlies,
         );
@@ -5879,7 +5908,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       );
     }
 
-    final boardLikeGame = desktopLikeableBoardGame(boardArgs?.sourceGame);
+    final boardLikeGame = useMemoized(() => _boardLikeGameForTab(boardArgs), [
+      boardArgs,
+    ]);
     final boardLikeAction =
         boardFocusMode || boardLikeGame == null
             ? null
@@ -9461,6 +9492,43 @@ bool _isPromotionPawnMove(Position position, NormalMove move) {
       (move.to.rank == Rank.eighth && position.turn == Side.white);
 }
 
+GamesTourModel? _boardLikeGameForTab(BoardTabGameArgs? args) {
+  final sourceGame = args?.sourceGame;
+  if (args == null ||
+      args.accessContext?.origin != DesktopDiscoveryOrigin.miniatures) {
+    return desktopLikeableBoardGame(sourceGame);
+  }
+  // The list carries only a Gamebase ID. Wait for the board's PGN so a
+  // broadcast copy can't display or create a like under the wrong ID.
+  if (!pgnHasMoves(args.pgn)) return null;
+
+  var game = sourceGame;
+  if (game == null) {
+    // Route rail opens and detached boards can have only a summary.
+    final summary =
+        args.routeGames.where((row) => row.id == args.gameId).firstOrNull ??
+        args.eventGames.where((row) => row.id == args.gameId).firstOrNull;
+    if (summary == null) return null;
+    game = gamesTourModelFromTournamentSummary(
+      summary,
+      source: GameSource.gamebase,
+    );
+  }
+  if (game.source != GameSource.gamebase) return desktopLikeableBoardGame(game);
+
+  final headers = PgnGame.parsePgn(args.pgn).headers;
+  final broadcastId =
+      headers['ChessEverSource'] == 'broadcasting_supabase'
+          ? headers['ChessEverGameId']?.trim()
+          : null;
+  return desktopLikeableBoardGame(
+    game.copyWith(
+      pgn: args.pgn,
+      sourceGameId: broadcastId == '' ? null : broadcastId,
+    ),
+  );
+}
+
 /// The game a board's Like button acts on: the phone's likeable sources
 /// (`_isLikeableGameSource`), broadcast, Gamebase, TWIC and saved analyses,
 /// whose like identity is their original game (`GamesTourModel.likeId`).
@@ -12244,10 +12312,10 @@ String _moveLabel(List<_Ply> history, int cursor) {
 /// segment.
 String? _extractLichessGameId(Map<String, String> headers) {
   final candidates = <String?>[
-    headers['Site'],
     headers['LichessId'],
     headers['LichessGameId'],
     headers['LichessURL'],
+    headers['Site'],
     headers['SiteUrl'],
     headers['Source'],
   ];

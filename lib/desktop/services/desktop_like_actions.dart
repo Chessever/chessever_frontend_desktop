@@ -20,6 +20,7 @@ Future<bool?> toggleDesktopGameLike({
   required BuildContext context,
   required WidgetRef ref,
   required GamesTourModel game,
+  String? legacyLikeId,
 }) async {
   // Likes live on the account (My Likes on every device, and the community
   // ranking), so a guest or signed-out window signs in first, then the like
@@ -50,8 +51,25 @@ Future<bool?> toggleDesktopGameLike({
     return null;
   }
   final notifier = ref.read(likedGamesProvider.notifier);
-  final wasLiked = notifier.isLiked(likeId);
-  final nowLiked = await notifier.toggle(game);
+  final legacyLike =
+      legacyLikeId == null
+          ? null
+          : ref
+              .read(likedGamesProvider)
+              .valueOrNull
+              ?.where((like) => like.sourceGameId == legacyLikeId)
+              .firstOrNull;
+  final canonicalLiked = notifier.isLiked(likeId);
+  final wasLiked = canonicalLiked || legacyLike != null;
+  var nowLiked =
+      canonicalLiked || legacyLike == null
+          ? await notifier.toggle(game)
+          : false;
+  // Older app versions could save the same game under the Gamebase ID.
+  // Remove that saved like too when the viewer unlikes from the board.
+  if (!nowLiked && legacyLike != null) {
+    nowLiked = !await notifier.removeAnalysis(legacyLike);
+  }
   if (!context.mounted) return nowLiked == wasLiked ? null : nowLiked;
   if (nowLiked == wasLiked) {
     showDesktopToast(

@@ -18,6 +18,84 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   for (final mode in NotationLayoutMode.values) {
+    testWidgets('shows Lichess advice alongside variations in ${mode.name}', (
+      tester,
+    ) async {
+      const whiteAdvice = 'Inaccuracy. d4 was best.';
+      const blackAdvice = 'Mistake. c5 was best.';
+      final game = ChessGame.fromPgn(
+        'lichess-advice',
+        '1. e4 {[%clk 1:00] $whiteAdvice} (1. d4 d5) '
+        'e5 (1... c5 2. Nf3) 2. Nf3 1-0',
+      );
+      final layout = ValueNotifier(mode);
+      final collapse = NotationVariationCollapseController();
+      addTearDown(layout.dispose);
+      await tester.pumpWidget(
+        _host(
+          game: game,
+          onJump: (_) {},
+          activePointer: const [],
+          layoutModeController: layout,
+          variationCollapseController: collapse,
+          onSetMoveComment: (_, _) {},
+          lichessAnnotations: const {
+            0: LichessMoveAnnotation(
+              type: LichessMoveAnnotationType.inaccuracy,
+              comment: whiteAdvice,
+            ),
+            1: LichessMoveAnnotation(
+              type: LichessMoveAnnotationType.mistake,
+              comment: blackAdvice,
+            ),
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final whiteText = find.textContaining(whiteAdvice, findRichText: true);
+      final blackText = find.textContaining(blackAdvice, findRichText: true);
+      final blackMove = find.text('e5', findRichText: true);
+      final whiteAlternative = find.text('d4', findRichText: true);
+      final blackAlternative = find.text('c5', findRichText: true);
+      expect(whiteText, findsOneWidget);
+      expect(blackText, findsOneWidget);
+      expect(whiteAlternative, findsOneWidget);
+      expect(blackAlternative, findsOneWidget);
+      final whiteLabel = tester.widget<RichText>(whiteText);
+      expect(
+        whiteAdvice.allMatches(whiteLabel.text.toPlainText()),
+        hasLength(1),
+      );
+      if (mode == NotationLayoutMode.ladder) {
+        expect(
+          tester.getTopLeft(whiteText).dy,
+          lessThan(tester.getTopLeft(whiteAlternative).dy),
+        );
+        expect(
+          tester.getTopLeft(blackText).dy,
+          lessThan(tester.getTopLeft(blackAlternative).dy),
+        );
+      }
+
+      collapse.collapseAll();
+      await tester.pumpAndSettle();
+      expect(blackText, findsOneWidget);
+      await tester.tapAt(
+        tester.getCenter(blackMove),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Hide All Annotations'));
+      await tester.pumpAndSettle();
+      expect(whiteText, findsNothing);
+      expect(blackText, findsNothing);
+      expect(blackAlternative, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final mode in NotationLayoutMode.values) {
     testWidgets('evp stays hidden in root mainline and variation ${mode.name}', (
       tester,
     ) async {
@@ -569,6 +647,7 @@ void main() {
       expect(find.text('?'), findsNothing);
       expect(find.text('±'), findsOneWidget);
       expect(find.byType(SvgPicture), findsNothing);
+      expect(find.text('Incoming commentary stays.'), findsOneWidget);
     },
   );
 
