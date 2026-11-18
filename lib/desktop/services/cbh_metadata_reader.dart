@@ -3,12 +3,15 @@ import 'dart:io';
 import 'cbh_index_reader.dart';
 
 /// Text and date fields from the four fixed-record classic CBH metadata files.
-/// Unrecognized bytes fail conversion instead of silently changing names.
+/// Unrecognized bytes fail conversion except in the optional, archived source title.
 final class CbhMetadataReader {
   CbhMetadataReader(this.files);
 
   final CbhFileSet files;
   final _metadataWhitespaceRecords = <int>{};
+  final _omittedSourceTitleRecords = <int>{};
+
+  int get omittedSourceTitleRecords => _omittedSourceTitleRecords.length;
 
   /// Game records with readable TAB-to-space normalization, counted once each.
   int get normalizedWhitespaceRecords => _metadataWhitespaceRecords.length;
@@ -41,7 +44,14 @@ final class CbhMetadataReader {
       site: _text(event, 49, 30, recordNumber, 'Event site (.cbt)'),
       eventDate: _date(event, 79),
       annotator: _text(annotator, 9, 45, recordNumber, 'Annotator (.cbc)'),
-      sourceTitle: _text(source, 9, 25, recordNumber, 'Source title (.cbs)'),
+      sourceTitle: _text(
+        source,
+        9,
+        25,
+        recordNumber,
+        'Source title (.cbs)',
+        omitUnreadableSourceTitle: true,
+      ),
       sourcePublisher: _text(
         source,
         34,
@@ -91,22 +101,33 @@ final class CbhMetadataReader {
     int start,
     int width,
     int recordNumber,
-    String field,
-  ) {
+    String field, {
+    bool omitUnreadableSourceTitle = false,
+  }) {
     final end = bytes.indexOf(0, start);
     final actualEnd = end >= start && end < start + width ? end : start + width;
     final value = StringBuffer();
+    var normalizedTab = false;
+    String unreadable(String message) {
+      // The full .cbs row is already archived in ChessBaseSourceRecord.
+      if (omitUnreadableSourceTitle) {
+        _omittedSourceTitleRecords.add(recordNumber);
+        return '';
+      }
+      throw CbhFormatException(message);
+    }
+
     for (var i = start; i < actualEnd; i++) {
       final byte = bytes[i];
       if (byte == 0x09) {
-        _metadataWhitespaceRecords.add(recordNumber);
+        normalizedTab = true;
         // PGN tag text uses a printable space. The unmodified source record
         // remains available in CbhGameMetadata and its raw PGN archive tag.
         value.write(' ');
         continue;
       }
       if (byte < 0x20) {
-        throw CbhFormatException(
+        return unreadable(
           'Record $recordNumber: Unsupported control byte '
           '0x${byte.toRadixString(16).padLeft(2, '0')} in $field.',
         );
@@ -116,7 +137,7 @@ final class CbhMetadataReader {
       } else {
         final mapped = _windows1252[byte - 0x80];
         if (mapped == 0) {
-          throw CbhFormatException(
+          return unreadable(
             'Record $recordNumber: Unsupported text byte '
             '0x${byte.toRadixString(16).padLeft(2, '0')} in $field.',
           );
@@ -124,6 +145,7 @@ final class CbhMetadataReader {
         value.writeCharCode(mapped);
       }
     }
+    if (normalizedTab) _metadataWhitespaceRecords.add(recordNumber);
     return value.toString();
   }
 

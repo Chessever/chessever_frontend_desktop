@@ -161,6 +161,16 @@ class CbhConversionService {
               detail,
             ].join('\n');
           }
+          if (conversion.omittedSourceTitleRecords != 0) {
+            final count = conversion.omittedSourceTitleRecords;
+            final detail =
+                '$count ${count == 1 ? 'record has an unreadable ChessBase source title' : 'records have unreadable ChessBase source titles'}. '
+                'The original source metadata is retained in PGN headers.';
+            _preservationSummary = [
+              if (_preservationSummary != null) _preservationSummary!,
+              detail,
+            ].join('\n');
+          }
           if (_cancelled) {
             await copy.delete();
             return null;

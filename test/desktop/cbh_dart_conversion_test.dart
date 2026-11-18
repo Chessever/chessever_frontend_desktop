@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -5,10 +6,123 @@ import 'package:chessever/desktop/services/cbh_dart_conversion.dart';
 import 'package:chessever/desktop/services/cbh_conversion_service.dart';
 import 'package:chessever/desktop/services/cbh_index_reader.dart';
 import 'package:chessever/desktop/services/cbh_move_tables.dart';
+import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  for (final badTrailer in [false, true]) {
+    test(
+      'v3 guiding text is inert and archived; badTrailer=$badTrailer',
+      () async {
+        final root = await Directory.systemTemp.createTemp('cbh-guiding-v3-');
+        addTearDown(() => root.delete(recursive: true));
+        final source = await _plainGame(root);
+        final index = await source.readAsBytes();
+        index[46] = 2;
+        await source.writeAsBytes(index);
+        final html = utf8.encode(
+          '<html><body>Study <b>café</b> &amp; plan. {x}<script>hidden()</script></body></html>',
+        );
+        final frame = Uint8List.fromList([
+          0x80,
+          0,
+          0,
+          0,
+          3,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          84,
+          1,
+          1,
+          0,
+          0,
+          0,
+          html.length,
+          0,
+          0,
+          0,
+          ...html,
+          if (badTrailer) 1 else 0,
+          0,
+          0,
+          0,
+        ]);
+        frame[3] = frame.length;
+        await File(
+          p.join(root.path, 'sample.cbg'),
+        ).writeAsBytes([...Uint8List(26), ...frame]);
+        final output = Directory(p.join(root.path, 'converted'));
+        final c = CbhDartConversion(destination: output);
+        if (badTrailer) {
+          await expectLater(
+            c.convert(source.path),
+            throwsA(
+              isA<CbhFormatException>().having(
+                (e) => e.message,
+                'message',
+                contains('trailer'),
+              ),
+            ),
+          );
+          expect(await output.exists(), isFalse);
+          return;
+        }
+        final pgn = await (await c.convert(source.path)).readAsString();
+        expect(pgn, contains('[ChessBaseRecordType "GuidingText"]'));
+        expect(
+          pgn,
+          contains('[ChessBaseGuidingText "${base64Encode(frame)}"]'),
+        );
+        expect(pgn, contains('Study café & plan. &#123;x&#125;'));
+        expect(pgn, isNot(contains('hidden()')));
+        expect(pgn.trimRight(), endsWith(' *'));
+        final parsed = ChessGame.fromPgn('guiding', pgn);
+        expect(parsed.mainline, isEmpty);
+        expect(parsed.rootComments.single, contains('Title (language 0): T'));
+        expect(parsed.rootComments.single, contains('Study café & plan.'));
+      },
+    );
+  }
+
+  test(
+    'archives an unreadable optional source title without losing the game',
+    () async {
+      final root = await Directory.systemTemp.createTemp('cbh-source-title-');
+      addTearDown(() => root.delete(recursive: true));
+      final source = await _plainGame(root);
+      final cbs = File(p.join(root.path, 'sample.cbs'));
+      final bytes = await cbs.readAsBytes();
+      bytes.setRange(37, 41, [0x19, 0xaa, 0x0e, 0xff]);
+      bytes.setRange(62, 65, 'Pub'.codeUnits);
+      await cbs.writeAsBytes(bytes);
+      final service = CbhConversionService(
+        destination: Directory(p.join(root.path, 'converted')),
+      );
+      final pgn =
+          await File((await service.convert(source.path))!).readAsString();
+      expect(pgn, isNot(contains('[SourceTitle ')));
+      expect(pgn, contains('[Source "Pub"]'));
+      expect(
+        pgn,
+        contains(
+          '[ChessBaseSourceRecord "${base64Encode(bytes.sublist(28))}"]',
+        ),
+      );
+      expect(pgn, contains('1. e4 e5 1-0'));
+      expect(
+        service.preservationSummary,
+        contains('1 record has an unreadable ChessBase source title'),
+      );
+      expect(await cbs.readAsBytes(), bytes);
+    },
+  );
+
   test(
     'publishes a complete plain game as PGN without a native helper',
     () async {

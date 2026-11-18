@@ -1,9 +1,8 @@
-import 'dart:convert';
-
 import 'package:dartchess/dartchess.dart';
 
 import 'cbh_frame_reader.dart';
 import 'cbh_index_reader.dart';
+import 'cbh_utf8.dart';
 import 'cbh_move_tables.dart';
 
 /// Decodes classic-CBH move trees with an independent Dart board.
@@ -196,7 +195,7 @@ final class CbhMoveDecoder {
 
   static String _commentText(List<int> bytes) {
     try {
-      return utf8.decode(bytes, allowMalformed: false);
+      return decodeCbhUtf8(bytes);
     } on FormatException {
       const cp1252 = <int, int>{
         0x80: 0x20ac,

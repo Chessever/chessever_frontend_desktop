@@ -158,7 +158,7 @@ class _CbhConvertDialogState extends State<CbhConvertDialog> {
                   const SizedBox(height: 8),
                   const Text(
                     'Select the .cbh index together with its .cbp, .cbt, .cbc, .cbs, .cbg, and .cba files. Unencrypted CBV archives can be opened directly. Variations, custom starting positions, and null moves are decoded. Original annotation frames are kept exactly in PGN headers.\n\n'
-                    'No records are skipped. Guiding text, Chess960, and invalid moves stop conversion; the original files stay unchanged. Text bytes that cannot be displayed remain in the archived annotation frame.\n\n'
+                    'No records are skipped. Supported guiding text is kept as readable notes. Unknown guiding text formats, Chess960, and invalid moves stop conversion; the original files stay unchanged. Text bytes that cannot be displayed remain in the archived annotation frame.\n\n'
                     'Copies go to Converted Databases. Edited copies are never overwritten.',
                     style: TextStyle(fontSize: 12, color: Color(0xFFA1A1AA)),
                   ),
