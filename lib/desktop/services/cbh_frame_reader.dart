@@ -10,6 +10,18 @@ final class CbhFrameReader {
   final CbhFileSet files;
   static const _maximumFrameBytes = 16 * 1024 * 1024;
 
+  Future<Uint8List> guidingText(CbhIndexRecord record) async {
+    final file = files.file('.cbg');
+    final header = await _read(file, record.gameOffset, 4);
+    final size = (header[1] << 16) | (header[2] << 8) | header[3];
+    if (size < 11 || size > _maximumFrameBytes) {
+      throw CbhFormatException(
+        'Record ${record.ordinal + 1}: invalid guiding text frame length.',
+      );
+    }
+    return _read(file, record.gameOffset, size);
+  }
+
   Future<CbhGameFrame> game(CbhIndexRecord record) async {
     final file = files.file('.cbg');
     final header = await _read(file, record.gameOffset, 4);

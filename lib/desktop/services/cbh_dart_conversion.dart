@@ -9,6 +9,7 @@ import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/web/page_yield.dart';
 
 import 'cbh_frame_reader.dart';
+import 'cbh_guiding_text.dart';
 import 'cbh_index_reader.dart';
 import 'cbh_metadata_reader.dart';
 import 'cbh_move_decoder.dart';
@@ -27,9 +28,11 @@ final class CbhDartConversion {
   final void Function(int done, int total)? onProgress;
   int preservedAnnotationRecords = 0;
   int normalizedMetadataRecords = 0;
+  int omittedSourceTitleRecords = 0;
 
   Future<File> convert(String sourcePath) async {
     normalizedMetadataRecords = 0;
+    omittedSourceTitleRecords = 0;
     _checkCancellation();
     final files = await CbhIndexReader.open(sourcePath);
     if (files.records.isEmpty) {
@@ -44,9 +47,27 @@ final class CbhDartConversion {
       if (pageYieldDue) await yieldToPage();
       _checkCancellation();
       if (record.guidingText) {
-        throw CbhFormatException(
-          'Record ${record.ordinal + 1}: guiding text is not decoded yet.',
-        );
+        final raw = await frames.guidingText(record);
+        final text = decodeCbhGuidingText(raw, record.ordinal + 1);
+        gameText
+          ..writeln('[Event "ChessBase guiding text"]')
+          ..writeln('[Site "?"]')
+          ..writeln('[Date "????.??.??"]')
+          ..writeln('[Round "?"]')
+          ..writeln('[White "?"]')
+          ..writeln('[Black "?"]')
+          ..writeln('[Result "*"]')
+          ..writeln('[ChessBaseRecordType "GuidingText"]')
+          ..writeln('[ChessBaseIndex "${base64Encode(record.raw)}"]')
+          ..writeln('[ChessBaseGuidingText "${base64Encode(raw)}"]')
+          ..writeln(
+            '[ChessBasePreservation "original text container retained; formatting and embedded objects not rendered"]',
+          )
+          ..writeln()
+          ..writeln('{$text} *')
+          ..writeln();
+        onProgress?.call(record.ordinal + 1, files.records.length);
+        continue;
       }
       final frame = await frames.game(record);
       final annotations = await frames.annotations(record);
@@ -78,6 +99,7 @@ final class CbhDartConversion {
       onProgress?.call(record.ordinal + 1, files.records.length);
     }
     normalizedMetadataRecords = metadata.normalizedWhitespaceRecords;
+    omittedSourceTitleRecords = metadata.omittedSourceTitleRecords;
     _checkCancellation();
     final finalHashes = await _hashes(files);
     for (final extension in CbhIndexReader.extensions) {

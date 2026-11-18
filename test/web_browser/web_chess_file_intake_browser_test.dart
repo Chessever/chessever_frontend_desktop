@@ -18,6 +18,7 @@ import 'package:web/web.dart' as web;
 
 import 'package:chessever/desktop/services/cbh_conversion_service.dart';
 import 'package:chessever/desktop/services/cbh_move_tables.dart';
+import 'package:chessever/desktop/services/cbh_utf8.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/local_chess_database_repository.dart';
 import 'package:chessever/desktop/services/web_file_intake.dart';
@@ -28,6 +29,16 @@ import 'harness.dart';
 
 void main() {
   setUpAll(mountBrowserLocalDatabase);
+
+  test('long CBH comments keep characters split across Wasm UTF-8 slices', () {
+    final text =
+        '${List.filled(511, 'a').join()}♞${List.filled(2500, 'é').join()}';
+    expect(decodeCbhUtf8(utf8.encode(text)), text);
+    expect(
+      () => decodeCbhUtf8([...utf8.encode(text), 0xe2]),
+      throwsFormatException,
+    );
+  });
 
   setUp(() async {
     final output = await Directory.systemTemp.createTemp('web_cbh_test_');
