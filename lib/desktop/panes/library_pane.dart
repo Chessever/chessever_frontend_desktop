@@ -418,7 +418,7 @@ class LibraryPane extends HookConsumerWidget {
       }
       final List<String>? paths;
       try {
-        paths = await pickLibraryPgnDatabasePaths();
+        paths = await pickLibraryPgnDatabasePathsWithRecovery(context);
       } catch (error) {
         if (context.mounted) {
           showDesktopToast(
