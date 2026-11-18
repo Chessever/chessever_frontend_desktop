@@ -108,6 +108,7 @@ fi
 flutter config --enable-linux-desktop
 export FLUTTER_ROOT="${FLUTTER_ROOT:-$(cd "$(dirname "$(command -v flutter)")/.." && pwd)}"
 rm -rf dist
+python3 scripts/ci/stage_onnxruntime.py linux
 dart run desktop_updater:release linux --release "${DART_DEFINES[@]}"
 
 echo "Linux release bundle staged under dist/"

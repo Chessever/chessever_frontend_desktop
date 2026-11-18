@@ -197,6 +197,11 @@ if (Test-Path dist) {
     Remove-Item dist -Recurse -Force
 }
 
+python scripts/ci/stage_onnxruntime.py windows
+if ($LASTEXITCODE -ne 0) {
+    throw "ONNX Runtime staging failed with exit code $LASTEXITCODE"
+}
+
 flutter build windows --release @dartDefines
 if ($LASTEXITCODE -ne 0) {
     throw "flutter build windows failed with exit code $LASTEXITCODE"
