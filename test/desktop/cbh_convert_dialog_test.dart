@@ -50,6 +50,39 @@ class PreservationConverter extends RecordingConverter {
 }
 
 void main() {
+  testWidgets('the file list and Cancel remain reachable in a small viewport', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 280);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder:
+              (context) => Center(
+                child: GestureDetector(
+                  onTap: () => showCbhConvertDialog(context, 'example.cbh'),
+                  child: const Text('Open database'),
+                ),
+              ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open database'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('.cbg, and .cba'), findsOneWidget);
+    await tester.ensureVisible(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Open ChessBase database?'), findsNothing);
+  });
+
   testWidgets('conversion errors stay visible outside Details', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -148,13 +181,13 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.textContaining('Classic CBH requires its seven companion files.'),
+      find.textContaining('Select the .cbh index together with its'),
       findsNothing,
     );
     await tester.tap(find.text('Details'));
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('Classic CBH requires its seven companion files.'),
+      find.textContaining('Select the .cbh index together with its'),
       findsOneWidget,
     );
     expect(converter.calls, 0);
@@ -168,7 +201,7 @@ void main() {
     await tester.tap(find.text('Hide details'));
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('Classic CBH requires its seven companion files.'),
+      find.textContaining('Select the .cbh index together with its'),
       findsNothing,
     );
     await tester.tap(find.text('Convert & Open'));

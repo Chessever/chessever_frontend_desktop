@@ -4,18 +4,28 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/cbh_conversion_service.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
+import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 
-/// Lets the user pick PGN files for the Library local-database import flow.
+/// Lets the user pick chess databases for the Library's local import flow.
 Future<List<String>?> pickLibraryPgnDatabasePaths() async {
+  const title = 'Import chess files';
+  final extensions = [
+    ...localChessPickerExtensions,
+    if (CbhConversionService.isAvailable)
+      ...CbhConversionService.pickerExtensions,
+  ];
+  if (kIsWeb) {
+    return pickWebChessFilesIntoAppStorage(
+      dialogTitle: title,
+      allowedExtensions: extensions,
+    );
+  }
   final result = await FilePicker.platform.pickFiles(
-    dialogTitle: 'Import PGN',
+    dialogTitle: title,
     type: FileType.custom,
-    allowedExtensions: [
-      'pgn',
-      if (CbhConversionService.isAvailable) ...['cbh', 'cbv'],
-    ],
+    allowedExtensions: extensions,
     allowMultiple: true,
     withData: false,
     lockParentWindow: true,
@@ -35,23 +45,37 @@ Future<String?> openLibraryPgnDatabasePaths(
   List<String> paths,
 ) async {
   if (paths.isEmpty) return null;
+  final context = ref.context;
   final opened = await ref
       .read(localChessLibraryProvider.notifier)
       .openPaths(paths, sourceLabel: libraryPgnImportSourceLabel(paths));
-  if (!opened) return null;
+  if (!opened || !context.mounted) return null;
   return ref.read(localChessLibraryProvider).selectedPath;
 }
 
-/// Picks PGN files from the Library Import action and opens them as a local
+/// Picks chess files from the Library Import action and opens them as a local
 /// desktop database.
-Future<String?> pickAndOpenLibraryPgnDatabase(WidgetRef ref) async {
-  if (!await ensureWebPgnAccess(ref.context, importing: true)) return null;
-  final paths =
-      kIsWeb
-          ? await pickWebChessFilesIntoAppStorage(dialogTitle: 'Import PGN')
-          : await pickLibraryPgnDatabasePaths();
-  if (paths == null) return null;
-  return openLibraryPgnDatabasePaths(ref, paths);
+Future<String?> pickAndOpenLibraryPgnDatabase(
+  WidgetRef ref, {
+  void Function(String message)? onError,
+}) async {
+  final context = ref.context;
+  if (!await ensureWebPgnAccess(context, importing: true) || !context.mounted) {
+    return null;
+  }
+  try {
+    final paths = await pickLibraryPgnDatabasePaths();
+    if (paths == null || !context.mounted) return null;
+    final path = await openLibraryPgnDatabasePaths(ref, paths);
+    if (path == null && context.mounted) {
+      final error = ref.read(localChessLibraryProvider).error;
+      if (error != null) onError?.call(error);
+    }
+    return path;
+  } catch (error) {
+    if (context.mounted) onError?.call(localChessOpenErrorMessage(error));
+    return null;
+  }
 }
 
 @visibleForTesting
@@ -70,7 +94,7 @@ String libraryPgnImportSourceLabel(List<String> paths) {
   if (paths.length == 1) {
     return _fileName(paths.single);
   }
-  return '${paths.length} PGN files';
+  return localChessDatabaseDisplayNameForPaths(paths);
 }
 
 String _fileName(String path) {

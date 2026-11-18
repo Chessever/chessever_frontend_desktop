@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
+import 'package:chessever/web/page_yield.dart';
 
 import 'cbh_frame_reader.dart';
 import 'cbh_index_reader.dart';
@@ -40,6 +41,7 @@ final class CbhDartConversion {
     final gameText = StringBuffer();
     preservedAnnotationRecords = 0;
     for (final record in files.records) {
+      if (pageYieldDue) await yieldToPage();
       _checkCancellation();
       if (record.guidingText) {
         throw CbhFormatException(

@@ -105,7 +105,7 @@ Remove the storage key and reload to disable sampling.
 | Leela (lc0) bot | Not available | No browser build of lc0; marked Unavailable and left out of tournament setup |
 | Engine tournaments | Same | Conductor runs in the page; no loopback server |
 | Local databases, opening trees, Prepare | Same | sqlite3 Wasm (`lib/web/shims/local_sqlite_web.dart`, the browser half of the local SQLite driver) over an IndexedDB-backed filesystem (`lib/web/web_file_system.dart`). One tab saves: a second tab of the app loads the stored files but keeps its own changes in memory without a banner, because two tabs writing chunks into one store corrupt database files. `lib/web/web_storage_notice.dart` reports only a private window and a full browser quota. Checked in Chrome by `test/web_browser/` (`flutter test --platform chrome --wasm`, with `test/web_browser/serve_wasm.py` running); Firefox and Safari run the same Wasm build but have no automated run yet |
-| Import PGN, Paste, drag-and-drop files and folders, folder pickers | Same | Picked or dropped files are copied into browser storage (`web_file_intake.dart`); folders through `webkitdirectory` |
+| Import chess databases, Paste PGN, drag-and-drop files and folders | Same for supported formats | The Library accepts PGN, bzip2 and Zstandard PGN, classic CBH, and unencrypted CBV. Pick or drop the `.cbh` and all six matching companions together, or select their folder. Each selection is copied into browser storage with its relative paths. The shared Dart converter opens ChessBase databases as PGN. Guiding text, Chess960, and other unsupported ChessBase encodings still stop conversion on both platforms. |
 | Save / export PGN, save board image | Downloads | `lib/web/text_download.dart` |
 | Copy board image | Clipboard | `ClipboardItem` (image/png) |
 | Share board image | Browser share sheet | `share_plus` with `XFile.fromData` |
@@ -131,7 +131,7 @@ Remove the storage key and reload to disable sampling.
 |---|---|---|---|
 | `web` | 1.1.1 | 1.1.2 | Used for every browser API above; patch update optional |
 | `desktop_drop` | 0.6.1 | 0.9.2 (2026-10-20) | Stay. 0.9 fixes drops that carry no filesystem entry on the web, but rewrites the drop API (`onDrop`, `DropFileItem`, `cross_file` 0.4) across six files and every desktop platform; migrate together with a desktop test pass |
-| `file_picker` | 8.3.7 | 13.3.0 (2026-10-26) | Stay. Picking with `withData` works on the web; folders use `webkitdirectory` directly |
+| `file_picker` | 8.3.7 | 13.3.0 (2026-10-26) | Stay. Picking with `withData` works on the web. Chess import uses the File System Access API or a browser file input, with `webkitdirectory` for folders |
 | `sqlite3` | 3.8.0 (vendored `web/sqlite/sqlite3-3.8.0.wasm`, loaded by `lib/web/shims/local_sqlite_web.dart`) | 3.8.0 (2026-10-23) | Upgraded when `resqlite` was removed; now the local database driver on desktop and web. The vendored Wasm must match the package version exactly (a mismatch is a LinkError at load); upgrade both together, `test/web/local_sqlite_wasm_version_test.dart` checks it. `sqlite3-3.3.3.wasm` stays for one deploy so tabs opened before the 3.8.0 deploy can still load; delete it in the next web release |
 | `flutter_onnxruntime` | 1.6.4 | 1.9.0 (2026-10-06) | Not used on the web: its web plugin passes Dart objects to JavaScript, which fails in a Wasm build; Maia uses its own bindings |
 | `stockfish` | 1.8.1 | 1.8.1 | Native only; the web build swaps in the Worker shim |

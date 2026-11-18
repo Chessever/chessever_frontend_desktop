@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
+import 'package:chessever/web/page_yield.dart';
 
 import 'cbh_index_reader.dart';
 
@@ -17,8 +18,9 @@ final class CbvArchiveReader {
 
   static Future<String> extractDatabase(
     File archive,
-    Directory destination,
-  ) async {
+    Directory destination, {
+    bool Function()? isCancelled,
+  }) async {
     final length = await archive.length();
     if (length < 8 || length > _maximumArchiveBytes) {
       throw const CbhFormatException('Invalid or oversized CBV archive.');
@@ -69,6 +71,10 @@ final class CbvArchiveReader {
       final memberEnd = cursor + compressedSize;
       final output = BytesBuilder(copy: false);
       while (cursor < memberEnd) {
+        if (pageYieldDue) await yieldToPage();
+        if (isCancelled?.call() == true) {
+          throw const CbhFormatException('CBV extraction cancelled.');
+        }
         if (memberEnd - cursor < 5) {
           throw const CbhFormatException('Truncated CBV block.');
         }

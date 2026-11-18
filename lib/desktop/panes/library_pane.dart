@@ -59,7 +59,6 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/local_source_deletion.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
-import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/active_database_workspace_paste.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -417,18 +416,27 @@ class LibraryPane extends HookConsumerWidget {
           !context.mounted) {
         return;
       }
-      final paths =
-          kIsWeb
-              ? await pickWebChessFilesIntoAppStorage(dialogTitle: 'Import PGN')
-              : await pickLibraryPgnDatabasePaths();
+      final List<String>? paths;
+      try {
+        paths = await pickLibraryPgnDatabasePaths();
+      } catch (error) {
+        if (context.mounted) {
+          showDesktopToast(
+            context,
+            localChessOpenErrorMessage(error),
+            error: true,
+          );
+        }
+        return;
+      }
       if (paths == null) return;
       if (!context.mounted) return;
 
       showDesktopToast(
         context,
         paths.length == 1
-            ? 'Importing PGN...'
-            : 'Importing ${paths.length} PGN files...',
+            ? 'Importing chess file…'
+            : 'Importing ${paths.length} chess files…',
       );
 
       final path = await openLibraryPgnDatabasePaths(ref, paths);
@@ -439,12 +447,8 @@ class LibraryPane extends HookConsumerWidget {
       }
 
       final error = ref.read(localChessLibraryProvider).error?.trim();
-      if (error == null || error.isEmpty) {
-        showDesktopToast(
-          context,
-          'Could not import PGN. Please try another file.',
-          error: true,
-        );
+      if (error != null && error.isNotEmpty) {
+        showDesktopToast(context, error, error: true);
       }
     }
 
@@ -489,7 +493,12 @@ class LibraryPane extends HookConsumerWidget {
             paths,
             sourceLabel: localChessDatabaseDisplayNameForPaths(paths),
           );
-      if (!opened) return;
+      if (!context.mounted) return;
+      if (!opened) {
+        final error = ref.read(localChessLibraryProvider).error;
+        if (error != null) showDesktopToast(context, error, error: true);
+        return;
+      }
       final path = ref.read(localChessLibraryProvider).selectedPath;
       if (path != null) activateLocalPath(path);
     }
@@ -3697,7 +3706,7 @@ class _MyDatabasesBoard extends HookConsumerWidget {
           filteredOut
               ? 'Try another search or source filter.'
               : currentLocalGroup == null
-              ? 'Import PGN files or create a cloud database.'
+              ? 'Import chess files or create a cloud database.'
               : (currentLocalGroupIsPlayerWorkspace
                   ? 'Import PGN files or add player sources from Players.'
                   : 'Import PGN files here.'),

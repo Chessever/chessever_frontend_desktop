@@ -17,6 +17,8 @@ import 'package:chessever/desktop/services/player_opening_tree_builder.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('local chess library state', () {
     late Directory temp;
 

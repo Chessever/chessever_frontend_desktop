@@ -44,7 +44,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
   /// a folder context).
   final VoidCallback? onNewFolder;
 
-  /// Creates a cloud database. Local databases enter through Import PGN.
+  /// Creates a cloud database. Local databases enter through Import.
   final VoidCallback? onNewDatabase;
 
   /// Tooltip shown for the create-folder action while it is enabled.
@@ -53,7 +53,7 @@ class LibraryActionsToolbar extends ConsumerWidget {
   /// Tooltip shown for the create-folder action while it is disabled.
   final String? disabledNewFolderTooltip;
 
-  /// Opens picked PGN files as a persistent local database. This action must
+  /// Opens picked chess files as a persistent local database. This action must
   /// not stage games in the temporary Library import preview.
   final VoidCallback onImportPgnFiles;
 
@@ -127,9 +127,8 @@ class LibraryActionsToolbar extends ConsumerWidget {
         children: [
           if (showImportAction) ...[
             _IconAction(
-              tooltip: 'Import PGN file — pick .pgn files from disk',
-              label:
-                  showLabels ? (compactLabels ? 'Import' : 'Import PGN') : null,
+              tooltip: 'Import PGN, compressed PGN, or ChessBase files',
+              label: showLabels ? 'Import' : null,
               icon: Icons.file_upload_rounded,
               accent: const Color(0xFFFBBF24),
               buttonSize: buttonSize,

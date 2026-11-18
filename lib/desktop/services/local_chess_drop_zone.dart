@@ -9,6 +9,9 @@ import 'package:chessever/desktop/services/local_chess_file_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/mac_sandbox_file_picker.dart';
 import 'package:chessever/desktop/services/web_file_intake.dart';
+import 'package:chessever/desktop/state/local_chess_library.dart'
+    show localChessOpenErrorMessage;
+import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// Wraps a child widget with a drag-drop overlay for chess files/folders.
@@ -78,8 +81,16 @@ class _LocalChessDropZoneState extends State<LocalChessDropZone> {
             );
             paths = await localChessDropPaths(details.files.map((x) => x.path));
           }
-          if (paths.isEmpty) return;
+          if (paths.isEmpty || !mounted) return;
           await Future<void>.sync(() => widget.onChessPathsDropped(paths));
+        } catch (error) {
+          if (mounted) {
+            showDesktopToast(
+              context,
+              localChessOpenErrorMessage(error),
+              error: true,
+            );
+          }
         } finally {
           _dropInFlight = false;
         }

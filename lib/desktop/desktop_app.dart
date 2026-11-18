@@ -65,7 +65,9 @@ class _DesktopAppState extends ConsumerState<DesktopApp> {
   Future<String?> _convertCbh(String source) async {
     final dialogContext = _desktopNavigatorKey.currentContext;
     if (!mounted || dialogContext == null) {
-      throw const CbhConversionException('Desktop is not ready. Open the CBH again after startup.');
+      throw const CbhConversionException(
+        'ChessEver is starting. Try opening the ChessBase database again shortly.',
+      );
     }
     return showCbhConvertDialog(dialogContext, source);
   }

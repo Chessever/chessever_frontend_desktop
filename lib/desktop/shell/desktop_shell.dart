@@ -421,7 +421,10 @@ class DesktopShell extends HookConsumerWidget {
                       onError: showPgnOpenError,
                     ).pickAndLoad();
                   case CommandAction.openLocalChessFiles:
-                    final path = await pickAndOpenLibraryPgnDatabase(ref);
+                    final path = await pickAndOpenLibraryPgnDatabase(
+                      ref,
+                      onError: showPgnOpenError,
+                    );
                     if (path != null) openPane(DesktopPane.library);
                   case CommandAction.flipBoard:
                     // Owned by the Board pane via the F shortcut.

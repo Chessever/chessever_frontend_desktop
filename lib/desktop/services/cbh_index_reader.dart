@@ -59,8 +59,7 @@ final class CbhFormatException implements Exception {
 /// Reads only the bounded index and validates every referenced companion
 /// record before any game or annotation bytes are interpreted.
 final class CbhIndexReader {
-  static const extensions = <String>[
-    '.cbh',
+  static const companionExtensions = <String>[
     '.cbp',
     '.cbt',
     '.cbc',
@@ -68,6 +67,7 @@ final class CbhIndexReader {
     '.cbg',
     '.cba',
   ];
+  static const extensions = <String>['.cbh', ...companionExtensions];
   static const _headerSize = 46;
   static const _recordSize = 46;
   static const _maximumRecords = 100000;
@@ -90,7 +90,8 @@ final class CbhIndexReader {
       final file = entries['$stem$extension'];
       if (file == null) {
         throw CbhFormatException(
-          'Missing $extension companion file. Keep all seven classic CBH files together.',
+          'Missing $extension companion file. Select the .cbh and all six '
+          'matching companion files together, or import a .cbv archive.',
         );
       }
       if (await FileSystemEntity.type(file.path, followLinks: false) !=

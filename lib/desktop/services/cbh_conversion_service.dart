@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -19,7 +20,7 @@ class CbhConversionGateway {
     final callback = handler;
     if (callback == null) {
       throw const CbhConversionException(
-        'CBH conversion requires the desktop Convert & Open dialog.',
+        'ChessBase conversion requires the Convert & Open dialog.',
       );
     }
     return callback(source);
@@ -69,8 +70,15 @@ class CbhConversionService {
     'chessever_cbh.exe',
   );
 
+  static const pickerExtensions = ['cbh', 'cbv'];
+
   static bool get isAvailable =>
-      hostIsMacOS || hostIsWindows || hostIsLinux;
+      kIsWeb || hostIsMacOS || hostIsWindows || hostIsLinux;
+
+  static bool isSourcePath(String path) {
+    final extension = p.extension(path).toLowerCase();
+    return extension == '.cbh' || extension == '.cbv';
+  }
 
   Future<void> cancel() async {
     _cancelled = true;
@@ -127,6 +135,7 @@ class CbhConversionService {
             indexPath = await CbvArchiveReader.extractDatabase(
               File(source),
               extracted,
+              isCancelled: () => _cancelled,
             );
           }
           final conversion = CbhDartConversion(

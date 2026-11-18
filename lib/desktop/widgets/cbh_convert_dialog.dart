@@ -23,7 +23,12 @@ Future<String?> showCbhConvertDialog(
     return await showDesktopDialog<String>(
       context,
       barrierDismissible: false,
-      child: CbhConvertDialog(source: source),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: CbhConvertDialog(source: source),
+        ),
+      ),
     );
   } finally {
     _dialogOpen = false;
@@ -144,12 +149,15 @@ class _CbhConvertDialogState extends State<CbhConvertDialog> {
                   onPress:
                       () =>
                           setState(() => _detailsExpanded = !_detailsExpanded),
-                  child: Text(_detailsExpanded ? 'Hide details' : 'Details'),
+                  mainAxisSize: MainAxisSize.min,
+                  child: Flexible(
+                    child: Text(_detailsExpanded ? 'Hide details' : 'Details'),
+                  ),
                 ),
                 if (_detailsExpanded) ...[
                   const SizedBox(height: 8),
                   const Text(
-                    'Classic CBH requires its seven companion files. Unencrypted CBV archives can be opened directly. Variations, custom starting positions, and null moves are decoded. Original annotation frames are kept exactly in PGN headers; some ChessBase annotation types are not displayed.\n\n'
+                    'Select the .cbh index together with its .cbp, .cbt, .cbc, .cbs, .cbg, and .cba files. Unencrypted CBV archives can be opened directly. Variations, custom starting positions, and null moves are decoded. Original annotation frames are kept exactly in PGN headers.\n\n'
                     'No records are skipped. Guiding text, Chess960, and invalid moves stop conversion; the original files stay unchanged. Text bytes that cannot be displayed remain in the archived annotation frame.\n\n'
                     'Copies go to Converted Databases. Edited copies are never overwritten.',
                     style: TextStyle(fontSize: 12, color: Color(0xFFA1A1AA)),
@@ -186,7 +194,7 @@ class _CbhConvertDialogState extends State<CbhConvertDialog> {
                       _service.existingCopyChoice = 'reuse';
                       _convert();
                     },
-                    child: const Text('Open existing copy'),
+                    child: const Flexible(child: Text('Open existing copy')),
                   ),
                   const SizedBox(height: 8),
                   FButton(
@@ -195,7 +203,9 @@ class _CbhConvertDialogState extends State<CbhConvertDialog> {
                       _service.existingCopyChoice = 'fresh';
                       _convert();
                     },
-                    child: const Text('Create fresh conversion'),
+                    child: const Flexible(
+                      child: Text('Create fresh conversion'),
+                    ),
                   ),
                 ],
 
@@ -205,34 +215,44 @@ class _CbhConvertDialogState extends State<CbhConvertDialog> {
                     style: const TextStyle(color: Color(0xFFFCA5A5)),
                   ),
                 const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                OverflowBar(
+                  alignment: MainAxisAlignment.end,
+                  overflowAlignment: OverflowBarAlignment.end,
+                  spacing: 12,
+                  overflowSpacing: 8,
                   children: [
                     FButton(
+                      style: FButtonStyle.ghost(),
                       onPress: _cancelling ? null : _cancel,
-                      child: Text(
-                        _busy
-                            ? 'Cancel conversion'
-                            : _convertedPath != null
-                            ? 'Close'
-                            : 'Cancel',
+                      mainAxisSize: MainAxisSize.min,
+                      child: Flexible(
+                        child: Text(
+                          _busy
+                              ? 'Cancel conversion'
+                              : _convertedPath != null
+                              ? 'Close'
+                              : 'Cancel',
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
-                    if (!_busy && _service.existingCopyPath == null) ...[
-                      const SizedBox(width: 12),
+                    if (!_busy && _service.existingCopyPath == null)
                       FButton(
+                        mainAxisSize: MainAxisSize.min,
                         onPress:
                             _convertedPath == null
                                 ? _convert
                                 : () =>
                                     Navigator.of(context).pop(_convertedPath),
-                        child: Text(
-                          _convertedPath == null
-                              ? 'Convert & Open'
-                              : 'Open PGN',
+                        child: Flexible(
+                          child: Text(
+                            _convertedPath == null
+                                ? 'Convert & Open'
+                                : 'Open PGN',
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                       ),
-                    ],
                   ],
                 ),
               ],

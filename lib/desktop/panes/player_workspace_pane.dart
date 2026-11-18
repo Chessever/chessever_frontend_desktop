@@ -4846,11 +4846,15 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
     if (_working) return;
     if (!await ensureWebPgnAccess(context, importing: true)) return;
     if (kIsWeb) {
-      final paths = await pickWebChessFilesIntoAppStorage(
-        dialogTitle: 'Import player PGN',
-        allowedExtensions: localChessPickerExtensions,
-      );
-      if (paths != null) await _importPaths(paths);
+      try {
+        final paths = await pickWebChessFilesIntoAppStorage(
+          dialogTitle: 'Import player PGN',
+          allowedExtensions: localChessPickerExtensions,
+        );
+        if (paths != null) await _importPaths(paths);
+      } catch (error) {
+        if (mounted) setState(() => _error = localChessOpenErrorMessage(error));
+      }
       return;
     }
     final result = await FilePicker.platform.pickFiles(
@@ -4876,8 +4880,12 @@ class _ManualPgnDialogState extends State<_ManualPgnDialog> {
     if (_working) return;
     if (!await ensureWebPgnAccess(context, importing: true)) return;
     if (kIsWeb) {
-      final directory = await pickWebChessFolderIntoAppStorage();
-      if (directory != null) await _importPaths(<String>[directory]);
+      try {
+        final picked = await pickWebChessFolderIntoAppStorage();
+        if (picked != null) await _importPaths([picked.directory]);
+      } catch (error) {
+        if (mounted) setState(() => _error = localChessOpenErrorMessage(error));
+      }
       return;
     }
     final path = await FilePicker.platform.getDirectoryPath(

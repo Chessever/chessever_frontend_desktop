@@ -13,6 +13,7 @@ import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import 'package:chessever/desktop/auth/desktop_player_profile_access.dart';
 import 'package:chessever/desktop/desktop_app.dart';
+import 'package:chessever/desktop/services/converted_database_names.dart';
 import 'package:chessever/desktop/services/desktop_env.dart';
 import 'package:chessever/desktop/services/desktop_push_isolation.dart';
 import 'package:chessever/desktop/services/desktop_sentry_filter.dart';
@@ -108,6 +109,7 @@ Future<void> _boot() async {
   // live in an IndexedDB-backed filesystem mounted before anything opens one.
   await WebFileSystem.mount();
   PathProviderPlatform.instance = WebPathProvider();
+  await initializeConvertedDatabaseNames();
   print('[web] file system mounted (${elapsed()})');
 
   // The worker-backed factory needs a SharedWorker, which some browsers lack

@@ -245,7 +245,7 @@ void main() {
 
       expect(fileSource.root.playableDatabaseCount, 1);
       expect(folderSource.root.playableDatabaseCount, 1);
-    });
+    }, testOn: 'vm');
 
     test(
       'local opening tree defaults to 50 ply for normal and large imports',
@@ -889,7 +889,9 @@ void main() {
 
     test('gzip-compressed PGN databases are rejected', () async {
       final file = File('${temp.path}/archive.pgn.gz');
-      await file.writeAsBytes(gzip.encode(utf8.encode(_samplePgn)));
+      await file.writeAsBytes(
+        const GZipEncoder().encodeBytes(utf8.encode(_samplePgn)),
+      );
 
       await expectLater(
         scanLocalChessPaths(<String>[file.path]),
@@ -901,7 +903,9 @@ void main() {
       'generic gz files are rejected instead of opened as empty sources',
       () async {
         final file = File('${temp.path}/notes.gz');
-        await file.writeAsBytes(gzip.encode(utf8.encode('not a PGN database')));
+        await file.writeAsBytes(
+          const GZipEncoder().encodeBytes(utf8.encode('not a PGN database')),
+        );
 
         await expectLater(
           scanLocalChessPaths(<String>[file.path]),
@@ -914,7 +918,9 @@ void main() {
       final first = File('${temp.path}/notes.txt');
       final second = File('${temp.path}/notes.gz');
       await first.writeAsString('not chess');
-      await second.writeAsBytes(gzip.encode(utf8.encode('not chess')));
+      await second.writeAsBytes(
+        const GZipEncoder().encodeBytes(utf8.encode('not chess')),
+      );
 
       await expectLater(
         scanLocalChessPaths(<String>[first.path, second.path]),

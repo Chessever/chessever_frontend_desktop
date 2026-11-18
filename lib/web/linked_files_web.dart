@@ -6,29 +6,39 @@ import 'dart:js_interop_unsafe';
 import 'package:path/path.dart' as p;
 import 'package:web/web.dart' as web;
 
+import 'package:chessever/web/picked_web_file.dart';
 import 'package:chessever/web/web_file_system.dart';
 
 /// Whether the browser can hand back a file the app may write to again
 /// (Chrome, Edge, Opera). Firefox and Safari import a copy instead.
-bool get linkedFilesSupported => web.window.has('showOpenFilePicker');
+bool get linkedFilesSupported =>
+    web.window.getProperty<JSFunction?>('showOpenFilePicker'.toJS) != null;
 
 /// App-storage path to the user's file it mirrors.
 final Map<String, web.FileSystemFileHandle> _links = {};
 final Map<String, Timer> _pendingWrites = {};
 bool _listening = false;
 
-/// Lets the user pick PGN files, copies each into [folder] in app storage
-/// and keeps it linked: saving changes in the app writes them back to the
-/// user's file. Null when the user cancels.
-Future<List<String>?> pickLinkedChessFiles(String folder) async {
+/// Picks chess files and offers write-back for editable PGNs.
+Future<List<PickedWebFile>?> pickLinkedChessFiles({
+  required List<String> allowedExtensions,
+  required bool allowMultiple,
+}) async {
+  final otherExtensions = [
+    for (final extension in allowedExtensions)
+      if (extension != 'pgn') '.$extension',
+  ];
   final options =
       {
-        'multiple': true,
+        'multiple': allowMultiple,
         'types': [
           {
-            'description': 'Chess games',
+            'description': 'Chess files',
             'accept': {
-              'application/x-chess-pgn': ['.pgn'],
+              if (allowedExtensions.contains('pgn'))
+                'application/x-chess-pgn': ['.pgn'],
+              if (otherExtensions.isNotEmpty)
+                'application/octet-stream': otherExtensions,
             },
           },
         ],
@@ -45,28 +55,42 @@ Future<List<String>?> pickLinkedChessFiles(String folder) async {
   } catch (_) {
     return null; // Cancelled (AbortError) or refused.
   }
-  _listen();
-  await io.Directory(folder).create(recursive: true);
-  final paths = <String>[];
+  final files = <PickedWebFile>[];
   for (final handle in picked.toDart) {
-    // Asked while the picker's user gesture still counts, so later saves
-    // can write without a prompt. Declining keeps the file as a copy.
-    try {
-      await handle
-          .callMethod<JSPromise<JSString>>(
-            'requestPermission'.toJS,
-            {'mode': 'readwrite'}.jsify(),
-          )
-          .toDart;
-    } catch (_) {}
+    final extension = p.posix.extension(handle.name).toLowerCase();
+    if (extension.isEmpty ||
+        !allowedExtensions.contains(extension.substring(1))) {
+      continue;
+    }
+    if (extension == '.pgn') {
+      // Ask during the picker's user gesture so later saves can write back.
+      // Declining still lets the user work on the browser copy.
+      try {
+        await handle
+            .callMethod<JSPromise<JSString>>(
+              'requestPermission'.toJS,
+              {'mode': 'readwrite'}.jsify(),
+            )
+            .toDart;
+      } catch (_) {}
+    }
     final file = await handle.getFile().toDart;
-    final buffer = await file.arrayBuffer().toDart;
-    final path = p.join(folder, p.basename(file.name));
-    await io.File(path).writeAsBytes(buffer.toDart.asUint8List(), flush: true);
-    _links[path] = handle;
-    paths.add(path);
+    files.add(
+      PickedWebFile(
+        relativePath: file.name,
+        readAsBytes:
+            () async => (await file.arrayBuffer().toDart).toDart.asUint8List(),
+        linkTo:
+            extension == '.pgn'
+                ? (path) {
+                  _listen();
+                  _links[path] = handle;
+                }
+                : null,
+      ),
+    );
   }
-  return paths.isEmpty ? null : paths;
+  return files;
 }
 
 void _listen() {

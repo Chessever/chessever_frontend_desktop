@@ -25,6 +25,7 @@ class PgnFilePicker {
       if (kIsWeb) {
         final paths = await pickWebChessFilesIntoAppStorage(
           dialogTitle: 'Open PGN',
+          allowMultiple: false,
         );
         if (paths == null || paths.isEmpty || !ref.context.mounted) {
           return false;

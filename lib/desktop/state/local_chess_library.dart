@@ -248,8 +248,22 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
   Future<bool> pickFolder() async {
     if (!await _canImport() || !mounted) return false;
     if (kIsWeb) {
-      final directory = await pickWebChessFolderIntoAppStorage();
-      return directory != null && await openPaths(<String>[directory]);
+      try {
+        final picked = await pickWebChessFolderIntoAppStorage();
+        if (picked == null || !mounted) return false;
+        if (picked.databasePaths.any(CbhConversionService.isSourcePath)) {
+          return await openPaths(
+            picked.databasePaths,
+            sourceLabel: p.basename(picked.directory),
+          );
+        }
+        return await openPaths([picked.directory]);
+      } catch (error) {
+        if (mounted) {
+          state = state.copyWith(error: localChessOpenErrorMessage(error));
+        }
+        return false;
+      }
     }
     final directory = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Browse local chess folder',
@@ -261,21 +275,32 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
 
   Future<bool> pickFiles() async {
     if (!await _canImport() || !mounted) return false;
+    final extensions = [
+      ...localChessPickerExtensions,
+      if (CbhConversionService.isAvailable)
+        ...CbhConversionService.pickerExtensions,
+    ];
     if (kIsWeb) {
-      final paths = await pickWebChessFilesIntoAppStorage(
-        allowedExtensions: localChessPickerExtensions,
-      );
-      if (paths == null) return false;
-      return openPaths(paths, sourceLabel: paths.length == 1 ? null : 'Files');
+      try {
+        final paths = await pickWebChessFilesIntoAppStorage(
+          allowedExtensions: extensions,
+        );
+        if (paths == null || !mounted) return false;
+        return await openPaths(
+          paths,
+          sourceLabel: paths.length == 1 ? null : 'Files',
+        );
+      } catch (error) {
+        if (mounted) {
+          state = state.copyWith(error: localChessOpenErrorMessage(error));
+        }
+        return false;
+      }
     }
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Open chess files',
       type: FileType.custom,
-      allowedExtensions: [
-        ...localChessPickerExtensions,
-        if (CbhConversionService.isAvailable) 'cbh',
-        if (CbhConversionService.isAvailable) 'cbv',
-      ],
+      allowedExtensions: extensions,
       allowMultiple: true,
       withData: false,
       lockParentWindow: true,
@@ -307,10 +332,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
     final token = Object();
     _scanToken = token;
     _invalidateTreeBuilds();
-    if (paths.any(
-      (path) =>
-          const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase()),
-    )) {
+    if (paths.any(CbhConversionService.isSourcePath)) {
       // This request supersedes any older scan, including its progress UI.
       state = state.copyWith(
         isScanning: false,
@@ -323,7 +345,7 @@ class LocalChessLibraryNotifier extends StateNotifier<LocalChessLibraryState> {
         final resolved = <String>[];
         for (final path in paths) {
           final converted =
-              const {'.cbh', '.cbv'}.contains(p.extension(path).toLowerCase())
+              CbhConversionService.isSourcePath(path)
                   ? await CbhConversionGateway.convert(path)
                   : path;
           if (_scanToken != token || converted == null) return false;

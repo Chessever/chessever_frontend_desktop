@@ -453,15 +453,19 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
   Future<void> _openLocalFiles() async {
     if (!await ensureWebPgnAccess(context, importing: true) || !mounted) return;
     if (kIsWeb) {
-      final paths = await pickWebChessFilesIntoAppStorage(
-        dialogTitle: 'Open chess files in Board Editor',
-        allowedExtensions: localChessPickerExtensions,
-      );
-      if (paths == null) return;
-      await _openLocalChessPaths(
-        paths,
-        sourceLabel: paths.length == 1 ? null : 'Board Editor files',
-      );
+      try {
+        final paths = await pickWebChessFilesIntoAppStorage(
+          dialogTitle: 'Open chess files in Board Editor',
+          allowedExtensions: localChessPickerExtensions,
+        );
+        if (paths == null || !mounted) return;
+        await _openLocalChessPaths(
+          paths,
+          sourceLabel: paths.length == 1 ? null : 'Board Editor files',
+        );
+      } catch (error) {
+        _showToast('Could not open chess files. $error', error: true);
+      }
       return;
     }
     final result = await FilePicker.platform.pickFiles(
@@ -488,8 +492,14 @@ class _BoardEditorPaneState extends ConsumerState<BoardEditorPane> {
   Future<void> _openLocalFolder() async {
     if (!await ensureWebPgnAccess(context, importing: true) || !mounted) return;
     if (kIsWeb) {
-      final directory = await pickWebChessFolderIntoAppStorage();
-      if (directory != null) await _openLocalChessPaths(<String>[directory]);
+      try {
+        final picked = await pickWebChessFolderIntoAppStorage();
+        if (picked != null && mounted) {
+          await _openLocalChessPaths([picked.directory]);
+        }
+      } catch (error) {
+        _showToast('Could not open the chess folder. $error', error: true);
+      }
       return;
     }
     final directory = await FilePicker.platform.getDirectoryPath(
