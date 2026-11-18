@@ -10,12 +10,43 @@ import 'package:chessever/web/browser_file_picker.dart';
 import 'package:chessever/web/linked_files.dart';
 import 'package:chessever/web/picked_web_file.dart';
 
+typedef WebCbhMissingFiles = ({String indexName, List<String> missingNames});
+
+final class WebCbhSelectionIncomplete implements Exception {
+  const WebCbhSelectionIncomplete(this.databases);
+
+  final List<WebCbhMissingFiles> databases;
+}
+
+/// Checks filenames only, before reading or storing any selected file bytes.
+List<WebCbhMissingFiles> missingWebCbhCompanions(Iterable<String> paths) {
+  final names = {for (final path in paths) path.toLowerCase()};
+  final incomplete = <WebCbhMissingFiles>[];
+  for (final path in paths) {
+    if (p.posix.extension(path).toLowerCase() != '.cbh') continue;
+    final stem = p.posix.withoutExtension(path);
+    final missing = [
+      for (final extension in CbhIndexReader.companionExtensions)
+        if (!names.contains('${stem.toLowerCase()}$extension'))
+          '${p.posix.basename(stem)}$extension',
+    ];
+    if (missing.isNotEmpty) {
+      incomplete.add((
+        indexName: p.posix.basename(path),
+        missingNames: missing,
+      ));
+    }
+  }
+  return incomplete;
+}
+
 /// Copies a browser file selection into app storage. A classic ChessBase
 /// selection includes the index and its companions and opens as one database.
 Future<List<String>?> pickWebChessFilesIntoAppStorage({
   String dialogTitle = 'Open chess files',
   List<String> allowedExtensions = const ['pgn'],
   bool allowMultiple = true,
+  bool requireCompleteCbh = false,
 }) async {
   final extensions = [
     ...allowedExtensions,
@@ -42,6 +73,10 @@ Future<List<String>?> pickWebChessFilesIntoAppStorage({
             extensions.contains(extension.substring(1));
       }).toList();
   if (files.isEmpty) throw ArgumentError('Choose a supported chess file.');
+  if (requireCompleteCbh) {
+    final missing = missingWebCbhCompanions(files.map((f) => f.relativePath));
+    if (missing.isNotEmpty) throw WebCbhSelectionIncomplete(missing);
+  }
   final imported = await _copySelection(files);
   return imported.databasePaths;
 }

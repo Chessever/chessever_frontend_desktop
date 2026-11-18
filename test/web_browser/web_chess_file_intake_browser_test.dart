@@ -155,6 +155,26 @@ void main() {
     },
   );
 
+  test('Library picker reports exact missing companion filenames', () async {
+    final files = _classicDatabase('GGGG');
+    _setOpenFilePicker(
+      (_) => [
+        for (final name in ['GGGG.CBH', 'GGGG.cbp'])
+          _fileHandle(name, files[name]!, [], onWrite: (_) {}),
+      ],
+    );
+    await expectLater(
+      pickLibraryPgnDatabasePaths(),
+      throwsA(
+        isA<WebCbhSelectionIncomplete>().having(
+          (error) => error.databases.single.missingNames,
+          'missing filenames',
+          ['GGGG.cbt', 'GGGG.cbc', 'GGGG.cbs', 'GGGG.cbg', 'GGGG.cba'],
+        ),
+      ),
+    );
+  });
+
   test(
     'the browser file input also opens a complete classic database',
     () async {

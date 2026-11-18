@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/cbh_conversion_service.dart';
@@ -7,8 +8,30 @@ import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessever/desktop/services/local_chess_file_scanner.dart';
 import 'package:chessever/desktop/services/web_file_intake.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
+import 'package:chessever/desktop/widgets/web_cbh_missing_files_dialog.dart';
 
 /// Lets the user pick chess databases for the Library's local import flow.
+Future<List<String>?> pickLibraryPgnDatabasePathsWithRecovery(
+  BuildContext context, {
+  @visibleForTesting Future<List<String>?> Function()? pick,
+}) async {
+  final pickPaths = pick ?? pickLibraryPgnDatabasePaths;
+  while (context.mounted) {
+    try {
+      return await pickPaths();
+    } on WebCbhSelectionIncomplete catch (error) {
+      if (!context.mounted) return null;
+      final retry = await showWebCbhMissingFilesDialog(
+        context,
+        error.databases,
+      );
+      // Do not delay the next picker call: it needs the button's activation.
+      if (retry != true) return null;
+    }
+  }
+  return null;
+}
+
 Future<List<String>?> pickLibraryPgnDatabasePaths() async {
   const title = 'Import chess files';
   final extensions = [
@@ -20,6 +43,7 @@ Future<List<String>?> pickLibraryPgnDatabasePaths() async {
     return pickWebChessFilesIntoAppStorage(
       dialogTitle: title,
       allowedExtensions: extensions,
+      requireCompleteCbh: true,
     );
   }
   final result = await FilePicker.platform.pickFiles(
@@ -64,7 +88,7 @@ Future<String?> pickAndOpenLibraryPgnDatabase(
     return null;
   }
   try {
-    final paths = await pickLibraryPgnDatabasePaths();
+    final paths = await pickLibraryPgnDatabasePathsWithRecovery(context);
     if (paths == null || !context.mounted) return null;
     final path = await openLibraryPgnDatabasePaths(ref, paths);
     if (path == null && context.mounted) {
