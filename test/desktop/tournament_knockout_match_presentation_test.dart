@@ -89,8 +89,8 @@ void main() {
       final sideBySide = [
         for (final game in games)
           if (!(game.roundSlug == 'game-5' &&
-              game.whitePlayer.name.startsWith('Caruana') ||
-                  game.blackPlayer.name.startsWith('Caruana')))
+                  game.whitePlayer.name.startsWith('Caruana') ||
+              game.blackPlayer.name.startsWith('Caruana')))
             game.copyWith(
               roundId: 'round-${game.roundSlug}',
               boardNr:
@@ -151,6 +151,72 @@ void main() {
       );
     });
   });
+
+  test(
+    'Total Chess resets weighted scores on Day 2 and separates Armageddon',
+    () {
+      final section =
+          desktopKnockoutMatchSections(
+            [
+                  _game(
+                    '7',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'game-7-fast-classic',
+                    gameStatus: GameStatus.whiteWins,
+                  ),
+                  _game(
+                    '8',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'game-8-blitz',
+                    gameStatus: GameStatus.blackWins,
+                  ),
+                  _game('1', 'Alpha', 'Beta', roundSlug: 'game-1-blitz'),
+                  _game(
+                    '5',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'game-5-rapid',
+                    gameStatus: GameStatus.blackWins,
+                  ),
+                  _game(
+                    'arm',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'armageddon',
+                    gameStatus: GameStatus.ongoing,
+                  ).copyWith(lastMove: 'e2e4'),
+                ]
+                .map(
+                  (game) => game.copyWith(
+                    tourId: '6PTzCQFL',
+                    roundId: game.roundSlug,
+                  ),
+                )
+                .toList(),
+          ).single;
+
+      expect(section.header.player1, 'Alpha');
+      expect(section.totalChessGroups.map((group) => group.label), [
+        'Armageddon',
+        'Day 2',
+        'Day 1',
+      ]);
+      expect(section.totalChessGroups.map((group) => group.score), [
+        null,
+        '1–0',
+        '4½–8½',
+      ]);
+      expect(section.header.games.map((game) => game.gameId), [
+        'arm',
+        '8',
+        '7',
+        '5',
+        '1',
+      ]);
+    },
+  );
 
   group('confirmed knockout presentation', () {
     test('groups complete player pairings without game-N round slugs', () {

@@ -283,12 +283,15 @@ class DesktopKnockoutMatchSection {
     required this.key,
     required this.header,
     this.anchorIsWhiteById,
+    this.totalChessGroups = const [],
   });
 
   final String key;
 
   /// [MatchHeaderModel.games] are the section's cards in render order.
   final MatchHeaderModel header;
+  final List<({String label, String? score, List<GamesTourModel> games})>
+  totalChessGroups;
 
   /// Match play only: per game id, whether side A ([MatchHeaderModel.player1])
   /// has White. Null for every other knockout round.
@@ -317,12 +320,7 @@ List<DesktopKnockoutMatchSection> desktopKnockoutMatchSections(
   if (matchPlay == null || matchPlay.looseGames.isNotEmpty) {
     return [
       for (final entry in orderedKnockoutMatchEntriesForDisplay(games))
-        DesktopKnockoutMatchSection(
-          key: entry.key,
-          header: _withDisplayGames(
-            KnockoutMatchDetector.createMatchHeader(entry.key, entry.value),
-          ),
-        ),
+        _legacyKnockoutMatchSection(entry.key, entry.value),
     ];
   }
   return [
@@ -344,18 +342,105 @@ List<DesktopKnockoutMatchSection> desktopKnockoutMatchSections(
   ];
 }
 
-/// The header reads names and score from the chronological games; the cards
-/// render in [knockoutMatchGamesForDisplay] order.
-MatchHeaderModel _withDisplayGames(MatchHeaderModel header) => MatchHeaderModel(
-  matchKey: header.matchKey,
-  player1Card: header.player1Card,
-  player2Card: header.player2Card,
-  player1Score: header.player1Score,
-  player2Score: header.player2Score,
-  games: knockoutMatchGamesForDisplay(header.games),
-  roundName: header.roundName,
-  isComplete: header.isComplete,
-);
+// Total Chess 2026 split each semifinal and final into two independently
+// scored days. Use the relay slug: the PGN Round tag may be off by one.
+final _totalChessGameSlug = RegExp(r'^game-(\d+)(?:-|$)');
+
+int _totalChessGameNumber(GamesTourModel game) {
+  final slug = game.roundSlug ?? '';
+  if (slug == 'armageddon') return 15;
+  final number = int.tryParse(
+    _totalChessGameSlug.firstMatch(slug)?.group(1) ?? '',
+  );
+  return number != null && number >= 1 && number <= 14 ? number : 16;
+}
+
+DesktopKnockoutMatchSection _legacyKnockoutMatchSection(
+  String key,
+  List<GamesTourModel> games,
+) {
+  final totalChess =
+      games.first.tourId == 'qEXour3L' || games.first.tourId == '6PTzCQFL';
+  final chronological =
+      totalChess
+          ? ([...games]..sort(
+            (a, b) =>
+                _totalChessGameNumber(a).compareTo(_totalChessGameNumber(b)),
+          ))
+          : games;
+  final header = KnockoutMatchDetector.createMatchHeader(key, chronological);
+  final display = knockoutMatchGamesForDisplay(chronological);
+  final groups = <int, List<GamesTourModel>>{};
+  if (totalChess) {
+    for (final game in display) {
+      final n = _totalChessGameNumber(game);
+      final section =
+          n <= 7
+              ? 1
+              : n <= 14
+              ? 2
+              : n == 15
+              ? 3
+              : 4;
+      groups.putIfAbsent(section, () => []).add(game);
+    }
+  }
+  final daily = [
+    for (final MapEntry(key: day, value: games) in groups.entries)
+      (
+        label:
+            day <= 2
+                ? 'Day $day'
+                : day == 3
+                ? 'Armageddon'
+                : 'Other games',
+        games: games,
+        score:
+            day <= 2 && games.any((game) => game.effectiveGameStatus.isFinished)
+                ? _totalChessDayScore(header.player1Card, games)
+                : null,
+      ),
+  ];
+  return DesktopKnockoutMatchSection(
+    key: key,
+    header: MatchHeaderModel(
+      matchKey: key,
+      player1Card: header.player1Card,
+      player2Card: header.player2Card,
+      player1Score: header.player1Score,
+      player2Score: header.player2Score,
+      games: totalChess ? [for (final group in daily) ...group.games] : display,
+      roundName: header.roundName,
+      isComplete: header.isComplete,
+    ),
+    totalChessGroups: daily,
+  );
+}
+
+String _totalChessDayScore(PlayerCard player1, List<GamesTourModel> games) {
+  final score = KnockoutMatchDetector.scoreMatchGames(
+    games,
+    player1: player1,
+    winPoints: (game) {
+      final gameOfDay = (_totalChessGameNumber(game) - 1) % 7 + 1;
+      return gameOfDay <= 4
+          ? 1
+          : gameOfDay <= 6
+          ? 4
+          : 8;
+    },
+  );
+  String format(double points) {
+    final whole = points.floor();
+    return points == whole
+        ? '$whole'
+        : whole == 0
+        ? '½'
+        : '$whole½';
+  }
+
+  return '${format(score.player1Score)}–${format(score.player2Score)}';
+}
 
 int? _latestKnockoutStageOrder(List<GamesTourModel> matchGames) {
   int? latest;
@@ -1535,6 +1620,7 @@ class _RoundSliverSection extends ConsumerWidget {
               onSelectGame: onSelectGame,
               keyForGame: keyForGame,
               header: section.header,
+              totalChessGroups: section.totalChessGroups,
               matchPlayAnchors: section.anchorIsWhiteById,
               eventGames: eventGames,
               tournamentTitle: tournamentTitle,
@@ -2010,6 +2096,7 @@ class _MatchSliverSection extends ConsumerWidget {
     required this.onSelectGame,
     required this.keyForGame,
     required this.header,
+    required this.totalChessGroups,
     this.matchPlayAnchors,
     required this.eventGames,
     required this.tournamentTitle,
@@ -2026,6 +2113,8 @@ class _MatchSliverSection extends ConsumerWidget {
   final ValueChanged<String> onSelectGame;
   final Key Function(String gameId) keyForGame;
   final MatchHeaderModel header;
+  final List<({String label, String? score, List<GamesTourModel> games})>
+  totalChessGroups;
 
   /// Match play: per game id, whether side A has White (cards keep A first).
   /// Null for every other knockout round.
@@ -2049,6 +2138,7 @@ class _MatchSliverSection extends ConsumerWidget {
             // A match-play shell's date is when the file was published, not
             // when the match is played: no schedule in that header.
             showSchedule: matchPlayAnchors == null,
+            showScore: totalChessGroups.isEmpty,
             expanded: expanded,
             onToggle:
                 () =>
@@ -2063,24 +2153,59 @@ class _MatchSliverSection extends ConsumerWidget {
         ),
         if (expanded) ...[
           const SliverToBoxAdapter(child: SizedBox(height: 8)),
-          _TournamentGamesSliverGrid(
-            scopeId: scopeId,
-            selectedGameId: selectedGameId,
-            onSelectGame: onSelectGame,
-            keyForGame: keyForGame,
-            games: header.games,
-            matchPlayAnchors: matchPlayAnchors,
-            eventGames: eventGames,
-            tournamentTitle: tournamentTitle,
-            layout: layout,
-            columns: columns,
-            // A match shorter than one row sits centered under its pairing,
-            // like the web's `.ce-komatch__boards` grid.
-            centerSparseRow: true,
-            roundStartsAtById: roundStartsAtById,
-            roundNameById: roundNameById,
-            streamingEnabled: streamingEnabled,
-          ),
+          for (final group
+              in totalChessGroups.isEmpty
+                  ? [(label: '', score: null, games: header.games)]
+                  : totalChessGroups) ...[
+            if (group.label.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 10,
+                    children: [
+                      Semantics(
+                        header: true,
+                        child: Text(
+                          group.label,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (group.score case final score?)
+                        Text(
+                          score,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            _TournamentGamesSliverGrid(
+              scopeId: scopeId,
+              selectedGameId: selectedGameId,
+              onSelectGame: onSelectGame,
+              keyForGame: keyForGame,
+              games: group.games,
+              matchPlayAnchors: matchPlayAnchors,
+              eventGames: eventGames,
+              tournamentTitle: tournamentTitle,
+              layout: layout,
+              columns: columns,
+              // A match shorter than one row sits centered under its pairing,
+              // like the web's `.ce-komatch__boards` grid.
+              centerSparseRow: true,
+              roundStartsAtById: roundStartsAtById,
+              roundNameById: roundNameById,
+              streamingEnabled: streamingEnabled,
+            ),
+          ],
         ],
         const SliverToBoxAdapter(child: SizedBox(height: 12)),
       ],
@@ -2105,12 +2230,14 @@ class _MatchSectionHeader extends StatefulWidget {
     required this.expanded,
     required this.onToggle,
     this.showSchedule = true,
+    this.showScore = true,
   });
 
   final MatchHeaderModel header;
   final bool expanded;
   final VoidCallback onToggle;
   final bool showSchedule;
+  final bool showScore;
 
   @override
   State<_MatchSectionHeader> createState() => _MatchSectionHeaderState();
@@ -2171,7 +2298,10 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
                           ),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: _MatchScoreSlot(header: h),
+                            child: _MatchScoreSlot(
+                              header: h,
+                              showScore: widget.showScore,
+                            ),
                           ),
                           Expanded(
                             child: Align(
@@ -2218,9 +2348,10 @@ class _MatchSectionHeaderState extends State<_MatchSectionHeader> {
 /// go. The web reserves the same room with
 /// `.ce-komatch__score`'s min-width.
 class _MatchScoreSlot extends StatelessWidget {
-  const _MatchScoreSlot({required this.header});
+  const _MatchScoreSlot({required this.header, required this.showScore});
 
   final MatchHeaderModel header;
+  final bool showScore;
 
   static const double _dashGap = 7;
   static const TextStyle _dashStyle = TextStyle(
@@ -2286,7 +2417,7 @@ class _MatchScoreSlot extends StatelessWidget {
                 ),
               ),
           child:
-              h.hasReportedScore
+              showScore && h.hasReportedScore
                   ? Row(
                     key: const ValueKey<String>('scores'),
                     mainAxisSize: MainAxisSize.min,
@@ -2314,7 +2445,7 @@ class _MatchScoreSlot extends StatelessWidget {
                   )
                   : Text(
                     'vs',
-                    key: ValueKey<bool>(h.hasReportedScore),
+                    key: const ValueKey<String>('pairing'),
                     style: TextStyle(
                       color: kWhiteColor.withValues(alpha: 0.42),
                       fontSize: 11,

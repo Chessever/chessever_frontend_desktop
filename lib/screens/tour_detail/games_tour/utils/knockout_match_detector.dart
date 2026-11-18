@@ -234,7 +234,7 @@ class KnockoutMatchDetector {
 
     final firstGame = matchGames.first;
     // Calculate match score
-    final score = _calculateMatchScore(matchGames);
+    final score = scoreMatchGames(matchGames);
 
     // Extract base round name (e.g., "Round 1" from "game-1")
     final roundName = _extractBaseRoundName(matchGames);
@@ -390,40 +390,42 @@ class KnockoutMatchDetector {
     return _RoundSlugInfo(typePriority: 999, mainNumber: 0, subNumber: 0);
   }
 
-  static ({double player1Score, double player2Score}) _calculateMatchScore(
-    List<GamesTourModel> games,
-  ) {
+  static ({double player1Score, double player2Score}) scoreMatchGames(
+    List<GamesTourModel> games, {
+    PlayerCard? player1,
+    int Function(GamesTourModel game)? winPoints,
+  }) {
     double player1Score = 0.0;
     double player2Score = 0.0;
 
     if (games.isEmpty) return (player1Score: 0.0, player2Score: 0.0);
 
-    // Use first game to determine which player is player1 and player2.
-    final identities = _ParticipantIdentityRegistry(games);
-    final player1Id = identities.idFor(games.first.whitePlayer);
+    final identities = _ParticipantIdentityRegistry(games, anchor: player1);
+    final player1Id = identities.idFor(player1 ?? games.first.whitePlayer);
 
     for (final game in games) {
       final status = game.effectiveGameStatus;
       final isPlayer1White = identities.idFor(game.whitePlayer) == player1Id;
 
+      final weight = (winPoints?.call(game) ?? 1).toDouble();
       switch (status) {
         case GameStatus.whiteWins:
           if (isPlayer1White) {
-            player1Score += 1.0;
+            player1Score += weight;
           } else {
-            player2Score += 1.0;
+            player2Score += weight;
           }
           break;
         case GameStatus.blackWins:
           if (isPlayer1White) {
-            player2Score += 1.0;
+            player2Score += weight;
           } else {
-            player1Score += 1.0;
+            player1Score += weight;
           }
           break;
         case GameStatus.draw:
-          player1Score += 0.5;
-          player2Score += 0.5;
+          player1Score += weight / 2;
+          player2Score += weight / 2;
           break;
         default:
           break;
@@ -464,7 +466,10 @@ class KnockoutMatchDetector {
 }
 
 class _ParticipantIdentityRegistry {
-  _ParticipantIdentityRegistry(Iterable<GamesTourModel> games) {
+  _ParticipantIdentityRegistry(
+    Iterable<GamesTourModel> games, {
+    PlayerCard? anchor,
+  }) {
     final fideIdsByName = <String, Set<int>>{};
     for (final game in games) {
       for (final player in [game.whitePlayer, game.blackPlayer]) {
@@ -473,6 +478,11 @@ class _ParticipantIdentityRegistry {
         if (name.isEmpty || fideId == null || fideId <= 0) continue;
         fideIdsByName.putIfAbsent(name, () => <int>{}).add(fideId);
       }
+    }
+    final anchorFideId = anchor?.fideId;
+    if (anchor != null && anchorFideId != null && anchorFideId > 0) {
+      final name = _normalizedPlayerName(anchor.name);
+      fideIdsByName.putIfAbsent(name, () => <int>{}).add(anchorFideId);
     }
     for (final entry in fideIdsByName.entries) {
       if (entry.value.length == 1) {
