@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/desktop/panes/tournament_detail_pane.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
@@ -9,6 +12,66 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('optional real Total Chess snapshot preserves every source game', () {
+    final path = Platform.environment['CHESSEVER_TOTAL_CHESS_SNAPSHOT']!;
+    final rows = jsonDecode(File(path).readAsStringSync()) as List;
+    final games =
+        rows
+            .map(
+              (row) => GamesTourModel.fromGame(
+                Games.fromJson(Map<String, dynamic>.from(row as Map)),
+              ),
+            )
+            .toList();
+    final sections = desktopKnockoutMatchSections(games);
+    expect(sections, hasLength(12));
+    final renderedIds = [
+      for (final section in sections)
+        for (final group in section.totalChessGroups)
+          for (final game in group.games) game.gameId,
+    ];
+    expect(renderedIds, hasLength(173));
+    expect(renderedIds.toSet(), games.map((game) => game.gameId).toSet());
+    expect(
+      sections
+          .expand((section) => section.totalChessGroups)
+          .where((group) => group.label == 'Armageddon'),
+      hasLength(5),
+    );
+    expect(
+      sections
+          .expand((section) => section.totalChessGroups)
+          .where((group) => group.label == 'Day 1'),
+      hasLength(12),
+    );
+    expect(
+      sections
+          .expand((section) => section.totalChessGroups)
+          .where((group) => group.label == 'Day 2'),
+      hasLength(12),
+    );
+    final receipt = Platform.environment['CHESSEVER_TOTAL_CHESS_RECEIPT'];
+    if (receipt != null) {
+      File(receipt).writeAsStringSync(
+        jsonEncode([
+          for (final section in sections)
+            {
+              'player1': section.header.player1,
+              'player2': section.header.player2,
+              'groups': [
+                for (final group in section.totalChessGroups)
+                  {
+                    'label': group.label,
+                    'score': group.score,
+                    'ids': group.games.map((game) => game.gameId).toList(),
+                  },
+              ],
+            },
+        ]),
+      );
+    }
+  }, skip: Platform.environment['CHESSEVER_TOTAL_CHESS_SNAPSHOT'] == null);
+
   // Total Chess World Championship Tour Pilot 2026, Semifinals (qEXour3L) on
   // 2026-11-17: every game of the stage published on day one as a 0-move `*`
   // board. Games 1-4 played, Game 5 in play.
@@ -89,8 +152,8 @@ void main() {
       final sideBySide = [
         for (final game in games)
           if (!(game.roundSlug == 'game-5' &&
-              game.whitePlayer.name.startsWith('Caruana') ||
-                  game.blackPlayer.name.startsWith('Caruana')))
+                  game.whitePlayer.name.startsWith('Caruana') ||
+              game.blackPlayer.name.startsWith('Caruana')))
             game.copyWith(
               roundId: 'round-${game.roundSlug}',
               boardNr:
@@ -151,6 +214,72 @@ void main() {
       );
     });
   });
+
+  test(
+    'Total Chess resets weighted scores on Day 2 and separates Armageddon',
+    () {
+      final section =
+          desktopKnockoutMatchSections(
+            [
+                  _game(
+                    '7',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'game-7-fast-classic',
+                    gameStatus: GameStatus.whiteWins,
+                  ),
+                  _game(
+                    '8',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'game-8-blitz',
+                    gameStatus: GameStatus.blackWins,
+                  ),
+                  _game('1', 'Alpha', 'Beta', roundSlug: 'game-1-blitz'),
+                  _game(
+                    '5',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'game-5-rapid',
+                    gameStatus: GameStatus.blackWins,
+                  ),
+                  _game(
+                    'arm',
+                    'Beta',
+                    'Alpha',
+                    roundSlug: 'armageddon',
+                    gameStatus: GameStatus.ongoing,
+                  ).copyWith(lastMove: 'e2e4'),
+                ]
+                .map(
+                  (game) => game.copyWith(
+                    tourId: '6PTzCQFL',
+                    roundId: game.roundSlug,
+                  ),
+                )
+                .toList(),
+          ).single;
+
+      expect(section.header.player1, 'Alpha');
+      expect(section.totalChessGroups.map((group) => group.label), [
+        'Armageddon',
+        'Day 2',
+        'Day 1',
+      ]);
+      expect(section.totalChessGroups.map((group) => group.score), [
+        null,
+        '1–0',
+        '4½–8½',
+      ]);
+      expect(section.header.games.map((game) => game.gameId), [
+        'arm',
+        '8',
+        '7',
+        '5',
+        '1',
+      ]);
+    },
+  );
 
   group('confirmed knockout presentation', () {
     test('groups complete player pairings without game-N round slugs', () {
