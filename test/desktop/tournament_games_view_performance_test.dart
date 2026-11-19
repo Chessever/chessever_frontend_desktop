@@ -9,17 +9,20 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/shell/desktop_shell.dart';
 import 'package:chessever/desktop/widgets/desktop_game_card.dart';
+import 'package:chessever/desktop/widgets/desktop_grouped_game_keyboard_focus.dart';
 import 'package:chessever/desktop/widgets/round_header_card.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
+import 'package:chessever/repository/supabase/game/games.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_app_bar_view_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
 import 'package:chessever/utils/responsive_helper.dart';
+import 'package:chessever/theme/app_theme.dart';
 
 final _searchFocusGroupedStateProvider = StateProvider<GroupedGamesData>(
   (ref) => throw UnimplementedError(),
@@ -574,6 +577,168 @@ void main() {
   });
 
   testWidgets(
+    'Total Chess days fold independently without removing their scores',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final alpha = _player('Alpha, Anna');
+      final beta = _player('Beta, Boris');
+      final games = [
+        for (final (id, slug) in [
+          ('day-one-game', 'game-1-blitz'),
+          ('day-two-game', 'game-8-blitz'),
+          ('arm-game', 'armageddon'),
+        ])
+          _game(0).copyWith(
+            gameId: id,
+            tourId: 'qEXour3L',
+            roundId: 'source-$slug',
+            roundSlug: slug,
+            whitePlayer: alpha,
+            blackPlayer: beta,
+            gameStatus: GameStatus.whiteWins,
+          ),
+      ];
+      final round = GamesAppBarModel(
+        id: 'semifinal-stage',
+        name: 'Semifinals',
+        startsAt: DateTime.utc(2026, 11, 17, 12),
+        roundStatus: RoundStatus.completed,
+      );
+      final grouped = GroupedGamesData(
+        filteredRounds: [round],
+        gamesByRound: {round.id: games},
+        isKnockoutTournament: true,
+        isMultiStageKnockout: false,
+        isLoading: false,
+        rounds: [round],
+        allGames: games,
+        providerGameCount: games.length,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          gamesTourGroupedProvider.overrideWith((ref) => grouped),
+          gamesTourScreenProvider.overrideWith(
+            (ref) => _SearchFocusGamesNotifier(ref),
+          ),
+          gamesTourProvider.overrideWith((ref, id) => _NoPollingGames()),
+          boardSettingsProviderNew.overrideWith(_EvaluationBarOffNotifier.new),
+          engineSettingsProviderNew.overrideWith(
+            _EngineSettingsOffNotifier.new,
+          ),
+          gameStreamRepositoryProvider.overrideWithValue(
+            _TrackingGameStreamRepository(),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(
+              body: TournamentGamesView(
+                tabId: 'daily-disclosures',
+                tournamentId: 'qEXour3L',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      Set<String> mountedIds() => {
+        for (final card in tester.widgetList<DesktopGameCard>(
+          find.byType(DesktopGameCard),
+        ))
+          card.data.id,
+      };
+      expect(mountedIds(), {'day-one-game', 'day-two-game', 'arm-game'});
+      expect(find.text('1–0'), findsNWidgets(2));
+      final score = tester.widget<Text>(find.text('1–0').first);
+      final scoreSpan = score.textSpan as TextSpan?;
+      expect(
+        scoreSpan?.children
+                ?.whereType<TextSpan>()
+                .map((span) => span.style?.color)
+                .toList() ??
+            [score.style?.color],
+        [kPrimaryColor, kWhiteColor70, kRedColor],
+        reason: 'Each daily score side uses its own numeric result color.',
+      );
+      await tester.tap(find.text('Day 1'));
+      await tester.pump();
+      expect(mountedIds(), {'day-two-game', 'arm-game'});
+      expect(
+        tester
+            .widget<DesktopGroupedGameKeyboardFocus>(
+              find.byType(DesktopGroupedGameKeyboardFocus),
+            )
+            .groups
+            .expand((group) => group.games)
+            .map((game) => game.gameId)
+            .toSet(),
+        {'day-two-game', 'arm-game'},
+        reason: 'Keyboard navigation must not enter a folded day.',
+      );
+      expect(
+        find.text('1–0'),
+        findsNWidgets(2),
+        reason: 'Folded weighted daily scores remain visible.',
+      );
+      await tester.tap(find.text('Day 2'));
+      await tester.pump();
+      expect(mountedIds(), {'arm-game'});
+      await tester.tap(find.text('Day 1'));
+      await tester.pump();
+      expect(mountedIds(), {'day-one-game', 'arm-game'});
+      // A parent fold/reopen retains the independently folded Day 2.
+      await tester.tap(find.text('Alpha, Anna').first);
+      await tester.pump();
+      expect(mountedIds(), isEmpty);
+      await tester.tap(find.text('Alpha, Anna').first);
+      await tester.pump();
+      expect(mountedIds(), {'day-one-game', 'arm-game'});
+      await tester.tap(find.text('Semifinals'));
+      await tester.pump();
+      expect(mountedIds(), isEmpty);
+      await tester.tap(find.text('Semifinals'));
+      await tester.pump();
+      expect(mountedIds(), {'day-one-game', 'arm-game'});
+      // The header is one keyboard stop; Enter and Space mirror clicking.
+      await tester.tap(find.byType(EditableText));
+      await tester.pump();
+      final dayFocusRing = find.ancestor(
+        of: find.text('Day 1'),
+        matching: find.byType(FFocusedOutline),
+      );
+      for (
+        var stop = 0;
+        stop < 24 && !tester.widget<FFocusedOutline>(dayFocusRing).focused;
+        stop++
+      ) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(tester.widget<FFocusedOutline>(dayFocusRing).focused, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(mountedIds(), {'arm-game'});
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(mountedIds(), {'day-one-game', 'arm-game'});
+      await tester.tap(find.text('Armageddon'));
+      await tester.pump();
+      expect(mountedIds(), {'day-one-game'});
+      await tester.tap(find.text('Armageddon'));
+      await tester.pump();
+      expect(mountedIds(), {'day-one-game', 'arm-game'});
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
+
+  testWidgets(
     'a knockout match shorter than a row sits centered under its pairing',
     (tester) async {
       tester.view.physicalSize = const Size(1600, 1000);
@@ -793,4 +958,21 @@ class _EngineSettingsOffNotifier extends EngineSettingsNotifierNew {
     state = const AsyncValue.data(settings);
     return settings;
   }
+}
+
+class _NoPollingGames extends StateNotifier<AsyncValue<List<Games>>>
+    implements GamesTourNotifier {
+  _NoPollingGames() : super(const AsyncData([]));
+
+  @override
+  void setDesktopPollingConsumer({
+    required String consumerId,
+    required bool active,
+  }) {}
+
+  @override
+  void removeDesktopPollingConsumer(String consumerId) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

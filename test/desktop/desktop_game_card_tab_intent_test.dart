@@ -28,9 +28,12 @@ void main() {
   });
 
   testWidgets(
-    'game card layouts use Last, F. names and plain ChessEver titles',
+    'compact and list cards keep Last, F. names and plain ChessEver titles',
     (tester) async {
-      for (final layout in DesktopCardLayout.values) {
+      for (final layout in [
+        DesktopCardLayout.compact,
+        DesktopCardLayout.list,
+      ]) {
         await tester.pumpWidget(
           ProviderScope(
             overrides: _cardProviderOverrides(),

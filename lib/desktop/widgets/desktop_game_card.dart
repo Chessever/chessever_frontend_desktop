@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
+import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_endgame_board_overlay.dart';
@@ -1716,6 +1717,7 @@ class _PlayerRow extends StatelessWidget {
     final fideId = isWhite ? data.whiteFideId : data.blackFideId;
     final title = isWhite ? data.whiteTitle : data.blackTitle;
     final rating = isWhite ? data.whiteRating : data.blackRating;
+    final displayName = desktopTablePlayerValue(name);
     final clockSeconds =
         isWhite ? data.whiteClockSeconds : data.blackClockSeconds;
     final clockCentiseconds =
@@ -1754,28 +1756,40 @@ class _PlayerRow extends StatelessWidget {
           const SizedBox(width: 6),
         ],
         Expanded(
-          child: DesktopCompactPlayerNameText(
-            name: name,
-            style: TextStyle(
-              color: kWhiteColor,
-              fontSize: compact ? 11.5 : 14,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.05,
-            ),
+          child: Row(
+            children: [
+              // Board cards have room for the source's full player name.
+              // Only the name yields when a narrow card needs space for the
+              // adjacent recorded rating and the trailing clock/result.
+              Flexible(
+                child: Text(
+                  displayName.isEmpty ? 'Unknown' : displayName,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: kWhiteColor,
+                    fontSize: compact ? 11.5 : 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.05,
+                  ),
+                ),
+              ),
+              if (rating > 0) ...[
+                const SizedBox(width: 4),
+                Text(
+                  '($rating)',
+                  style: TextStyle(
+                    color: kWhiteColor70,
+                    fontSize: compact ? 10.5 : 12,
+                    fontWeight: FontWeight.w500,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
-        if (rating > 0) ...[
-          const SizedBox(width: 8),
-          Text(
-            '$rating',
-            style: TextStyle(
-              color: kWhiteColor70,
-              fontSize: compact ? 10.5 : 12,
-              fontWeight: FontWeight.w500,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
         if (hasClockData && isOngoing) ...[
           const SizedBox(width: 10),
           _ClockPill(
