@@ -13,41 +13,19 @@ This Flutter repository owns app.chessever.com (Worker `chessever-app`). The
 sibling `chessever_web_frontend` repository owns the separate Next.js site at
 chessever.com. Both `AGENTS.md` files carry the synchronized-update policy.
 
-## Second address: chessever.com/webapp
+## Browser app address
 
-The same deploy is served at `https://chessever.com/webapp/` as well as
-`https://app.chessever.com/`. Every app address works at both: put `app.` in
-front of `chessever.com`, or `/webapp` after it.
-`app.chessever.com/<path>` and `chessever.com/webapp/<path>` show the same page.
+Use `https://app.chessever.com/` for browser app links. The chessever.com
+Worker permanently redirects old bookmarks to the corresponding browser
+app path and retains query strings. The website's `/app` paths belong to the
+mobile app and its download redirect.
 
-- Not `/app`: `chessever.com/app/...` is the phone app's link format
-  (`chessever-frontend` `docs/mobile-app-routes.md`, used by notifications and
-  share sheets) and `chessever.com/app` is the download page. Neither may
-  change, so the web app never claims that prefix.
-- The chessever.com Worker (`chessever-web`, `cloudflare-worker.ts`) forwards
-  `/webapp` and `/webapp/*` to `chessever-app` through its `WEB_APP` service
-  binding (`src/lib/web-app-mount.ts` there, `chesseverComWebAppMount` here).
-- `web_worker/index.js` (`serveMounted`) strips `/webapp`, answers as
-  app.chessever.com would, and rewrites index.html's `<base href>` to
-  `/webapp/`. It also sets `Document-Isolation-Policy`, because `web/_headers`
-  does not apply to responses from the Worker script.
-- The app reads its mount from `document.baseURI` (`lib/web/web_mount.dart`)
-  and converts between app paths and address-bar paths in `WebUrlSync`, the
-  OAuth return, the release check and the `/_img`, `/_broadcast` and
-  `/api/signin-preview` relays. Code that touches its own origin's paths goes
-  through those helpers, never a root-absolute `/...`.
-- The two addresses are separate browser origins. Sign-in is still the same
-  at both: the Supabase session lives in `chessever-app-session*` cookies on
-  `Domain=chessever.com` (`lib/web/shared_auth_session.dart`), each origin's
-  localStorage keeps a copy for when the cookie is missing, and an open page
-  picks up a sign-in, sign-out or token refresh from the other address within
-  two seconds or on focus. Settings, the IndexedDB file system and local
-  databases are not shared between them yet. The chessever.com website's own
-  sign-in is separate.
-- Supabase Auth must list `https://chessever.com/webapp/` (and `/webapp/**`)
-  as an allowed redirect URL, or OAuth on the mount falls back to the site URL.
-- Deploying `chessever-app` updates both addresses. The chessever.com Worker
-  only needs redeploying when the forwarding rule changes.
+Use `lib/web/web_mount.dart` for same-origin paths used by URL sync, OAuth,
+release checks, and the app's relays. Settings, IndexedDB, and local databases
+are scoped to their browser origin. The browser app stores its Supabase
+session in `chessever-app-session*` cookies on `Domain=chessever.com`
+(`lib/web/shared_auth_session.dart`). The marketing website manages its own
+sign-in separately.
 
 ## Web sign-in policy (22.30.1)
 
