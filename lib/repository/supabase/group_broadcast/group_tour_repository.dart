@@ -238,12 +238,33 @@ class GroupBroadcastRepository extends BaseRepository {
         },
       );
 
-      return (response as List)
-          .map(
-            (json) =>
-                GroupBroadcast.fromJson(Map<String, dynamic>.from(json as Map)),
-          )
-          .toList();
+      if (response == null) return <GroupBroadcast>[];
+      final rows = (response as List).cast<Map<String, dynamic>>();
+      if (rows.isEmpty) return <GroupBroadcast>[];
+
+      // For You pages through its own RPC. Add pin metadata for only this page
+      // so the feed's eligibility and offsets still come from that RPC.
+      var pins = const <String, dynamic>{};
+      try {
+        final pinned = await supabase
+            .from('group_broadcasts_current')
+            .select('id,pinned_at')
+            .inFilter('id', rows.map((row) => row['id'] as String).toList())
+            .not('pinned_at', 'is', null)
+            .timeout(const Duration(seconds: 2));
+        pins = {
+          for (final row in pinned) row['id'] as String: row['pinned_at'],
+        };
+      } catch (error) {
+        debugPrint('[ForYou] Event pins unavailable: $error');
+      }
+      return [
+        for (final row in rows)
+          GroupBroadcast.fromJson({
+            ...row,
+            if (pins.containsKey(row['id'])) 'pinned_at': pins[row['id']],
+          }),
+      ];
     });
   }
 

@@ -7,6 +7,7 @@ import 'package:chessever/providers/favorite_events_provider.dart';
 import 'package:chessever/providers/favorite_players_provider.dart';
 import 'package:chessever/providers/for_you_games_logic.dart';
 import 'package:chessever/repository/api_utils/api_exceptions.dart';
+import 'package:chessever/repository/favorites/models/favorite_event.dart';
 import 'package:chessever/repository/favorites/models/favorite_player.dart';
 import 'package:chessever/repository/local_storage/tournament/games/pin_games_local_storage.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
@@ -160,6 +161,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   DateTime? _lastRefreshAt;
   final Map<String, int> _sessionEventOrder = <String, int>{};
   int _nextSessionEventOrder = 0;
+  List<GroupEventCardModel> _sessionEvents = const [];
   bool _pendingFavoritePlayerOrderHydration = false;
   bool _isRefreshingVisibleTopGameSnapshots = false;
   final Set<String> _handledFinishedTopGameRefreshes = <String>{};
@@ -426,7 +428,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         if (!mounted) return;
         _pruneTopGameSnapshotsToEvents(nextEvents);
         state = ForYouState(
-          events: nextEvents,
+          events: _present(nextEvents),
           isLoading: false,
           hasMore: dbHasMore,
         );
@@ -438,7 +440,10 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
         final newModels =
             models.where((event) => !existingIds.contains(event.id)).toList();
         state = state.copyWith(
-          events: [...state.events, ..._sortPageOnceForSession(newModels)],
+          events: _present([
+            ..._sessionEvents,
+            ..._sortPageOnceForSession(newModels),
+          ]),
           hasMore: dbHasMore,
         );
         _maybeFinalizePendingFavoritePlayerOrder();
@@ -522,17 +527,17 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     if (!mounted) return;
 
     final next = mergeLiveEventsPreservingSourceOrder(
-      current: state.events,
+      current: _sessionEvents,
       additions: additions,
       liveIds: liveIds,
     );
-    if (liveEventFeedUnchanged(state.events, next)) return;
+    if (liveEventFeedUnchanged(_sessionEvents, next)) return;
 
     if (additions.isNotEmpty) {
       debugPrint('[ForYou] Hydrated ${additions.length} off-page event(s)');
     }
     _replaceSessionEventOrder(next);
-    state = state.copyWith(events: next);
+    state = state.copyWith(events: _present(next));
   }
 
   /// Queries the live slice and republishes the page with it on top.
@@ -624,9 +629,8 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   }
 
   List<GroupEventCardModel> _retainedLiveEvents(List<String> liveIds) {
-    if (state.events.isEmpty) return const <GroupEventCardModel>[];
     return <GroupEventCardModel>[
-      for (final event in state.events)
+      for (final event in _sessionEvents)
         if (event.tourEventCategory == TourEventCategory.live ||
             liveIds.contains(event.id))
           event,
@@ -904,22 +908,41 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     return [...knownEvents, ...sortedNewEvents];
   }
 
-  void _resortVisibleEventsForFavoriteChange() {
-    final current = state.events;
-    if (current.isEmpty) return;
+  /// Apply pins to the displayed feed while preserving the base session
+  /// order for refreshes, pagination, and unpinning.
+  List<GroupEventCardModel> _present(List<GroupEventCardModel> events) {
+    _sessionEvents = events;
+    if (!events.any((event) => event.pinnedAt != null)) return events;
 
-    final sorted = _resortPreservingLiveFirst(current);
-    var changed = false;
-    for (var i = 0; i < current.length; i++) {
-      if (current[i].id != sorted[i].id) {
-        changed = true;
-        break;
-      }
+    final favorites = ref.read(favoriteEventsProvider).valueOrNull;
+    final starred = {
+      for (final event in favorites ?? const <FavoriteEvent>[]) event.eventId,
+    };
+    if (!_liveFirst || _liveCohortIds.isEmpty) {
+      return prioritizePinnedTours(events, starred);
     }
-    if (!changed) return;
 
-    _replaceSessionEventOrder(sorted);
-    if (mounted) state = state.copyWith(events: sorted);
+    final liveIds = _liveCohortIds.toSet();
+    final live = <GroupEventCardModel>[];
+    final rest = <GroupEventCardModel>[];
+    for (final event in events) {
+      (liveIds.contains(event.id) ? live : rest).add(event);
+    }
+    return [
+      ...prioritizePinnedTours(live, starred),
+      ...prioritizePinnedTours(rest, starred),
+    ];
+  }
+
+  void _resortVisibleEventsForFavoriteChange() {
+    if (!mounted || _sessionEvents.isEmpty) return;
+
+    final sorted = _resortPreservingLiveFirst(_sessionEvents);
+    if (!listEquals(sorted, _sessionEvents)) _replaceSessionEventOrder(sorted);
+    final next = _present(sorted);
+    if (!listEquals(next, state.events)) {
+      state = state.copyWith(events: next);
+    }
   }
 
   void _replaceSessionEventOrder(List<GroupEventCardModel> events) {
@@ -1041,7 +1064,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
   void _finalizeSessionOrderAfterFavoriteHydration() {
     if (!_pendingFavoritePlayerOrderHydration || state.events.isEmpty) return;
 
-    final sortedEvents = _resortPreservingLiveFirst(state.events);
+    final sortedEvents = _resortPreservingLiveFirst(_sessionEvents);
     _sessionEventOrder
       ..clear()
       ..addEntries(
@@ -1051,7 +1074,7 @@ class ForYouNotifier extends StateNotifier<ForYouState> {
     _pendingFavoritePlayerOrderHydration = false;
 
     if (mounted) {
-      state = state.copyWith(events: sortedEvents);
+      state = state.copyWith(events: _present(sortedEvents));
     }
   }
 
