@@ -260,6 +260,7 @@ class _GroupEventScreenController
             : sortingService.sortAllTours(
               currentModels,
               eventFavoritePlayersMap: eventFavoritePlayersMap,
+              prioritizePins: tourEventCategory == GroupEventCategory.current,
             );
 
     if (!liveFirst) {
@@ -327,8 +328,23 @@ class _GroupEventScreenController
       ...cohortIds,
       ...liveIds.where((id) => id.trim().isNotEmpty),
     ];
-    if (orderedCohort.isEmpty) return events;
-    return orderEventsByLiveCohort(events: events, cohortIds: orderedCohort);
+    if (!mounted || orderedCohort.isEmpty) return events;
+    return orderEventsByLiveCohort(
+      events: events,
+      cohortIds: orderedCohort,
+      rankPinnedCohort:
+          tourEventCategory == GroupEventCategory.current
+              ? (cohort) => ref
+                  .read(tournamentSortingServiceProvider)
+                  .sortAllTours(
+                    cohort,
+                    eventFavoritePlayersMap: ref.read(
+                      eventFavoritePlayersCacheProvider,
+                    ),
+                    prioritizePins: true,
+                  )
+              : null,
+    );
   }
 
   Future<List<GroupBroadcast>> _appendMissingLiveBroadcasts(
@@ -383,7 +399,20 @@ class _GroupEventScreenController
       additions: additions,
       liveIds: liveIds,
     );
-    final next = await _orderByLiveFirstQuery(merged, liveIds);
+    final ranked =
+        tourEventCategory == GroupEventCategory.current &&
+                merged.any((event) => event.pinnedAt != null)
+            ? ref
+                .read(tournamentSortingServiceProvider)
+                .sortAllTours(
+                  merged,
+                  eventFavoritePlayersMap: ref.read(
+                    eventFavoritePlayersCacheProvider,
+                  ),
+                  prioritizePins: true,
+                )
+            : merged;
+    final next = await _orderByLiveFirstQuery(ranked, liveIds);
     if (!mounted) return;
     if (liveEventFeedUnchanged(currentModels ?? const [], next)) return;
 
@@ -476,7 +505,14 @@ class _GroupEventScreenController
                 tourEventCardModel,
                 prioritizeFavorites: false,
               )
-              : sortingService.sortAllTours(tourEventCardModel);
+              : sortingService.sortAllTours(
+                tourEventCardModel,
+                eventFavoritePlayersMap:
+                    tourEventCategory == GroupEventCategory.current
+                        ? ref.read(eventFavoritePlayersCacheProvider)
+                        : null,
+                prioritizePins: tourEventCategory == GroupEventCategory.current,
+              );
 
       final orderedTours = await _orderByLiveFirstQuery(
         sortedTours,
@@ -589,7 +625,14 @@ class _GroupEventScreenController
                 tourEventCardModel,
                 prioritizeFavorites: false,
               )
-              : sortingService.sortAllTours(tourEventCardModel);
+              : sortingService.sortAllTours(
+                tourEventCardModel,
+                eventFavoritePlayersMap:
+                    tourEventCategory == GroupEventCategory.current
+                        ? ref.read(eventFavoritePlayersCacheProvider)
+                        : null,
+                prioritizePins: tourEventCategory == GroupEventCategory.current,
+              );
 
       final orderedTours = await _orderByLiveFirstQuery(
         sortedTours,

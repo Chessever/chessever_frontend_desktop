@@ -122,6 +122,8 @@ List<GroupEventCardModel> mergeLiveEventsPreservingSourceOrder({
 List<GroupEventCardModel> orderEventsByLiveCohort({
   required List<GroupEventCardModel> events,
   required Iterable<String> cohortIds,
+  List<GroupEventCardModel> Function(List<GroupEventCardModel>)?
+  rankPinnedCohort,
 }) {
   final cohort = <String>{
     for (final id in cohortIds)
@@ -140,6 +142,10 @@ List<GroupEventCardModel> orderEventsByLiveCohort({
   }
   if (promoted.isEmpty) return events;
 
+  if (rankPinnedCohort != null &&
+      promoted.any((event) => event.pinnedAt != null)) {
+    return <GroupEventCardModel>[...rankPinnedCohort(promoted), ...rest];
+  }
   promoted.sort(compareGroupEventsByRating);
   return <GroupEventCardModel>[...promoted, ...rest];
 }
