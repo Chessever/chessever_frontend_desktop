@@ -61,6 +61,9 @@ String? classifyFreeformTimeControlCategory(Object? value) {
   final canonical = _canonicalWordCategory(raw);
   if (canonical != null) return canonical;
 
+  // Classify the clock format, not the event's FIDE rating eligibility.
+  if (_fastClassicalClock.hasMatch(raw)) return 'classical';
+
   final baseMinutes = _freeformBaseMinutes(raw);
   if (baseMinutes == null || baseMinutes <= 0) return null;
   return _classifyBaseMinutes(baseMinutes);
@@ -183,6 +186,9 @@ final RegExp _rapidWordPattern = RegExp(r'\brapid\b');
 final RegExp _ultraBulletWordPattern = RegExp(r'\bultra[ _-]?bullet\b');
 final RegExp _bulletWordPattern = RegExp(r'\bbullet\b');
 final RegExp _blitzWordPattern = RegExp(r'\bblitz\b');
+final RegExp _fastClassicalClock = RegExp(
+  r'''^(?:g\s*/?\s*)?45\s*(?:min\.?|['′])?\s*;?\s*\+\s*30\s*(?:["″]|sec\.?)?\s*(?:/\s*move)?$''',
+);
 final RegExp _hoursPattern = RegExp(r'\b(\d+)\s*h\s*(\d+)?');
 final List<RegExp> _freeformMinutePatterns = <RegExp>[
   RegExp(r'\b\d+\s*x\s*(\d+(?:[.,]\d+)?)'),

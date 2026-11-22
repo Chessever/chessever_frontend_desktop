@@ -57,6 +57,25 @@ void main() {
   });
 
   group('classifyFreeformTimeControlCategory', () {
+    test('recognizes the 45+30 Classical broadcast clock', () {
+      for (final tc in [
+        '45+30',
+        '45′ + 30″',
+        '45 min + 30 sec/move',
+        'G/45;+30',
+      ]) {
+        expect(
+          classifyFreeformTimeControlCategory(tc),
+          'classical',
+          reason: tc,
+        );
+      }
+      for (final tc in ['45+0', '45+29', '45+300', '44+30', '25+10']) {
+        expect(classifyFreeformTimeControlCategory(tc), 'rapid', reason: tc);
+      }
+      expect(classifyPgnTimeControlCategory('2700+30'), 'classical');
+    });
+
     test('uses broadcast minute semantics', () {
       expect(classifyFreeformTimeControlCategory('3+2'), 'blitz');
       expect(classifyFreeformTimeControlCategory('5+0'), 'blitz');
