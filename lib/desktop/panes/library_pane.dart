@@ -8808,6 +8808,7 @@ class _GamesTableRowState extends State<_GamesTableRow>
             federation: whiteFed,
             fideId: whiteFideId,
             title: whiteTitle,
+            abbreviate: false,
           ),
           _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
           _GamesTableColumn.result => _ResultPill(result: result),
@@ -8816,6 +8817,7 @@ class _GamesTableRowState extends State<_GamesTableRow>
             federation: blackFed,
             fideId: blackFideId,
             title: blackTitle,
+            abbreviate: false,
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
           _GamesTableColumn.event => Text(
@@ -11706,12 +11708,14 @@ class _TwicTableRowState extends State<_TwicTableRow>
                 federation: white.federation,
                 title: white.title,
                 rating: white.rating > 0 ? white.rating.toString() : '',
+                abbreviate: false,
               ),
               _PlayerCell(
                 name: black.name,
                 federation: black.federation,
                 title: black.title,
                 rating: black.rating > 0 ? black.rating.toString() : '',
+                abbreviate: false,
               ),
             ],
           ),
@@ -11740,6 +11744,7 @@ class _TwicTableRowState extends State<_TwicTableRow>
                 game.whitePlayer.rating > 0
                     ? game.whitePlayer.rating.toString()
                     : '',
+            abbreviate: false,
           ),
         ),
         const SizedBox(width: _kPreviewColGap),
@@ -11755,6 +11760,7 @@ class _TwicTableRowState extends State<_TwicTableRow>
                 game.blackPlayer.rating > 0
                     ? game.blackPlayer.rating.toString()
                     : '',
+            abbreviate: false,
           ),
         ),
         const SizedBox(width: _kPreviewColGap),
@@ -13674,6 +13680,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
             federation: whiteFed,
             fideId: whiteFideId,
             title: whiteTitle,
+            abbreviate: false,
           ),
           _GamesTableColumn.whiteElo => _RatingCell(rating: whiteRating),
           _GamesTableColumn.result => _ResultPill(result: result),
@@ -13682,6 +13689,7 @@ class _DatabaseSavedGameRowState extends State<_DatabaseSavedGameRow>
             federation: blackFed,
             fideId: blackFideId,
             title: blackTitle,
+            abbreviate: false,
           ),
           _GamesTableColumn.blackElo => _RatingCell(rating: blackRating),
           _GamesTableColumn.event => Text(

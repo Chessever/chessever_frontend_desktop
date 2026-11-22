@@ -21,6 +21,57 @@ void main() {
     expect(libraryStandardTablePlayerName('Magnus Carlsen'), 'Carlsen, M.');
   });
 
+  test('study and repertoire labels are never abbreviated', () {
+    for (final label in const [
+      'Botvinnik / 10...Be7!? - 12.Bf6',
+      'Botvinnik / 6.g3',
+      'Very rare - Dynamic',
+      'Rodriguez 1994',
+      'Main Line (with note)',
+      'Vaganian–Beliavsky 1985',
+    ]) {
+      expect(libraryPlayerNameIsPersonal(label), isFalse, reason: label);
+      expect(libraryStandardTablePlayerName(label), label, reason: label);
+    }
+    expect(libraryPlayerNameIsPersonal('Main Line'), isTrue);
+    expect(libraryPlayerNameIsPersonal('Carlsen, Magnus'), isTrue);
+    expect(libraryPlayerNameIsPersonal('van der Wiel'), isTrue);
+    expect(libraryPlayerNameIsPersonal("O'Sullivan"), isTrue);
+  });
+
+  testWidgets('a wide cell keeps the full name, a narrow one compacts', (
+    tester,
+  ) async {
+    Widget row({required double width, required String name}) => MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: width,
+            child: LibraryTablePlayerCell(
+              name: name,
+              federation: 'NOR',
+              title: '',
+              rating: '2830',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(row(width: 260, name: 'Magnus Carlsen'));
+    expect(find.text('Magnus Carlsen'), findsOneWidget);
+    expect(find.text('Carlsen, M.'), findsNothing);
+
+    await tester.pumpWidget(row(width: 96, name: 'Magnus Carlsen'));
+    expect(find.text('Carlsen, M.'), findsOneWidget);
+
+    // A study label is never rewritten, however tight the column is.
+    await tester.pumpWidget(
+      row(width: 96, name: 'Botvinnik / 10...Be7!? - 12.Bf6'),
+    );
+    expect(find.text('Botvinnik / 10...Be7!? - 12.Bf6'), findsOneWidget);
+  });
+
   testWidgets('a result colour override replaces the board-colour palette', (
     tester,
   ) async {

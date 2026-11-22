@@ -14,10 +14,32 @@ const double _kLibraryPlayerFlagGap = 6;
 const double _kLibraryPlayerTitleGap = 4;
 const double _kLibraryPlayerRatingGap = 5;
 
+/// Whether a White/Black value reads as a person's name rather than a study,
+/// repertoire or variation label.
+///
+/// An imported PGN is not always two people playing: a repertoire keeps the
+/// variation path in White and a label in Black (`Botvinnik / 12.Bf6` against
+/// `Main Line`). Abbreviating those turns a row into `12.Bf6, B.` versus
+/// `Line, M.` and hides which line it is, so anything carrying notation
+/// marks, digits, punctuation-only words or more than three words is left
+/// alone.
+bool libraryPlayerNameIsPersonal(String raw) {
+  final name = desktopTablePlayerValue(raw);
+  if (name.isEmpty) return false;
+  if (name.contains(RegExp(r'''[/\\()\[\]{}!?<>+=*;:"“”]'''))) return false;
+  if (RegExp(r'\d').hasMatch(name)) return false;
+  final tokens = name.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+  if (tokens.length > 3) return false;
+  // Every word needs a letter: a stray `-` or `+` between words is a label.
+  final word = RegExp(r"^[A-Za-zÀ-ÖØ-öø-ÿ'’-]+,?\.?$");
+  return tokens.every(word.hasMatch);
+}
+
 /// Standard-table player name abbreviation: `Carlsen, Magnus` → `Carlsen, M.`.
 String libraryStandardTablePlayerName(String raw) {
   final name = desktopTablePlayerValue(raw);
   if (name.isEmpty) return '';
+  if (!libraryPlayerNameIsPersonal(name)) return name;
 
   String initial(String value) {
     final trimmed = value.trim();
@@ -66,17 +88,24 @@ class LibraryTablePlayerCell extends StatelessWidget {
   final String title;
   final String rating;
 
-  /// `Last, F.` for dense two-player rows. Pass false where the name is the
-  /// row's subject and the column has room for it (a player leaderboard).
+  /// `Last, F.` may fall back to the compact form, but never by default: the
+  /// cell shows what the row says whenever its column has room, and only
+  /// shortens a real name when it does not. Pass false where the name must
+  /// never be shortened at all.
   final bool abbreviate;
+
+  static const TextStyle _kNameStyle = TextStyle(
+    color: kWhiteColor,
+    fontSize: 12.5,
+    fontWeight: FontWeight.w500,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final playerName =
-        abbreviate
-            ? libraryStandardTablePlayerName(name)
-            : desktopTablePlayerValue(name);
-    if (playerName.isEmpty) return const SizedBox.shrink();
+    final fullName = desktopTablePlayerValue(name);
+    if (fullName.isEmpty) return const SizedBox.shrink();
+    final compactName =
+        abbreviate ? libraryStandardTablePlayerName(name) : fullName;
     // In a very narrow column the rating, then the title, give way so the
     // name keeps room instead of the row spilling into the next column.
     return LayoutBuilder(
@@ -105,14 +134,20 @@ class LibraryTablePlayerCell extends StatelessWidget {
               const SizedBox(width: _kLibraryPlayerTitleGap),
             ],
             Expanded(
-              child: Text(
-                playerName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
+              child: LayoutBuilder(
+                // The room the name actually has, after the flag, title and
+                // rating: `Carlsen, Magnus` stays whole whenever it fits, and
+                // only a column too narrow for it falls back to `Carlsen, M.`.
+                builder: (context, nameConstraints) => Text(
+                  _libraryFittedPlayerName(
+                    full: fullName,
+                    compact: compactName,
+                    available: nameConstraints.maxWidth,
+                    style: _kNameStyle,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: _kNameStyle,
                 ),
               ),
             ),
@@ -132,6 +167,30 @@ class LibraryTablePlayerCell extends StatelessWidget {
       },
     );
   }
+}
+
+/// The full value when the cell has room for it, `Last, F.` when it does not.
+///
+/// Space decides, not the shape of the string: a wide column shows
+/// `Magnus Carlsen` and a narrow one `Carlsen, M.`, and a study label that was
+/// never a name (`Botvinnik / 12.Bf6`) is only ever ellipsized, never rewritten.
+String _libraryFittedPlayerName({
+  required String full,
+  required String compact,
+  required double available,
+  required TextStyle style,
+}) {
+  if (full == compact) return full;
+  if (!available.isFinite) return full;
+  if (available <= 0) return compact;
+  final painter = TextPainter(
+    text: TextSpan(text: full, style: style),
+    maxLines: 1,
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final width = painter.width;
+  painter.dispose();
+  return width <= available ? full : compact;
 }
 
 /// Right-aligned rating cell (`—` when blank).
