@@ -30,8 +30,13 @@ void main() {
         ),
       );
 
-      expect(find.text('Ctrl/Cmd + right-click'), findsOneWidget);
-      expect(find.text('Open the board/game context menu.'), findsOneWidget);
+      expect(find.text('Right-drag'), findsOneWidget);
+      expect(
+        find.text(
+          'Draw an arrow. Hold Ctrl or Shift for red, Alt or Cmd for blue, or combine them for yellow. Board actions are in ⋯.',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('O'), findsOneWidget);
       expect(find.text('Open Explorer from the board.'), findsOneWidget);
       expect(find.text('Enter'), findsOneWidget);

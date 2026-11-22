@@ -11,12 +11,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 /// Shapes are stored in chessground's [cg.Shape] format so they can be
 /// passed straight through `DesktopChessBoard.shapes` without translation.
 
-/// Lichess-style annotation palette. Picked by mouse modifier:
-///  - bare right-click       → [green]
-///  - shift+right-click      → [red]
-///  - alt/option+right-click → [blue]
-///
-/// Ctrl / Cmd + right-click is reserved for the board context menu.
+/// Lichess-style colors for right-button board drawings.
 enum AnnotationColor { green, red, blue, yellow }
 
 extension AnnotationColorPalette on AnnotationColor {
@@ -195,15 +190,13 @@ String annotationPositionKey(String fen) {
   return parts.take(4).join(' ');
 }
 
-/// Picks an [AnnotationColor] from a Flutter pointer event's modifier set
-/// (or any source that knows shift/alt/ctrl bools). Mirrors Lichess.
+/// Shift / Ctrl select red, Alt / Cmd select blue, and both select yellow.
 AnnotationColor pickAnnotationColor({
-  required bool shift,
-  required bool alt,
-  required bool ctrl,
+  required bool shiftOrControl,
+  required bool altOrMeta,
 }) {
-  if (shift) return AnnotationColor.red;
-  if (alt) return AnnotationColor.blue;
-  if (ctrl) return AnnotationColor.yellow;
+  if (shiftOrControl && altOrMeta) return AnnotationColor.yellow;
+  if (shiftOrControl) return AnnotationColor.red;
+  if (altOrMeta) return AnnotationColor.blue;
   return AnnotationColor.green;
 }
