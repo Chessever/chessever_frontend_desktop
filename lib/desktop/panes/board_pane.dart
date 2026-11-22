@@ -6078,132 +6078,109 @@ class _BoardPaneContent extends HookConsumerWidget {
                 child: Column(
                   children: [
                     Expanded(
-                      child: GestureDetector(
-                        onSecondaryTapUp: (details) {
-                          // Plain right-click / right-drag belongs to the
-                          // annotation layer (circle / arrow), matching common
-                          // chess-board behaviour. Keep the lower-frequency
-                          // board context menu behind Ctrl/Cmd + right-click.
-                          final pressed =
-                              HardwareKeyboard.instance.logicalKeysPressed;
-                          final contextMenuModifierHeld =
-                              pressed.contains(
-                                LogicalKeyboardKey.controlLeft,
-                              ) ||
-                              pressed.contains(
-                                LogicalKeyboardKey.controlRight,
-                              ) ||
-                              pressed.contains(LogicalKeyboardKey.metaLeft) ||
-                              pressed.contains(LogicalKeyboardKey.metaRight);
-                          if (!contextMenuModifierHeld) return;
-                          openBoardContextMenu(details.globalPosition);
-                        },
-                        child: ValueListenableBuilder<int>(
-                          valueListenable: explorerPreviewLineStep,
-                          builder: (context, previewStep, _) {
-                            final view = boardViewAt(previewStep);
-                            final boardPosition = view.position;
-                            return _BoardArea(
-                              tabId: activeTabId ?? 'board-default',
-                              boardRenderKey: boardRenderKey,
-                              shareCaptureKey: boardShareCaptureKey,
-                              fen: boardPosition.fen,
-                              analysisFen: view.evalTarget.fen,
-                              threatMode: view.evalTarget.isThreatProbe,
-                              flipped: flipped.value,
-                              sideToMove: boardPosition.turn,
-                              playerSide: boardPlayerSide,
-                              validMoves: validMovesFor(boardPosition),
-                              isCheck: boardPosition.isCheck,
-                              lastMove: view.lastMove,
-                              onMove: onMove,
-                              promotionMove: promotionMove.value,
-                              onPromotionSelection: onPromotionSelection,
-                              pgnHeaders: pgnHeaders.value,
-                              pgnShapes:
-                                  showBoardMoveDecorations
-                                      ? pgnShapes
-                                      : const <cg.Shape>[],
-                              onGraphicCommentaryChanged:
-                                  showBoardMoveDecorations
-                                      ? (shapes) => setMoveGraphicCommentary(
-                                        pointer.value,
-                                        shapes,
-                                      )
-                                      : null,
-                              whiteClock: whiteClockRaw,
-                              blackClock: blackClockRaw,
-                              boardAnnotation:
-                                  showBoardMoveDecorations
-                                      ? boardAnnotation
-                                      : null,
-                              boardAnnotationGlyph:
-                                  showBoardMoveDecorations
-                                      ? boardAnnotationGlyph
-                                      : null,
-                              boardAnnotationSquare:
-                                  showBoardMoveDecorations
-                                      ? boardAnnotationSquare
-                                      : null,
-                              gameEnding:
-                                  showBoardMoveDecorations ? gameEnding : null,
-                              showFinishedResult: showFinishedResult,
-                              onWheelStep: stepNotationHorizontally,
-                              isLiveAtTip: isLiveAtTip,
-                              isOnScreen: isOnScreen,
-                              activeGameId: activeGameId,
-                              boardArgs: boardArgs,
-                              sourceGame: boardArgs?.sourceGame,
-                              viewSource:
-                                  boardArgs?.viewSource ?? ChessboardView.tour,
-                              focusMode: boardFocusMode,
-                              pictureInPicture: pictureInPictureMode,
-                              onPreviousGame: navigatePreviousGameManually,
-                              onRestoreMainWindow:
-                                  () => unawaited(
-                                    restoreMainWindowFromPictureInPictureAction(),
-                                  ),
-                              onDismissPictureInPicture:
-                                  () => unawaited(
-                                    dismissPictureInPictureAction(),
-                                  ),
-                              onNextGame: navigateNextGameManually,
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: explorerPreviewLineStep,
+                        builder: (context, previewStep, _) {
+                          final view = boardViewAt(previewStep);
+                          final boardPosition = view.position;
+                          return _BoardArea(
+                            tabId: activeTabId ?? 'board-default',
+                            boardRenderKey: boardRenderKey,
+                            shareCaptureKey: boardShareCaptureKey,
+                            fen: boardPosition.fen,
+                            analysisFen: view.evalTarget.fen,
+                            threatMode: view.evalTarget.isThreatProbe,
+                            flipped: flipped.value,
+                            sideToMove: boardPosition.turn,
+                            playerSide: boardPlayerSide,
+                            validMoves: validMovesFor(boardPosition),
+                            isCheck: boardPosition.isCheck,
+                            lastMove: view.lastMove,
+                            onMove: onMove,
+                            promotionMove: promotionMove.value,
+                            onPromotionSelection: onPromotionSelection,
+                            pgnHeaders: pgnHeaders.value,
+                            pgnShapes:
+                                showBoardMoveDecorations
+                                    ? pgnShapes
+                                    : const <cg.Shape>[],
+                            onGraphicCommentaryChanged:
+                                showBoardMoveDecorations
+                                    ? (shapes) => setMoveGraphicCommentary(
+                                      pointer.value,
+                                      shapes,
+                                    )
+                                    : null,
+                            whiteClock: whiteClockRaw,
+                            blackClock: blackClockRaw,
+                            boardAnnotation:
+                                showBoardMoveDecorations
+                                    ? boardAnnotation
+                                    : null,
+                            boardAnnotationGlyph:
+                                showBoardMoveDecorations
+                                    ? boardAnnotationGlyph
+                                    : null,
+                            boardAnnotationSquare:
+                                showBoardMoveDecorations
+                                    ? boardAnnotationSquare
+                                    : null,
+                            gameEnding:
+                                showBoardMoveDecorations ? gameEnding : null,
+                            showFinishedResult: showFinishedResult,
+                            onWheelStep: stepNotationHorizontally,
+                            isLiveAtTip: isLiveAtTip,
+                            isOnScreen: isOnScreen,
+                            activeGameId: activeGameId,
+                            boardArgs: boardArgs,
+                            sourceGame: boardArgs?.sourceGame,
+                            viewSource:
+                                boardArgs?.viewSource ?? ChessboardView.tour,
+                            focusMode: boardFocusMode,
+                            pictureInPicture: pictureInPictureMode,
+                            onPreviousGame: navigatePreviousGameManually,
+                            onRestoreMainWindow:
+                                () => unawaited(
+                                  restoreMainWindowFromPictureInPictureAction(),
+                                ),
+                            onDismissPictureInPicture:
+                                () =>
+                                    unawaited(dismissPictureInPictureAction()),
+                            onNextGame: navigateNextGameManually,
 
-                              boardSizePreference: boardSizePreference,
-                              onBoardSizeChanged: (size) {
-                                setBoardSizePreference(size);
-                                final settings =
-                                    ref
-                                        .read(engineSettingsProviderNew)
-                                        .valueOrNull ??
-                                    const EngineSettings();
-                                final evalBarReservation =
-                                    shouldShowDesktopBoardEvalBar(settings)
-                                        ? _BoardArea.evalBarReservation
-                                        : 0.0;
-                                final targetColumnSize =
-                                    size + evalBarReservation + 48;
-                                // Stacked, the split runs top to bottom and
-                                // has no games rail: index and size both
-                                // describe a column that is not there.
-                                if (boardPaneStacked.value) return;
-                                mainSplitController.setSize(
-                                  boardSplitIndex,
-                                  targetColumnSize,
-                                );
-                              },
-                              onBoardSizeReset: () {
-                                setBoardSizePreference(null);
-                              },
-                              onBoardSizeChangeEnd: () {
-                                persistBoardSizePreference();
-                              },
-                              suppressEngineAnalysis: !runLiveBoardAnalysis,
-                              onColumnFitWidthChanged:
-                                  publishBoardColumnFitWidth,
-                            );
-                          },
-                        ),
+                            boardSizePreference: boardSizePreference,
+                            onBoardSizeChanged: (size) {
+                              setBoardSizePreference(size);
+                              final settings =
+                                  ref
+                                      .read(engineSettingsProviderNew)
+                                      .valueOrNull ??
+                                  const EngineSettings();
+                              final evalBarReservation =
+                                  shouldShowDesktopBoardEvalBar(settings)
+                                      ? _BoardArea.evalBarReservation
+                                      : 0.0;
+                              final targetColumnSize =
+                                  size + evalBarReservation + 48;
+                              // Stacked, the split runs top to bottom and
+                              // has no games rail: index and size both
+                              // describe a column that is not there.
+                              if (boardPaneStacked.value) return;
+                              mainSplitController.setSize(
+                                boardSplitIndex,
+                                targetColumnSize,
+                              );
+                            },
+                            onBoardSizeReset: () {
+                              setBoardSizePreference(null);
+                            },
+                            onBoardSizeChangeEnd: () {
+                              persistBoardSizePreference();
+                            },
+                            suppressEngineAnalysis: !runLiveBoardAnalysis,
+                            onColumnFitWidthChanged: publishBoardColumnFitWidth,
+                          );
+                        },
                       ),
                     ),
                     // Optional move-nav cluster sits directly under the board.

@@ -91,28 +91,82 @@ void main() {
     expect(circle.color, AnnotationColor.red.color);
   });
 
-  testWidgets('ctrl secondary tap stays reserved for the board context menu', (
-    tester,
-  ) async {
+  for (final (label, keys, expectedColor) in [
+    ('Ctrl', [LogicalKeyboardKey.controlLeft], AnnotationColor.red),
+    ('Cmd', [LogicalKeyboardKey.metaRight], AnnotationColor.blue),
+    ('Alt', [LogicalKeyboardKey.altLeft], AnnotationColor.blue),
+    (
+      'Ctrl+Alt',
+      [LogicalKeyboardKey.controlRight, LogicalKeyboardKey.altRight],
+      AnnotationColor.yellow,
+    ),
+    (
+      'Shift+Cmd',
+      [LogicalKeyboardKey.shiftRight, LogicalKeyboardKey.metaLeft],
+      AnnotationColor.yellow,
+    ),
+  ]) {
+    testWidgets('$label secondary drag draws a ${expectedColor.name} arrow', (
+      tester,
+    ) async {
+      final container = ProviderContainer();
+      Set<cg.Shape>? persistedShapes;
+      addTearDown(container.dispose);
+      await _pumpBoard(
+        tester,
+        container,
+        onShapesChanged: (shapes) => persistedShapes = shapes,
+      );
+
+      for (final key in keys) {
+        await tester.sendKeyDownEvent(key);
+      }
+      try {
+        final gesture = await tester.createGesture(
+          kind: PointerDeviceKind.mouse,
+          buttons: kSecondaryMouseButton,
+        );
+        await gesture.down(_squareOffset(tester, Square.e2));
+        await gesture.moveTo(_squareOffset(tester, Square.e4));
+        await gesture.up();
+        await tester.pump();
+      } finally {
+        for (final key in keys.reversed) {
+          await tester.sendKeyUpEvent(key);
+        }
+      }
+
+      final shapes =
+          container.read(boardAnnotationsProvider(_defaultTabId)).shapes;
+      expect(shapes, hasLength(1));
+      final arrow = shapes.single as cg.Arrow;
+      expect(arrow.orig, Square.e2);
+      expect(arrow.dest, Square.e4);
+      expect(arrow.color, expectedColor.color);
+      expect(persistedShapes, unorderedEquals(shapes));
+    });
+  }
+
+  testWidgets('Ctrl secondary tap toggles a red circle', (tester) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     await _pumpBoard(tester, container);
+    final square = _squareOffset(tester, Square.e2);
+    final annotations = boardAnnotationsProvider(_defaultTabId);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     try {
-      await tester.tapAt(
-        _squareOffset(tester, Square.e2),
-        buttons: kSecondaryMouseButton,
-      );
+      await tester.tapAt(square, buttons: kSecondaryMouseButton);
       await tester.pump();
+      final circle = container.read(annotations).shapes.single as cg.Circle;
+      expect(circle.orig, Square.e2);
+      expect(circle.color, AnnotationColor.red.color);
+      await tester.tapAt(square, buttons: kSecondaryMouseButton);
+      await tester.pump();
+      expect(container.read(annotations).shapes, isEmpty);
     } finally {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     }
-
-    expect(
-      container.read(boardAnnotationsProvider(_defaultTabId)).shapes,
-      isEmpty,
-    );
   });
 
   testWidgets('left click clears persistent PGN-backed shapes', (tester) async {

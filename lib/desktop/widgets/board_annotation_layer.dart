@@ -11,17 +11,8 @@ import 'package:chessever/desktop/state/board_annotations.dart';
 /// converts them into circles / arrows on
 /// [boardAnnotationsProvider].
 ///
-/// Plain right-click / right-drag stays in annotation mode to match common
-/// chess-board muscle memory: click a square for a circle, drag to another
-/// square for an arrow. Ctrl / Cmd + right-click is reserved for the board
-/// context menu (handled by the GestureDetector around `_BoardArea`).
-///
-/// Behaviour:
-///  - Plain right-click a square          → toggle a green circle
-///  - Plain right-click + drag            → finalize a green arrow A → B
-///  - Shift / Alt + right-click a square  → toggle a colour-variant circle
-///  - Shift / Alt + right-click + drag    → finalize a colour-variant arrow
-///  - Ctrl / Cmd + right-click            → board context menu
+/// Right-click toggles a circle; right-drag draws an arrow. Ctrl / Shift
+/// and Alt / Cmd select colors as on Lichess. Board actions live in ⋯.
 ///
 /// The overlay sits *on top* of the board widget but is transparent and
 /// only intercepts events when its gate conditions are met; left-click
@@ -87,32 +78,12 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
     return Square.fromCoords(File(ox), Rank(oy));
   }
 
-  bool _hasColorModifierHeld() {
-    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    return pressed.contains(LogicalKeyboardKey.shiftLeft) ||
-        pressed.contains(LogicalKeyboardKey.shiftRight) ||
-        pressed.contains(LogicalKeyboardKey.altLeft) ||
-        pressed.contains(LogicalKeyboardKey.altRight);
-  }
-
-  bool _hasBoardContextMenuModifierHeld() {
-    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    return pressed.contains(LogicalKeyboardKey.controlLeft) ||
-        pressed.contains(LogicalKeyboardKey.controlRight) ||
-        pressed.contains(LogicalKeyboardKey.metaLeft) ||
-        pressed.contains(LogicalKeyboardKey.metaRight);
-  }
-
   AnnotationColor _colorForCurrentModifiers() {
-    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    final shift =
-        pressed.contains(LogicalKeyboardKey.shiftLeft) ||
-        pressed.contains(LogicalKeyboardKey.shiftRight);
-    final alt =
-        pressed.contains(LogicalKeyboardKey.altLeft) ||
-        pressed.contains(LogicalKeyboardKey.altRight);
-    final ctrl = false;
-    return pickAnnotationColor(shift: shift, alt: alt, ctrl: ctrl);
+    final keyboard = HardwareKeyboard.instance;
+    return pickAnnotationColor(
+      shiftOrControl: keyboard.isShiftPressed || keyboard.isControlPressed,
+      altOrMeta: keyboard.isAltPressed || keyboard.isMetaPressed,
+    );
   }
 
   @override
@@ -127,14 +98,14 @@ class _BoardAnnotationLayerState extends ConsumerState<BoardAnnotationLayer> {
         if (box == null) return;
         final local = box.globalToLocal(event.position);
         if (event.buttons & kSecondaryMouseButton != 0) {
-          if (_hasBoardContextMenuModifierHeld()) return;
           final sq = _squareAt(local);
           if (sq == null) return;
-          final hasModifier = _hasColorModifierHeld();
+          final color = _colorForCurrentModifiers();
+          final hasModifier = color != AnnotationColor.green;
           setState(() {
             _origSquare = sq;
             _hoverSquare = sq;
-            _activeColor = _colorForCurrentModifiers();
+            _activeColor = color;
             _liveCursor = hasModifier ? local : null;
             _downLocal = local;
             _plainSecondaryGesture = !hasModifier;

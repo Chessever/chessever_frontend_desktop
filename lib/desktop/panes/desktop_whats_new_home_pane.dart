@@ -125,8 +125,9 @@ class _PowerTipsList extends StatelessWidget {
 
   static const _tips = [
     _PowerTipData(
-      shortcut: 'Ctrl/Cmd + right-click',
-      text: 'Open the board/game context menu.',
+      shortcut: 'Right-drag',
+      text:
+          'Draw an arrow. Hold Ctrl or Shift for red, Alt or Cmd for blue, or combine them for yellow. Board actions are in ⋯.',
     ),
     _PowerTipData(
       shortcut: 'Drag tab',

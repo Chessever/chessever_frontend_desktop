@@ -11,6 +11,15 @@ String section(String text, String start, String end) =>
     text.substring(text.indexOf(start), text.indexOf(end, text.indexOf(start)));
 
 void main() {
+  test('Board right-click does not open the actions menu', () {
+    final board = source('lib/desktop/panes/board_pane.dart');
+    expect(
+      board,
+      isNot(contains('openBoardContextMenu(details.globalPosition)')),
+    );
+    expect(board, contains('onPressed: openBoardContextMenu'));
+  });
+
   test('Board owns one menu trigger beside the engine gear', () {
     final board = source('lib/desktop/panes/board_pane.dart');
     final area = section(
