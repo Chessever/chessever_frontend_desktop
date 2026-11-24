@@ -305,3 +305,9 @@ Deno.test("game analysis videos: members submit and check, review stays closed",
     assertEquals(isAllowedGamebaseProxyRoute(method, path), false, path);
   }
 });
+
+Deno.test("next move predictions only accept a member POST", () => {
+  assertEquals(matchGamebaseProxyRoute("POST", "/api/next-move")?.member, true);
+  assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/next-move"), false);
+  assertEquals(isAllowedGamebaseProxyRoute("POST", "/api/next-move/admin"), false);
+});

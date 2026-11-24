@@ -111,6 +111,7 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
+import 'package:chessever/desktop/widgets/next_move_ribbon.dart';
 import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
@@ -6074,6 +6075,14 @@ class _BoardPaneContent extends HookConsumerWidget {
                             shareCaptureKey: boardShareCaptureKey,
                             fen: boardPosition.fen,
                             analysisFen: view.evalTarget.fen,
+                            predictionMoves:
+                                isForegroundSurface &&
+                                        boardPosition.fen == position.fen &&
+                                        !position.isGameOver &&
+                                        !view.evalTarget.isThreatProbe
+                                    ? lineUcis
+                                    : null,
+                            predictionStartFen: chessGame.value.startingFen,
                             threatMode: view.evalTarget.isThreatProbe,
                             flipped: flipped.value,
                             sideToMove: boardPosition.turn,
@@ -9609,13 +9618,15 @@ String? _firstClockDisplay(
   return null;
 }
 
-class _BoardArea extends ConsumerWidget {
+class _BoardArea extends HookConsumerWidget {
   const _BoardArea({
     required this.tabId,
     required this.boardRenderKey,
     required this.shareCaptureKey,
     required this.fen,
     required this.analysisFen,
+    required this.predictionMoves,
+    required this.predictionStartFen,
     required this.threatMode,
     required this.flipped,
     required this.sideToMove,
@@ -9662,6 +9673,8 @@ class _BoardArea extends ConsumerWidget {
   final GlobalKey shareCaptureKey;
   final String fen;
   final String analysisFen;
+  final List<String>? predictionMoves;
+  final String predictionStartFen;
   final bool threatMode;
   final bool flipped;
   final Side sideToMove;
@@ -9921,6 +9934,44 @@ class _BoardArea extends ConsumerWidget {
     final bottomRowHeight = chromeMetrics.bottomRowHeight;
     final headerGapTotal = chromeMetrics.headerGapTotal;
     final extraVertical = topRowHeight + bottomRowHeight + headerGapTotal;
+    final cadence = nextMoveCadence(
+      sourceGame?.timeControl,
+      pgn('TimeControl'),
+    );
+    final predictionKey =
+        !focusMode &&
+                !pictureInPicture &&
+                sourceGame?.source == GameSource.supabase &&
+                sourceGame?.tourId.isNotEmpty == true &&
+                predictionMoves != null &&
+                whiteRating > 0 &&
+                blackRating > 0 &&
+                !RegExp(r'960|fischer', caseSensitive: false).hasMatch(pgn('Variant')) &&
+                cadence != null
+            ? jsonEncode({
+              'fen': predictionStartFen,
+              'moves': predictionMoves,
+              'whiteRating': whiteRating,
+              'blackRating': blackRating,
+              'timeControl': cadence,
+            })
+            : null;
+    final prediction =
+        predictionKey == null
+            ? null
+            : ref.watch(nextMovePredictionProvider(predictionKey)).valueOrNull;
+    final chosen = useState<({String key, NextMoveCandidate move})?>(null);
+    final selected =
+        chosen.value?.key == predictionKey ? chosen.value?.move : null;
+    final parsed = selected?.uci == null ? null : Move.parse(selected!.uci!);
+    final predictionArrow =
+        parsed is NormalMove
+            ? cg.Arrow(
+              color: selected!.color,
+              orig: parsed.from,
+              dest: parsed.to,
+            )
+            : null;
 
     // Top header is whichever player sits at the top of the board: black
     // when not flipped, white when flipped. Nothing here depends on the
@@ -10026,9 +10077,14 @@ class _BoardArea extends ConsumerWidget {
                 0.0,
                 constraints.biggest.width - evalBarReservation,
               );
+              final showPrediction =
+                  prediction?.isNotEmpty == true &&
+                  hLimit >= 250 &&
+                  constraints.maxHeight >= extraVertical + 320;
+              final ribbonHeight = showPrediction ? nextMoveRibbonHeight : 0.0;
               final vLimit = math.max(
                 0.0,
-                constraints.biggest.height - extraVertical,
+                constraints.biggest.height - extraVertical - ribbonHeight,
               );
               final maxBoardSize = math.min(hLimit, vLimit);
               final defaultSize = math.min(
@@ -10090,6 +10146,20 @@ class _BoardArea extends ConsumerWidget {
                   bottomRowHeight: bottomRowHeight,
                   topHeader: topHeader,
                   bottomHeader: bottomHeader,
+                  predictionArrow: showPrediction ? predictionArrow : null,
+                  ribbon:
+                      showPrediction
+                          ? DesktopNextMoveRibbon(
+                            moves: prediction!,
+                            selectedUci: selected?.uci,
+                            onSelect:
+                                (move) =>
+                                    chosen.value =
+                                        move == null
+                                            ? null
+                                            : (key: predictionKey!, move: move),
+                          )
+                          : null,
                 );
               }
 
@@ -10118,7 +10188,11 @@ class _BoardArea extends ConsumerWidget {
                   // erase annotations.
                   final cornerRight = (constraints.maxWidth + boardWithBar) / 2;
                   final cornerBottom =
-                      (constraints.maxHeight + boardSize + extraVertical) / 2 -
+                      (constraints.maxHeight -
+                              ribbonHeight +
+                              boardSize +
+                              extraVertical) /
+                          2 -
                       bottomRowHeight -
                       _BoardArea.headerGap;
                   if (hasHeaders &&
@@ -10132,10 +10206,22 @@ class _BoardArea extends ConsumerWidget {
                       ).contains(event.localPosition)) {
                     return;
                   }
+                  if (showPrediction &&
+                      Rect.fromLTWH(
+                        cornerRight - boardWithBar,
+                        cornerBottom + bottomRowHeight + _BoardArea.headerGap,
+                        boardWithBar,
+                        ribbonHeight,
+                      ).contains(event.localPosition)) {
+                    return;
+                  }
                   final shouldClear =
                       shouldClearBoardAnnotationsForBoardAreaClick(
                         localPosition: event.localPosition,
-                        contentSize: constraints.biggest,
+                        contentSize: Size(
+                          constraints.maxWidth,
+                          constraints.maxHeight - ribbonHeight,
+                        ),
                         boardSize: boardSize,
                         boardWithBar: boardWithBar,
                         topRowHeight: topRowHeight,
@@ -10179,6 +10265,8 @@ class _BoardArea extends ConsumerWidget {
     required double bottomRowHeight,
     required Widget? topHeader,
     required Widget? bottomHeader,
+    required cg.Shape? predictionArrow,
+    required Widget? ribbon,
   }) {
     final boardRow = SizedBox(
       height: boardSize,
@@ -10227,6 +10315,7 @@ class _BoardArea extends ConsumerWidget {
               gameEnding: gameEnding,
               onWheelStep: onWheelStep,
               engineArrowFen: engineArrowFen,
+              predictionArrow: predictionArrow,
             ),
           ),
         ],
@@ -10275,28 +10364,38 @@ class _BoardArea extends ConsumerWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          RepaintBoundary(
-            key: shareCaptureKey,
-            child: ColoredBox(
-              color: kBackgroundColor,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  chromeRow(height: topRowHeight, header: topHeader),
-                  SizedBox(height: _BoardArea.headerGap),
-                  boardRow,
-                  SizedBox(height: _BoardArea.headerGap),
-                  chromeRow(height: bottomRowHeight, header: bottomHeader),
-                ],
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RepaintBoundary(
+                key: shareCaptureKey,
+                child: ColoredBox(
+                  color: kBackgroundColor,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      chromeRow(height: topRowHeight, header: topHeader),
+                      SizedBox(height: _BoardArea.headerGap),
+                      boardRow,
+                      SizedBox(height: _BoardArea.headerGap),
+                      chromeRow(height: bottomRowHeight, header: bottomHeader),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              if (ribbon != null)
+                chromeRow(height: nextMoveRibbonHeight, header: ribbon),
+            ],
           ),
           if (hasHeaders && !focusMode && resizeHandle != null)
             Positioned(
               // Coordinates are inside the squares, not a separate gutter.
               // Keep the target in the extreme 16px corner, away from the
               // piece centre, and outside share exports.
-              bottom: bottomRowHeight + _BoardArea.headerGap,
+              bottom:
+                  bottomRowHeight +
+                  _BoardArea.headerGap +
+                  (ribbon == null ? 0 : nextMoveRibbonHeight),
               right: 0,
               child: SizedBox.square(dimension: 16, child: resizeHandle),
             ),
@@ -10418,6 +10517,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.gameEnding,
     required this.onWheelStep,
     required this.engineArrowFen,
+    required this.predictionArrow,
   });
 
   final String tabId;
@@ -10444,6 +10544,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
 
   /// Position whose engine lines draw arrows, or null when arrows are off.
   final String? engineArrowFen;
+  final cg.Shape? predictionArrow;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -10495,7 +10596,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     final mergedShapes = <cg.Shape>[
       ...positionShapes,
       ...pgnShapes,
-      ...engineShapes,
+      if (predictionArrow case final arrow?) arrow else ...engineShapes,
     ];
     final shapes =
         mergedShapes.isEmpty

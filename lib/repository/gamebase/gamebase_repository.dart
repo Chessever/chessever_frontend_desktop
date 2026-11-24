@@ -961,6 +961,28 @@ class GamebaseRepository {
     );
   }
 
+  Future<({bool pending, Map<String, dynamic>? data})> getNextMove(
+    Map<String, dynamic> input,
+    CancelToken cancelToken,
+  ) async {
+    try {
+      final user = Supabase.instance.client.auth.currentSession?.user;
+      if (user == null || user.isAnonymous) return (pending: false, data: null);
+      final response = await _dio.post<Map<String, dynamic>>(
+        '$_baseUrl/api/next-move',
+        data: input,
+        cancelToken: cancelToken,
+        options: _requestOptions(receiveTimeout: const Duration(seconds: 38)),
+      );
+      return (
+        pending: response.statusCode == 202,
+        data: response.statusCode == 200 ? response.data : null,
+      );
+    } on DioException {
+      return (pending: false, data: null);
+    }
+  }
+
   Future<GamebaseResponse> getMoveAggregates({
     required String fen,
     List<String> moves = const [],
