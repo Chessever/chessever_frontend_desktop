@@ -83,12 +83,12 @@ class DesktopTabBar extends ConsumerStatefulWidget {
 }
 
 class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
-  GameTabDragPayload? _hoverPayload;
+  String? _hoverLabel;
   bool _closeConfirmationOpen = false;
 
   // Last built tab strip and the inputs it was built from.
   Widget? _tabStrip;
-  Object? _tabStripTabs;
+  List<DesktopTab>? _tabStripTabs;
   Object? _tabStripActiveId;
   double? _tabStripListWidth;
   bool? _tabStripFillsRest;
@@ -188,20 +188,58 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
             : ref.watch(boardTabGameArgsByTabIdProvider);
     final notifier = ref.read(desktopTabsProvider.notifier);
 
-    return DragTarget<GameTabDragPayload>(
+    final groupState =
+        widget.readOnlyPresentation
+            ? const BoardSplitState()
+            : ref.watch(boardSplitProvider);
+    final allTabs = {for (final tab in state.tabs) tab.id: tab};
+    final stripTabs = <DesktopTab>[];
+    for (final tab in state.tabs) {
+      final group = groupState.groupOf(tab.id);
+      if (group == null) {
+        stripTabs.add(tab);
+      } else if (group.anchorTabId == tab.id) {
+        stripTabs.add(allTabs[group.mainTabId] ?? tab);
+      }
+    }
+
+    bool canReturn(BoardTabDragPayload payload) =>
+        payload.fromWall &&
+        (ref.read(visibleBoardSplitProvider)?.isWatched(payload.tabId) ??
+            false);
+
+    return DragTarget<Object>(
       onWillAcceptWithDetails: (details) {
         if (widget.readOnlyPresentation) return false;
-        setState(() => _hoverPayload = details.data);
+        final label = switch (details.data) {
+          GameTabDragPayload(:final label) => label,
+          BoardTabDragPayload payload when canReturn(payload) => payload.label,
+          _ => null,
+        };
+        if (label == null) return false;
+        setState(() => _hoverLabel = label);
         return true;
       },
-      onLeave: (_) => setState(() => _hoverPayload = null),
+      onLeave: (_) => setState(() => _hoverLabel = null),
       onAcceptWithDetails: (details) {
         if (widget.readOnlyPresentation) return;
-        setState(() => _hoverPayload = null);
-        // Drag-drop intent is "open this game and look at it now" — pass
-        // focus: true so the new tab foregrounds itself.
-        // Admitted before the spawn: a gated payload opens nothing.
-        details.data.spawnAdmitted(ref, focus: true, surface: 'tab_strip_drop');
+        setState(() => _hoverLabel = null);
+        switch (details.data) {
+          case GameTabDragPayload payload:
+            payload.spawnAdmitted(ref, focus: true, surface: 'tab_strip_drop');
+          case BoardTabDragPayload payload when canReturn(payload):
+            ref.read(boardSplitProvider.notifier).remove(payload.tabId);
+            // The board keeps its id and position. Reveal the restored tab
+            // while keeping the current wall on screen.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _tabStripWidths == null) return;
+              _revealActiveTab(
+                _tabStripTabs ?? const [],
+                payload.tabId,
+                _tabStripWidths!,
+              );
+            });
+        }
       },
       builder: (context, candidate, rejected) {
         final dragging = candidate.isNotEmpty;
@@ -237,7 +275,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final widths = _computeTabWidths(
-                        tabs: state.tabs,
+                        tabs: stripTabs,
                         boardArgsByTab: boardArgsByTab,
                         availableWidth: constraints.maxWidth,
                       );
@@ -252,7 +290,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                       final fillsRest = listWidth < constraints.maxWidth;
                       if (_revealedActiveId != state.activeId) {
                         _revealedActiveId = state.activeId;
-                        final tabs = state.tabs;
+                        final tabs = stripTabs;
                         final activeId = state.activeId;
                         // A tab pulled into the split re-selects the board it
                         // is dropped on; scrolling the strip for that could
@@ -269,7 +307,10 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                       // chip; any real input change builds a fresh one.
                       final cachedStrip = _tabStrip;
                       if (cachedStrip != null &&
-                          identical(_tabStripTabs, state.tabs) &&
+                          const ListEquality<DesktopTab>().equals(
+                            _tabStripTabs,
+                            stripTabs,
+                          ) &&
                           _tabStripActiveId == state.activeId &&
                           _tabStripListWidth == listWidth &&
                           _tabStripFillsRest == fillsRest &&
@@ -280,7 +321,7 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                           )) {
                         return cachedStrip;
                       }
-                      _tabStripTabs = state.tabs;
+                      _tabStripTabs = stripTabs;
                       _tabStripActiveId = state.activeId;
                       _tabStripListWidth = listWidth;
                       _tabStripFillsRest = fillsRest;
@@ -326,10 +367,29 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                                 // Keep legacy callback here because desktopTabsProvider.reorder
                                 // still expects Flutter's pre-removal newIndex semantics.
                                 // ignore: deprecated_member_use
-                                onReorder: notifier.reorder,
-                                itemCount: state.tabs.length,
+                                onReorder: (oldIndex, newIndex) {
+                                  final current =
+                                      ref.read(desktopTabsProvider).tabs;
+                                  final groups = ref.read(boardSplitProvider);
+                                  int indexOf(DesktopTab tab) {
+                                    final anchor =
+                                        groups.groupOf(tab.id)?.anchorTabId ??
+                                        tab.id;
+                                    return current.indexWhere(
+                                      (item) => item.id == anchor,
+                                    );
+                                  }
+
+                                  final from = indexOf(stripTabs[oldIndex]);
+                                  final to =
+                                      newIndex == stripTabs.length
+                                          ? current.length
+                                          : indexOf(stripTabs[newIndex]);
+                                  notifier.reorder(from, to);
+                                },
+                                itemCount: stripTabs.length,
                                 itemBuilder: (context, i) {
-                                  final tab = state.tabs[i];
+                                  final tab = stripTabs[i];
                                   // Select on press, but start reordering only after
                                   // deliberate horizontal travel, never click jitter.
                                   return SizedBox(
@@ -377,8 +437,8 @@ class _DesktopTabBarState extends ConsumerState<DesktopTabBar> {
                     },
                   ),
                 ),
-                if (_hoverPayload != null)
-                  _DropPlaceholderChip(label: _hoverPayload!.label),
+                if (_hoverLabel != null)
+                  _DropPlaceholderChip(label: _hoverLabel!),
                 if (!widget.readOnlyPresentation) const DesktopUpdateChip(),
                 if (widget.onOpenUserProfile != null) ...[
                   const SizedBox(width: 8),
@@ -822,16 +882,9 @@ class _TabChipState extends ConsumerState<_TabChip>
     if (activeId == null) return;
     final split = ref.read(boardSplitProvider.notifier);
     final layout = split.layoutFor(activeId);
-    final placement = besideBoardPlacement(layout, activeId);
-    if (placement == null) return;
+    if (!layout.hasRoom || layout.contains(widget.tab.id)) return;
     void place() {
-      if (split.place(
-        targetTabId: placement.targetTabId,
-        incomingTabId: widget.tab.id,
-        zone: placement.zone,
-      )) {
-        ref.read(desktopTabsProvider.notifier).activate(widget.tab.id);
-      }
+      split.watch(targetTabId: activeId, incomingTabId: widget.tab.id);
     }
 
     // Showing a board beside another is Premium; without it the Premium
@@ -930,11 +983,7 @@ class _TabChipState extends ConsumerState<_TabChip>
         activeTabId != null &&
         activeTabId != widget.tab.id &&
         !(splitState.groupOf(activeTabId)?.contains(widget.tab.id) ?? false) &&
-        besideBoardPlacement(
-              ref.read(boardSplitProvider.notifier).layoutFor(activeTabId),
-              activeTabId,
-            ) !=
-            null;
+        ref.read(boardSplitProvider.notifier).layoutFor(activeTabId).hasRoom;
 
     final picked = await showMenu<_TabAction>(
       context: context,
@@ -960,7 +1009,7 @@ class _TabChipState extends ConsumerState<_TabChip>
             value: _TabAction.openBeside,
             child: _MenuRow(
               icon: Icons.vertical_split_rounded,
-              label: 'Show beside current board',
+              label: 'Add to Round Wall',
             ),
           ),
         if (inSplit)

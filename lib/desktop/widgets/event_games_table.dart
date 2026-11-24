@@ -6245,6 +6245,23 @@ Future<void> _openEventGame({
     return;
   }
   if (context != null && !context.mounted) return;
+  if (!inNewTab &&
+      !inNewWindow &&
+      ownerContainer.read(desktopTabsProvider).activeId == ownerTabs.activeId) {
+    final wall = ownerContainer.read(visibleBoardSplitProvider);
+    if (wall != null) {
+      final byTab = ownerContainer.read(boardTabGameArgsByTabIdProvider);
+      for (final tabId in wall.watchedTabIds) {
+        final watched = byTab[tabId];
+        if (watched?.gameListSelectedId != game.id &&
+            watched?.gameId != game.id) {
+          continue;
+        }
+        ownerContainer.read(desktopTabsProvider.notifier).activate(tabId);
+        return;
+      }
+    }
+  }
   if (!await _confirmReplaceActiveBoardGameIfNeeded(
     ref: ref,
     context: context,

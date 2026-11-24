@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:collection/collection.dart';
+import 'package:chessground/chessground.dart' as cg;
+import 'package:dartchess/dartchess.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -14,23 +14,31 @@ import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_focus_mode.dart';
 import 'package:chessever/desktop/state/board_split_view.dart';
+import 'package:chessever/desktop/state/board_tab_fen.dart';
+import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/utils/pgn_clock_utils.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/widgets/board_unsaved_analysis_dialog.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/game_drag_source.dart';
 import 'package:chessever/desktop/widgets/game_tab_drag_payload.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/persistent_tab_state.dart';
 
-/// An open Board tab being dragged: from the tab strip, or by the header of
-/// a split cell to move it to another place in the split.
+/// A Board tab pulled from the tab strip or a watched board returned to it.
 @immutable
 class BoardTabDragPayload {
-  const BoardTabDragPayload({required this.tabId, required this.label});
+  const BoardTabDragPayload({
+    required this.tabId,
+    required this.label,
+    this.fromWall = false,
+  });
 
   final String tabId;
   final String label;
+  final bool fromWall;
 }
 
 /// Drags an open Board tab by [child]. A drag starts only on deliberate
@@ -171,419 +179,415 @@ class DesktopWorkspacePage {
   final Widget child;
 }
 
-/// Every tab page stays mounted. One page is shown, or every cell of the
-/// visible [split], each at its own rect.
-///
-/// Pages are never re-parented: entering, resizing or leaving a split only
-/// moves where a slot is laid out, so a board keeps its state, its live
-/// stream and its video while the layout changes around it. Hidden pages get
-/// the same treatment as `PersistentIndexedStack` (no tickers, no focus, no
-/// paint, frozen layout and MediaQuery).
+/// One persistent slot per Board pane. Only the main pane paints; the other
+/// Board panes in the group keep their game state and publish watch positions.
 class DesktopWorkspaceSlots extends StatelessWidget {
   const DesktopWorkspaceSlots({
     super.key,
     required this.pages,
     required this.activeIndex,
     this.split,
-    this.splitGeometry,
     this.onActivateCell,
   });
 
   final List<DesktopWorkspacePage> pages;
   final int activeIndex;
   final BoardSplitLayout? split;
-
-  /// Live sizes of [split] while a divider is dragged. Changes only lay the
-  /// cells out again; nothing is rebuilt.
-  final ValueListenable<BoardSplitLayout?>? splitGeometry;
-
-  /// Called when a press lands in a split cell that is not the active tab.
   final ValueChanged<String>? onActivateCell;
 
   @override
   Widget build(BuildContext context) {
-    final split = this.split;
-    final members = split?.tabIds.toSet() ?? const <String>{};
-    final activeTabId =
-        activeIndex >= 0 && activeIndex < pages.length
-            ? pages[activeIndex].tabId
-            : null;
+    final group = split;
     return CustomMultiChildLayout(
       delegate: _WorkspaceSlotsDelegate(
         slotIds: [for (final page in pages) page.slotId],
-        slotTabIds: [for (final page in pages) page.tabId],
-        split: split,
-        geometry: splitGeometry,
+        activeIndex: activeIndex,
+        hasWall: group != null,
       ),
       children: [
-        for (var i = 0; i < pages.length; i++)
-          _slot(
-            pages[i],
-            visible:
-                split == null
-                    ? i == activeIndex
-                    : members.contains(pages[i].tabId),
-            inSplit: split != null && members.contains(pages[i].tabId),
+        for (var index = 0; index < pages.length; index++)
+          _slot(pages[index], visible: index == activeIndex),
+        if (group != null)
+          LayoutId(
+            id: _wallSlot,
+            child: _RoundWall(group: group, onPromote: onActivateCell),
           ),
-        if (split != null) ...[
-          for (final tabId in split.tabIds)
-            LayoutId(
-              id: _headerId(tabId),
-              child: BoardSplitCellHeader(
-                tabId: tabId,
-                focused: tabId == activeTabId,
-              ),
-            ),
-          if (split.columns.length > 1)
-            LayoutId(
-              id: _columnGutterId,
-              child: _SplitGutter(axis: Axis.horizontal, groupId: split.id),
-            ),
-          for (var c = 0; c < split.columns.length; c++)
-            if (split.columns[c].length > 1)
-              LayoutId(
-                id: _rowGutterId(c),
-                child: _SplitGutter(
-                  axis: Axis.vertical,
-                  groupId: split.id,
-                  column: c,
-                ),
-              ),
-        ],
       ],
     );
   }
 
-  Widget _slot(
-    DesktopWorkspacePage page, {
-    required bool visible,
-    required bool inSplit,
-  }) {
-    final activate = onActivateCell;
-    return LayoutId(
-      id: page.slotId,
-      child: TickerMode(
-        enabled: visible,
-        child: Offstage(
-          offstage: !visible,
-          child: FreezeLayoutWhenHidden(
+  Widget _slot(DesktopWorkspacePage page, {required bool visible}) => LayoutId(
+    id: page.slotId,
+    child: TickerMode(
+      enabled: visible,
+      child: Offstage(
+        offstage: !visible,
+        child: FreezeLayoutWhenHidden(
+          frozen: !visible,
+          child: FreezeMediaQueryWhenHidden(
             frozen: !visible,
-            child: FreezeMediaQueryWhenHidden(
-              frozen: !visible,
-              child: ExcludeFocus(
-                excluding: !visible,
-                child: RepaintBoundary(
-                  child: Listener(
-                    behavior: HitTestBehavior.translucent,
-                    // A press anywhere in a split cell makes its board the
-                    // active tab, so keys, the engine and sounds follow the
-                    // board being worked on.
-                    onPointerDown:
-                        inSplit && activate != null
-                            ? (_) => activate(page.tabId)
-                            : null,
-                    child: page.child,
-                  ),
-                ),
-              ),
+            child: ExcludeFocus(
+              excluding: !visible,
+              child: RepaintBoundary(child: page.child),
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-const String _columnGutterId = 'split-gutter:column';
-String _rowGutterId(int column) => 'split-gutter:row:$column';
-String _headerId(String tabId) => 'split-header:$tabId';
+const _wallSlot = 'round-wall';
+const _wallGap = 10.0;
+
+Rect _wallRect(Size size) {
+  final width = math.min(
+    size.width * .46,
+    math.max(size.width * .30, size.height - 204),
+  );
+  return Rect.fromLTWH(size.width - width, 0, width, size.height);
+}
 
 class _WorkspaceSlotsDelegate extends MultiChildLayoutDelegate {
   _WorkspaceSlotsDelegate({
     required this.slotIds,
-    required this.slotTabIds,
-    required this.split,
-    this.geometry,
-  }) : super(relayout: geometry);
+    required this.activeIndex,
+    required this.hasWall,
+  });
 
   final List<String> slotIds;
-  final List<String> slotTabIds;
-  final BoardSplitLayout? split;
-  final ValueListenable<BoardSplitLayout?>? geometry;
-
-  /// [split] with the latest divider positions, when they belong to it.
-  BoardSplitLayout? get _layout {
-    final split = this.split;
-    final live = geometry?.value;
-    if (split == null || live == null || live.id != split.id) return split;
-    return const DeepCollectionEquality().equals(live.columns, split.columns)
-        ? live
-        : split;
-  }
+  final int activeIndex;
+  final bool hasWall;
 
   @override
   void performLayout(Size size) {
-    final split = _layout;
-    final rects = split?.cellRects(size) ?? const <String, Rect>{};
-    for (var i = 0; i < slotIds.length; i++) {
-      final cell = rects[slotTabIds[i]];
-      if (cell == null) {
-        layoutChild(slotIds[i], BoxConstraints.tight(size));
-        positionChild(slotIds[i], Offset.zero);
-        continue;
-      }
-      final headerHeight =
-          cell.height < kBoardSplitCellHeaderHeight
-              ? cell.height
-              : kBoardSplitCellHeaderHeight;
-      final content = Rect.fromLTRB(
-        cell.left,
-        cell.top + headerHeight,
-        cell.right,
-        cell.bottom,
-      );
-      layoutChild(slotIds[i], BoxConstraints.tight(content.size));
-      positionChild(slotIds[i], content.topLeft);
-      final header = _headerId(slotTabIds[i]);
-      if (hasChild(header)) {
-        layoutChild(
-          header,
-          BoxConstraints.tight(Size(cell.width, headerHeight)),
-        );
-        positionChild(header, cell.topLeft);
-      }
+    final wall = hasWall ? _wallRect(size) : null;
+    final main = Size(
+      wall == null ? size.width : math.max(0, wall.left - _wallGap),
+      size.height,
+    );
+    for (var index = 0; index < slotIds.length; index++) {
+      final id = slotIds[index];
+      layoutChild(id, BoxConstraints.tight(index == activeIndex ? main : size));
+      positionChild(id, Offset.zero);
     }
-    if (split == null) return;
-    final columnGutter = split.columnGutterRect(size);
-    if (columnGutter != null && hasChild(_columnGutterId)) {
-      layoutChild(_columnGutterId, BoxConstraints.tight(columnGutter.size));
-      positionChild(_columnGutterId, columnGutter.topLeft);
-    }
-    for (var c = 0; c < split.columns.length; c++) {
-      final rowGutter = split.rowGutterRect(size, c);
-      if (rowGutter != null && hasChild(_rowGutterId(c))) {
-        layoutChild(_rowGutterId(c), BoxConstraints.tight(rowGutter.size));
-        positionChild(_rowGutterId(c), rowGutter.topLeft);
-      }
+    if (wall != null) {
+      layoutChild(_wallSlot, BoxConstraints.tight(wall.size));
+      positionChild(_wallSlot, wall.topLeft);
     }
   }
 
   @override
   bool shouldRelayout(_WorkspaceSlotsDelegate oldDelegate) =>
-      oldDelegate.split != split ||
-      oldDelegate.geometry != geometry ||
-      !listEquals(oldDelegate.slotIds, slotIds) ||
-      !listEquals(oldDelegate.slotTabIds, slotTabIds);
+      activeIndex != oldDelegate.activeIndex ||
+      hasWall != oldDelegate.hasWall ||
+      !listEquals(slotIds, oldDelegate.slotIds);
 }
 
-/// The divider between two columns ([Axis.horizontal]) or the two rows of a
-/// column ([Axis.vertical]). Same line and hit width as the dividers inside
-/// a board, so the whole workspace reads as one set of resizable panes.
-class _SplitGutter extends ConsumerStatefulWidget {
-  const _SplitGutter({required this.axis, required this.groupId, this.column});
+class _RoundWall extends StatelessWidget {
+  const _RoundWall({required this.group, required this.onPromote});
 
-  final Axis axis;
-  final String groupId;
-  final int? column;
-
-  @override
-  ConsumerState<_SplitGutter> createState() => _SplitGutterState();
-}
-
-class _SplitGutterState extends ConsumerState<_SplitGutter> {
-  bool _hovered = false;
-  bool _dragging = false;
-
-  void _dragTo(Offset globalPosition) {
-    final box =
-        context
-            .findAncestorRenderObjectOfType<RenderCustomMultiChildLayoutBox>();
-    if (box == null || !box.hasSize) return;
-    final local = box.globalToLocal(globalPosition);
-    final size = box.size;
-    final notifier = ref.read(boardSplitProvider.notifier);
-    if (widget.axis == Axis.horizontal) {
-      final room = size.width - kBoardSplitGutter;
-      if (room <= 0) return;
-      notifier.setColumnFraction(
-        widget.groupId,
-        (local.dx - kBoardSplitGutter / 2) / room,
-      );
-    } else {
-      final room = size.height - kBoardSplitGutter;
-      if (room <= 0) return;
-      notifier.setRowFraction(
-        widget.groupId,
-        widget.column ?? 0,
-        (local.dy - kBoardSplitGutter / 2) / room,
-      );
-    }
-  }
-
-  void _reset() {
-    final notifier = ref.read(boardSplitProvider.notifier);
-    if (widget.axis == Axis.horizontal) {
-      notifier.setColumnFraction(widget.groupId, 0.5);
-    } else {
-      notifier.setRowFraction(widget.groupId, widget.column ?? 0, 0.5);
-    }
-  }
+  final BoardSplitLayout group;
+  final ValueChanged<String>? onPromote;
 
   @override
   Widget build(BuildContext context) {
-    final horizontal = widget.axis == Axis.horizontal;
-    final active = _hovered || _dragging;
-    return MouseRegion(
-      cursor:
-          horizontal
-              ? SystemMouseCursors.resizeColumn
-              : SystemMouseCursors.resizeRow,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onDoubleTap: _reset,
-        onHorizontalDragStart:
-            horizontal ? (_) => setState(() => _dragging = true) : null,
-        onHorizontalDragUpdate:
-            horizontal ? (d) => _dragTo(d.globalPosition) : null,
-        onHorizontalDragEnd:
-            horizontal ? (_) => setState(() => _dragging = false) : null,
-        onVerticalDragStart:
-            horizontal ? null : (_) => setState(() => _dragging = true),
-        onVerticalDragUpdate:
-            horizontal ? null : (d) => _dragTo(d.globalPosition),
-        onVerticalDragEnd:
-            horizontal ? null : (_) => setState(() => _dragging = false),
-        child: Center(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOutCubic,
-            width: horizontal ? (active ? 2 : 1) : null,
-            height: horizontal ? null : (active ? 2 : 1),
-            margin:
-                horizontal
-                    ? const EdgeInsets.symmetric(vertical: 6)
-                    : const EdgeInsets.symmetric(horizontal: 6),
-            decoration: BoxDecoration(
-              color: kDividerColor.withValues(alpha: active ? 0.95 : 0.55),
-              borderRadius: BorderRadius.circular(1),
+    final watched = group.watchedTabIds.toList(growable: false);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(0, 8, 10, 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: kBlack2Color,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Round Wall',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: kWhiteColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${watched.length}',
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                ),
+              ],
             ),
           ),
-        ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                const gap = 8.0;
+                const chrome = 47.0;
+                final width = constraints.maxWidth;
+                final columns = width >= 316 ? 3 : (width >= 204 ? 2 : 1);
+                final gapWidth = (columns - 1) * gap;
+                final tile = math.min(
+                  (width - gapWidth) / columns,
+                  math.max(
+                    90.0,
+                    (constraints.maxHeight - 2 * gap) / 3 - chrome,
+                  ),
+                );
+                final inset = math.max(
+                  0.0,
+                  (width - gapWidth - columns * tile) / 2,
+                );
+                return GridView.builder(
+                  key: PageStorageKey<String>(group.id),
+                  padding: EdgeInsets.symmetric(horizontal: inset),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    mainAxisExtent: tile + chrome,
+                    mainAxisSpacing: gap,
+                    crossAxisSpacing: gap,
+                  ),
+                  itemCount: watched.length,
+                  itemBuilder: (context, index) {
+                    final id = watched[index];
+                    return _WatchedBoard(
+                      key: ValueKey(id),
+                      tabId: id,
+                      size: tile,
+                      onPromote:
+                          onPromote == null ? null : () => onPromote!(id),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// The strip above a split cell: which game it holds, and how to take it
-/// out of the split. Its title tone marks the cell that has the keyboard.
-/// Dragging the strip moves the cell to another place in the split.
-class BoardSplitCellHeader extends ConsumerStatefulWidget {
-  const BoardSplitCellHeader({
+class _WatchedBoard extends ConsumerStatefulWidget {
+  const _WatchedBoard({
     super.key,
     required this.tabId,
-    required this.focused,
+    required this.size,
+    required this.onPromote,
   });
 
   final String tabId;
-  final bool focused;
+  final double size;
+  final VoidCallback? onPromote;
 
   @override
-  ConsumerState<BoardSplitCellHeader> createState() =>
-      _BoardSplitCellHeaderState();
+  ConsumerState<_WatchedBoard> createState() => _WatchedBoardState();
 }
 
-class _BoardSplitCellHeaderState extends ConsumerState<BoardSplitCellHeader> {
+class _WatchedBoardState extends ConsumerState<_WatchedBoard> {
   bool _closing = false;
 
   Future<void> _close() async {
     if (_closing) return;
-    if (boardTabHasUnsavedAnalysis(tabId: widget.tabId, read: ref.read)) {
+    final id = widget.tabId;
+    if (boardTabHasUnsavedAnalysis(tabId: id, read: ref.read)) {
       _closing = true;
       final confirmed = await confirmDiscardBoardAnalysis(
         context,
       ).whenComplete(() => _closing = false);
       if (!mounted || !confirmed) return;
     }
-    ref.read(desktopTabsProvider.notifier).close(widget.tabId);
-  }
-
-  void _moveToOwnTab() {
-    ref.read(boardSplitProvider.notifier).remove(widget.tabId);
-    ref.read(desktopTabsProvider.notifier).activate(widget.tabId);
+    ref.read(desktopTabsProvider.notifier).close(id);
   }
 
   @override
   Widget build(BuildContext context) {
+    final id = widget.tabId;
     final title = ref.watch(
       desktopTabsProvider.select(
-        (s) =>
-            s.tabs
-                .firstWhere(
-                  (t) => t.id == widget.tabId,
-                  orElse:
-                      () => DesktopTab(
-                        id: widget.tabId,
-                        kind: TabKind.board,
-                        title: 'Board',
-                      ),
-                )
-                .title,
+        (state) =>
+            state.tabs.where((tab) => tab.id == id).firstOrNull?.title ??
+            'Board',
       ),
     );
-    final focused = widget.focused;
-    final strip = AnimatedContainer(
-      duration: const Duration(milliseconds: 140),
-      curve: Curves.easeOutCubic,
+    final args = ref.watch(
+      boardTabGameArgsByTabIdProvider.select((byTab) => byTab[id]),
+    );
+    final fen = ref.watch(boardTabFenProvider.select((byTab) => byTab[id]));
+    final preview = ref.watch(
+      boardTabWatchPreviewProvider.select((byTab) => byTab[id]),
+    );
+    final label =
+        args != null && args.whiteName.isNotEmpty && args.blackName.isNotEmpty
+            ? '${args.whiteName} vs ${args.blackName}'
+            : title;
+    final pairing =
+        args != null && args.whiteName.isNotEmpty && args.blackName.isNotEmpty
+            ? '${desktopCompactPlayerNameParts(args.whiteName).lastName} – ${desktopCompactPlayerNameParts(args.blackName).lastName}'
+            : title;
+    final drag = BoardTabDragPayload(tabId: id, label: label, fromWall: true);
+    final clocks = [
+      for (final clock in [preview?.whiteClock, preview?.blackClock])
+        if (clock != null && clock.isNotEmpty) formatPgnClockForDisplay(clock),
+    ];
+    final result = switch (preview?.result) {
+      '1/2-1/2' => '½–½',
+      '1-0' => '1–0',
+      '0-1' => '0–1',
+      _ => '',
+    };
+    final settings = ref.watch(boardSettingsProviderNew).valueOrNull;
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: focused ? kBlack3Color : kBlack2Color,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+        color: kBlack3Color,
+        borderRadius: BorderRadius.circular(5),
       ),
-      padding: const EdgeInsets.only(left: 12, right: 4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 140),
-              style: DefaultTextStyle.of(context).style.merge(
-                TextStyle(
-                  color:
-                      focused
-                          ? kWhiteColor
-                          : kWhiteColor.withValues(alpha: 0.55),
-                  fontSize: 12.5,
-                  fontWeight: focused ? FontWeight.w600 : FontWeight.w500,
-                  height: 1.2,
+          SizedBox(
+            height: 25,
+            child: BoardTabDragSource(
+              payload: drag,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 5, right: 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        clocks.isEmpty || widget.size < 118
+                            ? ''
+                            : clocks.join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: kWhiteColor70,
+                        ),
+                      ),
+                    ),
+                    _HeaderIconButton(
+                      tooltip: 'Move to its own tab',
+                      icon: Icons.open_in_full_rounded,
+                      onPress:
+                          () =>
+                              ref.read(boardSplitProvider.notifier).remove(id),
+                    ),
+                    _HeaderIconButton(
+                      tooltip: 'Close board',
+                      icon: Icons.close_rounded,
+                      onPress: () => unawaited(_close()),
+                    ),
+                  ],
                 ),
               ),
-              child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ),
-          _HeaderIconButton(
-            tooltip: 'Move to its own tab',
-            icon: Icons.open_in_full_rounded,
-            onPress: _moveToOwnTab,
+          BoardTabDragSource(
+            payload: drag,
+            child: _PromoteWatchedBoard(
+              label: 'Make $label the main board',
+              onPromote: widget.onPromote,
+              child: cg.StaticChessboard(
+                size: widget.size,
+                fen:
+                    (fen?.isNotEmpty ?? false)
+                        ? fen!
+                        : args?.fenSeed ?? Chess.initial.fen,
+                orientation:
+                    (preview?.flipped ?? args?.initialBoardFlipped ?? false)
+                        ? Side.black
+                        : Side.white,
+                lastMove: preview?.lastMove,
+                settings: cg.StaticChessboardSettings.fromBoardSettings(
+                  cg.ChessboardSettings(
+                    enableCoordinates: false,
+                    colorScheme:
+                        settings?.colorScheme ?? cg.ChessboardColorScheme.blue,
+                    pieceAssets:
+                        settings?.pieceAssets ?? cg.PieceSet.cburnettAssets,
+                    animationDuration: Duration.zero,
+                  ),
+                ),
+              ),
+            ),
           ),
-          _HeaderIconButton(
-            tooltip: 'Close board',
-            icon: Icons.close_rounded,
-            onPress: () => unawaited(_close()),
+          SizedBox(
+            height: 22,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 5),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      pairing,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: kWhiteColor70,
+                      ),
+                    ),
+                  ),
+                  if (result.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Text(
+                        result,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: kWhiteColor70,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
     );
-    return Semantics(
-      container: true,
-      label: focused ? '$title, active board' : title,
-      child: BoardTabDragSource(
-        payload: BoardTabDragPayload(tabId: widget.tabId, label: title),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap:
-              () =>
-                  ref.read(desktopTabsProvider.notifier).activate(widget.tabId),
-          child: Padding(padding: const EdgeInsets.only(top: 4), child: strip),
+  }
+}
+
+class _PromoteWatchedBoard extends StatelessWidget {
+  const _PromoteWatchedBoard({
+    required this.label,
+    required this.onPromote,
+    required this.child,
+  });
+
+  final String label;
+  final VoidCallback? onPromote;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final promote = onPromote;
+    return DesktopTooltip(
+      message: label,
+      child: FocusableActionDetector(
+        enabled: promote != null,
+        mouseCursor: SystemMouseCursors.click,
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              promote?.call();
+              return null;
+            },
+          ),
+        },
+        child: Semantics(
+          button: true,
+          label: label,
+          child: GestureDetector(onTap: promote, child: child),
         ),
       ),
     );
@@ -672,7 +676,6 @@ class _HeaderIconButtonState extends State<_HeaderIconButton> {
 class _DropPlan {
   const _DropPlan({
     required this.targetTabId,
-    required this.zone,
     required this.rect,
     required this.label,
     required this.layoutKey,
@@ -681,7 +684,6 @@ class _DropPlan {
   });
 
   final String targetTabId;
-  final BoardSplitZone zone;
   final Rect rect;
   final String label;
 
@@ -700,7 +702,6 @@ class _DropPlan {
 
   _DropPlan asBusy() => _DropPlan(
     targetTabId: targetTabId,
-    zone: zone,
     rect: rect,
     label: 'Opening\u2026',
     layoutKey: layoutKey,
@@ -712,20 +713,17 @@ class _DropPlan {
   bool operator ==(Object other) =>
       other is _DropPlan &&
       other.targetTabId == targetTabId &&
-      other.zone == zone &&
       other.rect == rect &&
       other.label == label &&
       other.layoutKey == layoutKey &&
       other.busy == busy;
 
   @override
-  int get hashCode =>
-      Object.hash(targetTabId, zone, rect, label, layoutKey, busy);
+  int get hashCode => Object.hash(targetTabId, rect, label, layoutKey, busy);
 }
 
 /// Accepts game rows and Board tabs dropped on the Board workspace and
-/// splits it: the outer third of a board opens the dropped game beside it,
-/// the middle replaces it. A preview shows the landing area while dragging.
+/// adds the game to the Round Wall. A preview shows the watched area.
 ///
 /// Inactive unless a Board tab is the active tab (and focus mode is off).
 class BoardSplitDropLayer extends ConsumerStatefulWidget {
@@ -771,12 +769,12 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
   }
 
   bool _accepts(Object? data) =>
-      data is GameTabDragPayload || data is BoardTabDragPayload;
+      data is GameTabDragPayload ||
+      (data is BoardTabDragPayload && !data.fromWall);
 
   /// Which boards are shown where, and which one is focused.
   static String _layoutKey(String activeId, BoardSplitLayout layout) =>
-      '$activeId|${layout.id}|'
-      '${layout.columns.map((c) => c.join(',')).join(';')}';
+      '$activeId|${layout.id}|${layout.tabIds.join(',')}';
 
   String? get _currentLayoutKey {
     final activeId = _activeBoardTabId;
@@ -831,76 +829,27 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
     final layout =
         ref.read(visibleBoardSplitProvider) ??
         BoardSplitLayout.single(activeId);
-    final rects = layout.cellRects(size);
-    String? target;
-    var bestDistance = double.infinity;
-    for (final entry in rects.entries) {
-      if (entry.value.contains(local)) {
-        target = entry.key;
-        break;
-      }
-      // Over a gutter: take the nearest cell.
-      final d = (entry.value.center - local).distance;
-      if (d < bestDistance) {
-        bestDistance = d;
-        target = entry.key;
-      }
+    if (!layout.hasRoom) return null;
+    if (data is BoardTabDragPayload && layout.contains(data.tabId)) return null;
+    if (data is GameTabDragPayload) {
+      final args = ref.read(boardTabGameArgsByTabIdProvider);
+      final duplicate = layout.tabIds.any((id) {
+        final game = args[id];
+        return game?.gameId == data.id || game?.gameListSelectedId == data.id;
+      });
+      // A row released in its source rail is not intended for the wall.
+      if (duplicate || local.dx < math.min(230, size.width * .23)) return null;
     }
-    if (target == null) return null;
-    final incoming = data is BoardTabDragPayload ? data.tabId : null;
-    final allowed = layout.zonesFor(target, incomingTabId: incoming);
-    final cell = rects[target]!;
-    final zone = resolveBoardSplitZone(
-      local: local - cell.topLeft,
-      cellSize: cell.size,
-      allowed: allowed,
-    );
-    if (zone == null) return null;
-    final rect = layout.previewRect(
-      target,
-      zone,
-      size,
-      incomingTabId: incoming,
-    );
-    if (rect == null) return null;
-    var label = _labelFor(zone, layout, incoming);
-    // A drop that would show more than one board needs Premium: say so on
-    // the landing area, so the prompt the drop opens is no surprise.
-    final opensAlone = zone == BoardSplitZone.replace && !layout.isSplit;
-    if (!opensAlone &&
+    final premium =
         ref.read(boardSplitAccessProvider).outcome ==
-            DesktopAccess.premiumRequired) {
-      label = '$label \u00b7 Premium';
-    }
+        DesktopAccess.premiumRequired;
     return _DropPlan(
-      targetTabId: target,
-      zone: zone,
-      rect: rect,
-      label: label,
+      targetTabId: activeId,
+      rect: _wallRect(size).deflate(8),
+      label: premium ? 'Add to Round Wall · Premium' : 'Add to Round Wall',
       layoutKey: _layoutKey(activeId, layout),
       groupId: layout.id,
     );
-  }
-
-  String _labelFor(
-    BoardSplitZone zone,
-    BoardSplitLayout layout,
-    String? incoming,
-  ) {
-    switch (zone) {
-      case BoardSplitZone.left:
-        return 'Split left';
-      case BoardSplitZone.right:
-        return 'Split right';
-      case BoardSplitZone.top:
-        return 'Split up';
-      case BoardSplitZone.bottom:
-        return 'Split down';
-      case BoardSplitZone.replace:
-        if (!layout.isSplit) return 'Open here';
-        if (incoming != null && layout.contains(incoming)) return 'Swap boards';
-        return 'Replace this board';
-    }
   }
 
   void _hover(Object? data, Offset globalPointer) {
@@ -943,34 +892,18 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
         (t) => t.id == data.tabId && t.kind == TabKind.board,
       );
       void place() {
-        if (open() &&
-            split.place(
-              targetTabId: shown.targetTabId,
-              incomingTabId: data.tabId,
-              zone: shown.zone,
-            )) {
-          tabs.activate(data.tabId);
+        if (open()) {
+          split.watch(
+            targetTabId: shown.targetTabId,
+            incomingTabId: data.tabId,
+          );
         }
       }
 
-      // Every place a tab can land shows it beside another board.
-      if (open() && _admitSplit('board_split_tab_drop', shown, place)) {
-        place();
-      }
+      if (open() && _admitSplit('board_split_tab_drop', shown, place)) place();
       return;
     }
     if (data is! GameTabDragPayload) return;
-    if (!split.layoutFor(shown.targetTabId).isSplit &&
-        shown.zone == BoardSplitZone.replace) {
-      // Nothing to split: open the game the way the tab strip does. Free
-      // for everyone, as it was before boards could be split.
-      unawaited(
-        data
-            .spawnAdmitted(ref, focus: true, surface: 'board_drop')
-            .catchError(_reportDropError),
-      );
-      return;
-    }
     void open() =>
         unawaited(_openInSplit(data, shown).catchError(_reportDropError));
     if (_admitSplit('board_split_game_drop', shown, open)) open();
@@ -1038,66 +971,24 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
     if (!mounted) return;
     final opened = _openedBoardFor(data, before, spawnFinished: finished);
     if (opened == null) return;
-    // Show the new board only to someone still on a board of the split it
-    // lands in (judged before placing: a replace takes the focused board
-    // itself out of the split).
-    final activeBoard = _activeBoardTabId;
-    final landedIn = _landInSplit(opened, plan);
-    if (landedIn != null &&
-        activeBoard != null &&
-        landedIn.contains(activeBoard)) {
-      tabs.activate(opened);
-    }
-  }
-
-  /// Places [opened] where [plan] aimed, inside the split it was aimed at.
-  /// If that zone is gone, beside a board still in that split. Never builds
-  /// a new split around a board that has left it or stopped being a Board.
-  /// Returns that split as it was before [opened] joined it, or null when
-  /// nothing was placed.
-  BoardSplitLayout? _landInSplit(String opened, _DropPlan plan) {
     final split = ref.read(boardSplitProvider.notifier);
     final targetIsBoard = ref
         .read(desktopTabsProvider)
         .tabs
-        .any((t) => t.id == plan.targetTabId && t.kind == TabKind.board);
-    final targetLayout = split.layoutFor(plan.targetTabId);
-    final sameSplit = targetIsBoard && targetLayout.id == plan.groupId;
-    if (sameSplit &&
-        split.place(
-          targetTabId: plan.targetTabId,
-          incomingTabId: opened,
-          zone: plan.zone,
-        )) {
-      return targetLayout;
-    }
-    // The split the drop was aimed at, wherever its boards are now.
-    BoardSplitLayout? aimed;
-    for (final group in split.current.groups) {
-      if (group.id == plan.groupId) aimed = group;
-    }
-    // Aimed at a board shown on its own that has since joined a split:
-    // that split is what the user now sees around it.
-    aimed ??=
-        sameSplit
-            ? targetLayout
-            : targetIsBoard &&
-                plan.groupId == BoardSplitLayout.single(plan.targetTabId).id
-            ? split.current.groupOf(plan.targetTabId)
-            : null;
-    if (aimed == null) return null;
-    final anchor =
-        aimed.contains(plan.targetTabId)
+        .any((tab) => tab.id == plan.targetTabId && tab.kind == TabKind.board);
+    final originalSingle = BoardSplitLayout.single(plan.targetTabId).id;
+    final group =
+        split.current.groups
+            .where((group) => group.id == plan.groupId)
+            .firstOrNull;
+    final target =
+        group?.mainTabId ??
+        (targetIsBoard && plan.groupId == originalSingle
             ? plan.targetTabId
-            : aimed.tabIds.first;
-    final beside = besideBoardPlacement(aimed, anchor);
-    if (beside == null) return null;
-    final placed = split.place(
-      targetTabId: beside.targetTabId,
-      incomingTabId: opened,
-      zone: beside.zone,
-    );
-    return placed ? aimed : null;
+            : null);
+    if (target != null) {
+      split.watch(targetTabId: target, incomingTabId: opened);
+    }
   }
 
   /// The Board tab [payload] opened: a tab that appeared since [before]
@@ -1184,9 +1075,7 @@ class _BoardSplitDropLayerState extends ConsumerState<BoardSplitDropLayer> {
   }
 }
 
-/// The landing area of a drop. It glides between zones as the pointer moves
-/// so the user sees the split take shape before letting go. It appears in
-/// place and fades out where it was, instead of sliding in from a corner.
+/// The Round Wall landing area appears in place during a drag.
 class _DropPreview extends StatefulWidget {
   const _DropPreview({required this.plan, required this.opening});
 
@@ -1276,60 +1165,13 @@ class _DropPreviewState extends State<_DropPreview> {
   }
 }
 
-/// Feeds the visible split to [builder]. It rebuilds only when the split's
-/// boards change; dragging a divider moves [BoardSplitLayout] fractions
-/// through the geometry listenable, which lays the cells out again without
-/// rebuilding the shell or any board.
-class BoardSplitWorkspaceHost extends ConsumerStatefulWidget {
+/// Rebuilds the slots when a game joins the wall or takes the main position.
+class BoardSplitWorkspaceHost extends ConsumerWidget {
   const BoardSplitWorkspaceHost({super.key, required this.builder});
 
-  final Widget Function(
-    BuildContext context,
-    BoardSplitLayout? split,
-    ValueListenable<BoardSplitLayout?> geometry,
-  )
-  builder;
+  final Widget Function(BuildContext context, BoardSplitLayout? split) builder;
 
   @override
-  ConsumerState<BoardSplitWorkspaceHost> createState() =>
-      _BoardSplitWorkspaceHostState();
-}
-
-class _BoardSplitWorkspaceHostState
-    extends ConsumerState<BoardSplitWorkspaceHost> {
-  final ValueNotifier<BoardSplitLayout?> _geometry = ValueNotifier(null);
-
-  @override
-  void initState() {
-    super.initState();
-    ref.listenManual<BoardSplitLayout?>(
-      visibleBoardSplitProvider,
-      (_, next) => _geometry.value = next,
-      fireImmediately: true,
-    );
-  }
-
-  @override
-  void dispose() {
-    _geometry.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Rebuild on which boards are shown and where, not on their sizes.
-    ref.watch(
-      visibleBoardSplitProvider.select(
-        (group) =>
-            group == null
-                ? null
-                : '${group.id}|${group.columns.map((c) => c.join(',')).join(';')}',
-      ),
-    );
-    return widget.builder(
-      context,
-      ref.read(visibleBoardSplitProvider),
-      _geometry,
-    );
-  }
+  Widget build(BuildContext context, WidgetRef ref) =>
+      builder(context, ref.watch(visibleBoardSplitProvider));
 }

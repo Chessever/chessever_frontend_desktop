@@ -120,7 +120,6 @@ void main() {
     tester,
   ) async {
     final fixture = await _pump(tester);
-    final tabs = fixture.container.read(desktopTabsProvider.notifier);
     expect(fixture.container.read(desktopTabsProvider).activeId, fixture.anand);
 
     final mouse = await tester.startGesture(
@@ -150,27 +149,42 @@ void main() {
     await tester.pump();
     await mouse.moveTo(origin + const Offset(1130, 410));
     await tester.pump();
-    expect(find.text('Split right'), findsOneWidget);
+    expect(find.text('Add to Round Wall'), findsOneWidget);
 
     await mouse.up();
     await tester.pump();
     final split = fixture.container.read(visibleBoardSplitProvider)!;
-    expect(split.columns, [
-      [fixture.anand],
-      [fixture.carlsen],
-    ]);
+    expect(split.tabIds, [fixture.anand, fixture.carlsen]);
+    expect(fixture.container.read(desktopTabsProvider).activeId, fixture.anand);
+    final chrome = find.byType(DesktopTabBar);
     expect(
-      fixture.container.read(desktopTabsProvider).activeId,
-      fixture.carlsen,
+      find.descendant(of: chrome, matching: find.textContaining('Carlsen')),
+      findsNothing,
     );
-    expect(find.byType(BoardSplitCellHeader), findsNWidgets(2));
 
-    // Moving it out of the split from the tab's own split header.
-    tabs.activate(fixture.anand);
+    final watched = find.byWidgetPredicate(
+      (widget) => widget is BoardTabDragSource && widget.data?.fromWall == true,
+    );
+    final source = tester.getCenter(watched.last);
+    final upward = await tester.startGesture(
+      source,
+      kind: PointerDeviceKind.mouse,
+    );
+    await upward.moveBy(const Offset(0, -32));
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.open_in_full_rounded).last);
+    expect(find.byType(GameDragChip), findsOneWidget);
+    await upward.moveTo(tester.getCenter(chrome));
     await tester.pump();
+    await upward.up();
+    await upward.removePointer();
+    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+
     expect(fixture.container.read(boardSplitProvider).groups, isEmpty);
+    expect(fixture.container.read(desktopTabsProvider).activeId, fixture.anand);
+    expect(
+      find.descendant(of: chrome, matching: find.textContaining('Carlsen')),
+      findsOneWidget,
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
@@ -206,7 +220,7 @@ void main() {
     await mouse.moveTo(origin + const Offset(1130, 410));
     await tester.pump();
     // The landing area still shows, and says what it needs.
-    expect(find.text('Split right \u00b7 Premium'), findsOneWidget);
+    expect(find.text('Add to Round Wall \u00b7 Premium'), findsOneWidget);
 
     await mouse.up();
     await tester.pump();
@@ -256,11 +270,11 @@ void main() {
     await tester.pumpAndSettle();
     // The press of a right click does not switch boards.
     expect(fixture.container.read(desktopTabsProvider).activeId, fixture.anand);
-    await tester.tap(find.text('Show beside current board'));
+    await tester.tap(find.text('Add to Round Wall'));
     await tester.pumpAndSettle();
-    expect(fixture.container.read(visibleBoardSplitProvider)!.columns, [
-      [fixture.anand],
-      [fixture.carlsen],
+    expect(fixture.container.read(visibleBoardSplitProvider)!.tabIds, [
+      fixture.anand,
+      fixture.carlsen,
     ]);
 
     // The right cell's close button closes that board's tab.
@@ -306,12 +320,12 @@ void main() {
       kind: PointerDeviceKind.mouse,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Show beside current board'));
+    await tester.tap(find.text('Add to Round Wall'));
     await tester.pumpAndSettle();
     expect(surfaces, ['board_split_open_beside']);
-    expect(fixture.container.read(visibleBoardSplitProvider)!.columns, [
-      [fixture.anand],
-      [fixture.carlsen],
+    expect(fixture.container.read(visibleBoardSplitProvider)!.tabIds, [
+      fixture.anand,
+      fixture.carlsen,
     ]);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
@@ -354,11 +368,7 @@ void main() {
     );
     fixture.container
         .read(boardSplitProvider.notifier)
-        .place(
-          targetTabId: fixture.carlsen,
-          incomingTabId: partner,
-          zone: BoardSplitZone.right,
-        );
+        .watch(targetTabId: fixture.carlsen, incomingTabId: partner);
     expect(fixture.container.read(desktopTabsProvider).activeId, fixture.anand);
     await tester.pumpAndSettle();
 
