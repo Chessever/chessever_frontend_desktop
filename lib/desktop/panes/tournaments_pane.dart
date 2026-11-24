@@ -2658,11 +2658,17 @@ final _forYouNavigationBookmarkProvider =
 /// Sources:
 ///   - `forYouEventsProvider`         → paginated events
 ///   - `forYouEventSnapshotProvider`  → per-event games (lazily watched per row)
-/// The real For You feed for frame-cost tests, without the pane chrome and
+/// The real For You feed for widget tests, without the pane chrome and
 /// access gate around it.
 @visibleForTesting
-Widget buildDesktopForYouFeedForTesting({required String tabId}) {
-  return _ForYouFeed(tabId: tabId, onOpenTournament: (_) {});
+Widget buildDesktopForYouFeedForTesting({
+  required String tabId,
+  ValueChanged<GroupEventCardModel>? onOpenTournament,
+}) {
+  return _ForYouFeed(
+    tabId: tabId,
+    onOpenTournament: onOpenTournament ?? (_) {},
+  );
 }
 
 class _ForYouFeed extends ConsumerStatefulWidget {
@@ -3573,7 +3579,8 @@ class _ForYouFeedState extends ConsumerState<_ForYouFeed> {
 /// real chessboard previews. The section keeps the familiar desktop hierarchy
 /// while retaining the denser board cards and keyboard behavior.
 /// The preview count follows the available board area so cards do not become
-/// cramped on narrower laptops. Hides itself when the snapshot resolves empty.
+/// cramped on narrower laptops. Pinned events keep their summary visible
+/// before their first preview is available.
 class _ForYouEventSection extends ConsumerWidget {
   const _ForYouEventSection({
     super.key,
@@ -3650,10 +3657,9 @@ class _ForYouEventSection extends ConsumerWidget {
                 : ref.watch(gamesListViewModeProvider))
             .desktopLayout;
 
-    final shouldHide = snapshotAsync.maybeWhen(
-      data: (s) => !s.hasGames,
-      orElse: () => false,
-    );
+    final shouldHide =
+        event.pinnedAt == null &&
+        snapshotAsync.maybeWhen(data: (s) => !s.hasGames, orElse: () => false);
     if (!readOnlyPresentation) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         onVisibilityChanged(!shouldHide);

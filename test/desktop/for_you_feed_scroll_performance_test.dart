@@ -53,17 +53,24 @@ void main() {
       ),
   };
 
-  Widget harness() {
+  Widget harness({
+    List<GroupEventCardModel>? feedEvents,
+    Map<String, ForYouEventGamesSnapshot>? feedSnapshots,
+    ValueChanged<GroupEventCardModel>? onOpenTournament,
+  }) {
+    final visibleEvents = feedEvents ?? events;
+    final boardPreviews = feedSnapshots ?? snapshots;
     return ProviderScope(
       overrides: [
         forYouEventsProvider.overrideWith(
-          (_) => _StaticForYou(ForYouState(events: events, hasMore: false)),
+          (_) =>
+              _StaticForYou(ForYouState(events: visibleEvents, hasMore: false)),
         ),
         forYouEventGamesWithAutoRefreshProvider.overrideWith(
-          (ref, eventId) => AsyncValue.data(snapshots[eventId]!),
+          (ref, eventId) => AsyncValue.data(boardPreviews[eventId]!),
         ),
         forYouEventSnapshotProvider.overrideWith(
-          (ref, eventId) => AsyncValue.data(snapshots[eventId]!),
+          (ref, eventId) => AsyncValue.data(boardPreviews[eventId]!),
         ),
         gameStreamRepositoryProvider.overrideWithValue(
           _SilentGameStreamRepository(),
@@ -85,7 +92,10 @@ void main() {
           builder: (context) {
             ResponsiveHelper.init(context);
             return Scaffold(
-              body: buildDesktopForYouFeedForTesting(tabId: tabId),
+              body: buildDesktopForYouFeedForTesting(
+                tabId: tabId,
+                onOpenTournament: onOpenTournament,
+              ),
             );
           },
         ),
@@ -106,6 +116,39 @@ void main() {
     }
     expect(find.byType(LiveDesktopGameCard), findsWidgets);
   }
+
+  testWidgets('a pinned event without previews opens from For You', (
+    tester,
+  ) async {
+    final championship = _event(0, pinnedAt: DateTime.utc(2026, 11, 21));
+    final unpinned = _event(1);
+    final feedEvents = [championship, unpinned];
+    final opened = <GroupEventCardModel>[];
+
+    await tester.pumpWidget(
+      harness(
+        feedEvents: feedEvents,
+        feedSnapshots: {
+          for (final event in feedEvents)
+            event.id: ForYouEventGamesSnapshot(
+              eventId: event.id,
+              tourId: 'tour-${event.id}',
+              visibleGames: const [],
+              pinnedIds: const [],
+            ),
+        },
+        onOpenTournament: opened.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text(unpinned.title), findsNothing);
+    expect(find.byType(LiveDesktopGameCard), findsNothing);
+    final eventCard = find.text(championship.title);
+    expect(eventCard, findsOneWidget);
+    await tester.tap(eventCard);
+    expect(opened, [championship]);
+  });
 
   testWidgets('steady scrolling does no card rebuild work between row mounts', (
     tester,
@@ -308,7 +351,7 @@ CloudEval _eval(String fen) => CloudEval(
   pvs: [Pv(moves: 'e2e4', cp: (fen.hashCode % 300) - 150)],
 );
 
-GroupEventCardModel _event(int index) {
+GroupEventCardModel _event(int index, {DateTime? pinnedAt}) {
   return GroupEventCardModel(
     id: 'event-$index',
     title: 'Stress Open ${2026 + index} Section ${index + 1}',
@@ -319,6 +362,7 @@ GroupEventCardModel _event(int index) {
     timeControl: 'standard',
     startDate: DateTime.utc(2026, 11, 10),
     endDate: DateTime.utc(2026, 11, 15),
+    pinnedAt: pinnedAt,
     // Community events draw their fallback artwork without a network image.
     eventSource: EventSource.communityEvent,
   );
