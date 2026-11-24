@@ -46,11 +46,7 @@ _setUp(
 bool _split(ProviderContainer container, String target, String incoming) =>
     container
         .read(boardSplitProvider.notifier)
-        .place(
-          targetTabId: target,
-          incomingTabId: incoming,
-          zone: BoardSplitZone.right,
-        );
+        .watch(targetTabId: target, incomingTabId: incoming);
 
 Future<void> _settle() async {
   for (var i = 0; i < 3; i++) {
@@ -157,9 +153,9 @@ void main() {
       final f = _setUp(_member());
       expect(admitBoardSplit(f.container, surface: 'test'), isTrue);
       expect(_split(f.container, f.a, f.b), isTrue);
-      expect(f.container.read(boardSplitProvider).groups.single.columns, [
-        [f.a],
-        [f.b],
+      expect(f.container.read(boardSplitProvider).groups.single.tabIds, [
+        f.a,
+        f.b,
       ]);
     });
   });

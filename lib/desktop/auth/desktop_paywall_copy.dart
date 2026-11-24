@@ -237,7 +237,7 @@ DesktopPaywallCopy _premiumCopy(
       return const DesktopPaywallCopy(
         title: 'Split boards are Premium',
         body:
-            'Upgrade to show up to four boards side by side. Opening a game '
+            'Upgrade to follow up to nine other boards in Round Wall. Opening a game '
             'on its own board stays free.',
       );
     case DesktopAccessReason.premiumLikes:

@@ -7,7 +7,7 @@ import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
 import 'package:chessever/desktop/shell/browser_safe_shortcuts.dart';
-import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -208,6 +208,14 @@ class DesktopShell extends HookConsumerWidget {
       for (final t in prev.tabs) {
         if (!liveIds.contains(t.id)) {
           ref.read(boardTabFenProvider.notifier).clear(t.id);
+          ref
+              .read(boardTabWatchPreviewProvider.notifier)
+              .update(
+                (values) =>
+                    values.containsKey(t.id)
+                        ? ({...values}..remove(t.id))
+                        : values,
+              );
           ref.read(boardTabSoundMuteProvider.notifier).clear(t.id);
           ref.read(boardPaneSessionByTabIdProvider.notifier).clear(t.id);
           ref
@@ -849,7 +857,6 @@ class DesktopShell extends HookConsumerWidget {
                                                   (
                                                     context,
                                                     split,
-                                                    geometry,
                                                   ) => DesktopWorkspaceStack(
                                                     tabs: tabsState.tabs,
                                                     activeId:
@@ -857,7 +864,6 @@ class DesktopShell extends HookConsumerWidget {
                                                     feedbackScreenshotKey:
                                                         feedbackScreenshotKey,
                                                     split: split,
-                                                    splitGeometry: geometry,
                                                     onActivateCell:
                                                         tabsNotifier.activate,
                                                   ),
@@ -1020,7 +1026,6 @@ class DesktopWorkspaceStack extends StatelessWidget {
     required this.feedbackScreenshotKey,
     this.contentBuilder,
     this.split,
-    this.splitGeometry,
     this.onActivateCell,
   });
   final List<DesktopTab> tabs;
@@ -1028,14 +1033,10 @@ class DesktopWorkspaceStack extends StatelessWidget {
   final GlobalKey feedbackScreenshotKey;
   final Widget Function(DesktopTab tab)? contentBuilder;
 
-  /// Board tabs shown side by side instead of the active tab alone. Ignored
-  /// unless every member is an open tab.
+  /// The active board's Round Wall. Every member must be an open tab.
   final BoardSplitLayout? split;
 
-  /// Live divider positions of [split]; see [DesktopWorkspaceSlots].
-  final ValueListenable<BoardSplitLayout?>? splitGeometry;
-
-  /// Makes a split cell's tab the active tab when it is pressed.
+  /// Promotes a watched board to the main pane.
   final ValueChanged<String>? onActivateCell;
 
   @override
@@ -1066,7 +1067,6 @@ class DesktopWorkspaceStack extends StatelessWidget {
     return DesktopWorkspaceSlots(
       activeIndex: activeIndex < 0 ? 0 : activeIndex + 1,
       split: visibleSplit,
-      splitGeometry: splitGeometry,
       onActivateCell: onActivateCell,
       pages: [
         for (final tab in pages)

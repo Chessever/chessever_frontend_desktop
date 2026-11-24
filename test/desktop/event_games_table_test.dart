@@ -1,4 +1,6 @@
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/board_split_view.dart';
+import 'support/desktop_premium_test_overrides.dart';
 import 'support/real_tab_fixture.dart';
 import 'support/current_broadcast_games.dart';
 
@@ -3480,6 +3482,68 @@ void main() {
     expect(args.gameId, 'event-game-2');
     expect(args.gameListSelectedId, 'event-game-2');
     expect(args.pgn, '1. e4 e5 *');
+  });
+
+  testWidgets('opening a watched rail row promotes its existing board', (
+    tester,
+  ) async {
+    const first = 'main-game';
+    const second = 'watched-game';
+    await tester.pumpWidget(
+      _wrap(
+        BoardTabGameArgs(
+          gameId: first,
+          pgn: '1. e4 e5 *',
+          label: 'Main game',
+          whiteName: 'White One',
+          blackName: 'Black One',
+          eventGames: [
+            _summary(id: first, roundLabel: 'R5', whitePlayer: 'White One'),
+            _summary(
+              id: second,
+              roundLabel: 'R5',
+              whitePlayer: 'White Two',
+              blackPlayer: 'Black Two',
+            ),
+          ],
+          gameListSelectedId: first,
+        ),
+        overrides: desktopPremiumTestOverrides,
+      ),
+    );
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(EventGamesTable)),
+    );
+    final watched = openBoardGameTabFromContainer(
+      container,
+      const BoardTabGameArgs(
+        gameId: second,
+        pgn: '1. d4 d5 *',
+        label: 'Watched game',
+        whiteName: 'White Two',
+        blackName: 'Black Two',
+      ),
+      focus: false,
+      reuseExisting: false,
+    );
+    final split = container.read(boardSplitProvider.notifier);
+    expect(
+      split.watch(targetTabId: 'fixture-board', incomingTabId: watched),
+      isTrue,
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Black Two'));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('Black Two'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final args = container.read(boardTabGameArgsByTabIdProvider);
+    expect(container.read(desktopTabsProvider).activeId, watched);
+    expect(args['fixture-board']?.gameId, first);
+    expect(args[watched]?.pgn, '1. d4 d5 *');
+    expect(split.layoutFor(watched).watchedTabIds, ['fixture-board']);
   });
 
   testWidgets('selected event game keeps its quiet primary gradient edge', (

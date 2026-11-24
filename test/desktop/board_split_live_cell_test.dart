@@ -238,11 +238,7 @@ void main() {
     if (inSplit) {
       container
           .read(boardSplitProvider.notifier)
-          .place(
-            targetTabId: focused,
-            incomingTabId: live,
-            zone: BoardSplitZone.right,
-          );
+          .watch(targetTabId: focused, incomingTabId: live);
     }
     expect(container.read(desktopTabsProvider).activeId, focused);
 
