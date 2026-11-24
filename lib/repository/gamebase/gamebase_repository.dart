@@ -995,6 +995,43 @@ class GamebaseRepository {
     int? yearFrom,
     int? yearTo,
     bool? isOnline,
+  }) => _getMoveAggregates(
+    fen: fen,
+    moves: moves,
+    playerId: playerId,
+    timeControl: timeControl,
+    minRating: minRating,
+    maxRating: maxRating,
+    color: color,
+    result: result,
+    yearFrom: yearFrom,
+    yearTo: yearTo,
+    isOnline: isOnline,
+  );
+
+  Future<GamebaseResponse> getEngineMoveAggregates({
+    required String fen,
+    required List<String> moves,
+    required CancelToken cancelToken,
+  }) => _getMoveAggregates(
+    fen: fen,
+    moves: moves,
+    prewarmGames: false,
+    cancelToken: cancelToken,
+  );
+
+  Future<GamebaseResponse> _getMoveAggregates({
+    required String fen,
+    List<String> moves = const [],
+    String? playerId,
+    TimeControl? timeControl,
+    int? minRating,
+    int? maxRating,
+    String? color,
+    String? result,
+    int? yearFrom,
+    int? yearTo,
+    bool? isOnline,
     bool prewarmGames = true,
     CancelToken? cancelToken,
   }) async {

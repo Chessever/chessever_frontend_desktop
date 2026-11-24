@@ -39,6 +39,7 @@ import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
@@ -9955,11 +9956,20 @@ class _BoardArea extends HookConsumerWidget {
       sourceGame?.timeControl,
       pgn('TimeControl'),
     );
+    final account = ref.watch(desktopAccountIdentityProvider);
+    final ratedGame = switch (sourceGame?.source) {
+      GameSource.supabase ||
+      GameSource.gamebase ||
+      GameSource.twic ||
+      GameSource.openingExplorer => true,
+      _ => false,
+    };
     final predictionKey =
         !focusMode &&
                 !pictureInPicture &&
-                sourceGame?.source == GameSource.supabase &&
-                sourceGame?.tourId.isNotEmpty == true &&
+                account.isPermanent &&
+                !account.staleSession &&
+                ratedGame &&
                 predictionMoves != null &&
                 whiteRating > 0 &&
                 blackRating > 0 &&
@@ -9973,10 +9983,12 @@ class _BoardArea extends HookConsumerWidget {
               'timeControl': cadence,
             })
             : null;
-    final prediction =
+    final predictionState =
         predictionKey == null
             ? null
-            : ref.watch(nextMovePredictionProvider(predictionKey)).valueOrNull;
+            : ref.watch(nextMovePredictionProvider(predictionKey));
+    final prediction = predictionState?.valueOrNull;
+    final predictionLoading = predictionState?.isLoading == true;
     final chosen = useState<({String key, NextMoveCandidate move})?>(null);
     final selected =
         chosen.value?.key == predictionKey ? chosen.value?.move : null;
@@ -10095,7 +10107,7 @@ class _BoardArea extends HookConsumerWidget {
                 constraints.biggest.width - evalBarReservation,
               );
               final showPrediction =
-                  prediction?.isNotEmpty == true &&
+                  (predictionLoading || prediction?.isNotEmpty == true) &&
                   hLimit >= 250 &&
                   constraints.maxHeight >= extraVertical + 320;
               final ribbonHeight = showPrediction ? nextMoveRibbonHeight : 0.0;
@@ -10167,7 +10179,8 @@ class _BoardArea extends HookConsumerWidget {
                   ribbon:
                       showPrediction
                           ? DesktopNextMoveRibbon(
-                            moves: prediction!,
+                            moves: prediction ?? const [],
+                            loading: predictionLoading,
                             selectedUci: selected?.uci,
                             onSelect:
                                 (move) =>

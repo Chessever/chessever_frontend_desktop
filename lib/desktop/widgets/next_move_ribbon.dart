@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -75,6 +76,9 @@ final nextMovePredictionProvider = FutureProvider.autoDispose
               ),
             );
           }
+          final lease = ref.keepAlive();
+          final timer = Timer(const Duration(minutes: 2), lease.close);
+          ref.onDispose(timer.cancel);
           return result;
         }
         await Future<void>.delayed(const Duration(seconds: 2));
@@ -109,10 +113,12 @@ class DesktopNextMoveRibbon extends StatelessWidget {
     required this.moves,
     required this.selectedUci,
     required this.onSelect,
+    this.loading = false,
   });
 
   final List<NextMoveCandidate> moves;
   final String? selectedUci;
+  final bool loading;
   final ValueChanged<NextMoveCandidate?> onSelect;
 
   Widget _move(NextMoveCandidate move, {required bool inside}) {
@@ -194,23 +200,32 @@ class DesktopNextMoveRibbon extends StatelessWidget {
               const SizedBox(height: 4),
               SizedBox(
                 height: 34,
-                child: Row(
-                  children: [
-                    for (final move in moves.where(
-                      (move) => move.probability > 0,
-                    ))
-                      Expanded(
-                        flex: math.max(1, (move.probability * 100000).round()),
-                        child: ColoredBox(
-                          color: move.color,
-                          child:
-                              fits(move)
-                                  ? _move(move, inside: true)
-                                  : const SizedBox(),
+                child:
+                    loading
+                        ? Semantics(
+                          label: 'Loading next move predictions',
+                          child: const ColoredBox(color: kBlack3Color),
+                        )
+                        : Row(
+                          children: [
+                            for (final move in moves.where(
+                              (move) => move.probability > 0,
+                            ))
+                              Expanded(
+                                flex: math.max(
+                                  1,
+                                  (move.probability * 100000).round(),
+                                ),
+                                child: ColoredBox(
+                                  color: move.color,
+                                  child:
+                                      fits(move)
+                                          ? _move(move, inside: true)
+                                          : const SizedBox(),
+                                ),
+                              ),
+                          ],
                         ),
-                      ),
-                  ],
-                ),
               ),
               if (omitted.isNotEmpty)
                 Expanded(

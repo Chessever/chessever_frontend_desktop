@@ -32,10 +32,9 @@ final enginePlayedProvider = FutureProvider.autoDispose
       await Future<void>.delayed(const Duration(milliseconds: 350));
       if (cancellation.isCancelled) return null;
 
-      final response = await repository.getMoveAggregates(
+      final response = await repository.getEngineMoveAggregates(
         fen: position.fen,
         moves: position.line.isEmpty ? const [] : position.line.split(' '),
-        prewarmGames: false,
         cancelToken: cancellation,
       );
       if (cancellation.isCancelled) return null;
