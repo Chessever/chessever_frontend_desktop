@@ -23,7 +23,7 @@ List<String> _ids(List<GamesAppBarModel> rounds) =>
 
 void main() {
   group('sortRoundsForDisplay', () {
-    test('keeps started rounds first and both sections descending', () {
+    test('orders played newest first and upcoming soonest first', () {
       final now = DateTime(2026, 5, 27, 18);
       final rounds = [
         _round(
@@ -70,39 +70,40 @@ void main() {
         now: now,
       );
 
-      expect(_ids(sorted), ['r3', 'r2', 'r1', 'r6', 'r5', 'r4']);
+      expect(_ids(sorted), ['r3', 'r2', 'r1', 'r4', 'r5', 'r6']);
     });
 
-    test('keeps all future rounds in descending order', () {
-      final now = DateTime(2026, 3, 29, 10);
+    test('lists an unstarted championship from Game 1 to Game 14', () {
+      final now = DateTime.utc(2026, 11, 24, 13, 35);
+      const days = [24, 25, 26, 28, 29, 30, 32, 33, 34, 36, 37, 38, 40, 41];
       final rounds = [
-        _round(
-          id: 'r3',
-          name: 'Round 3',
-          startsAt: now.add(const Duration(days: 2)),
-          status: RoundStatus.upcoming,
-        ),
-        _round(
-          id: 'r1',
-          name: 'Round 1',
-          startsAt: now.add(const Duration(hours: 6)),
-          status: RoundStatus.upcoming,
-        ),
-        _round(
-          id: 'r2',
-          name: 'Round 2',
-          startsAt: now.add(const Duration(days: 1)),
-          status: RoundStatus.upcoming,
-        ),
+        for (var n = days.length; n >= 1; n--)
+          _round(
+            id: 'r$n',
+            name: 'Game $n',
+            startsAt: DateTime.utc(2026, 11, days[n - 1], 14),
+            status: RoundStatus.upcoming,
+          ),
       ];
 
       final sorted = sortRoundsForDisplay(
         rounds,
         resolveDate: (round) => round.startsAt,
+        hasGames: (_) => true,
+        hasStartedActivity: (_) => false,
         now: now,
       );
 
-      expect(_ids(sorted), ['r3', 'r2', 'r1']);
+      expect(_ids(sorted), [for (var n = 1; n <= days.length; n++) 'r$n']);
+
+      final selected = pickPreferredRoundForSelection(
+        rounds,
+        resolveDate: (round) => round.startsAt,
+        hasGames: (_) => true,
+        hasStartedActivity: (_) => false,
+        now: now,
+      );
+      expect(selected?.id, 'r1');
     });
 
     test('promotes the next round once every started round is finished', () {
@@ -141,7 +142,7 @@ void main() {
         now: now,
       );
 
-      expect(_ids(sorted), ['r2', 'r1', 'r4', 'r3']);
+      expect(_ids(sorted), ['r2', 'r1', 'r3', 'r4']);
     });
 
     test('does not promote while a started round is unfinished', () {
@@ -174,7 +175,7 @@ void main() {
         now: now,
       );
 
-      expect(_ids(sorted), ['r1', 'r3', 'r2']);
+      expect(_ids(sorted), ['r1', 'r2', 'r3']);
     });
 
     test('promotes a next round whose pairings are out days ahead', () {
@@ -358,7 +359,7 @@ void main() {
         now: now,
       );
 
-      expect(_ids(sorted), ['r2', 'r1', 'r4', 'r3']);
+      expect(_ids(sorted), ['r2', 'r1', 'r3', 'r4']);
     });
 
     test('ends with latest round first and all prior rounds descending', () {

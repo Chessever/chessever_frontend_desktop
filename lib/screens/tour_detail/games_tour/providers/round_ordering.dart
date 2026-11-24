@@ -40,7 +40,7 @@ List<GamesAppBarModel> sortRoundsForDisplay(
       });
   final future =
       models.where((model) => !isStarted(model)).toList()
-        ..sort((a, b) => _compareByStart(a, b, false, resolveDate));
+        ..sort((a, b) => _compareByStart(a, b, true, resolveDate));
   final promoted = pickUpcomingRoundForPromotion(
     models,
     resolveDate: resolveDate,
@@ -115,15 +115,6 @@ GamesAppBarModel? pickPreferredRoundForSelection(
     if (startedRounds.isNotEmpty) {
       return startedRounds.first;
     }
-
-    final upcomingRounds =
-        models
-            .where((m) => m.roundStatus == RoundStatus.upcoming && include(m))
-            .toList()
-          ..sort((a, b) => _compareByStart(a, b, false, resolveDate));
-    if (upcomingRounds.isNotEmpty) {
-      return upcomingRounds.first;
-    }
   }
 
   for (final status in const [
@@ -140,7 +131,7 @@ GamesAppBarModel? pickPreferredRoundForSelection(
         final roundCompare = _compareByGenericRoundNumber(a, b);
         if (roundCompare != 0) return roundCompare;
       }
-      return _compareByStart(a, b, false, resolveDate);
+      return _compareByStart(a, b, status == RoundStatus.upcoming, resolveDate);
     });
     return candidates.first;
   }

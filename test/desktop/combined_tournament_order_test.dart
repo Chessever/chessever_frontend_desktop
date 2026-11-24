@@ -153,9 +153,7 @@ void main() {
         liveRoundIds: const [],
         now: _now,
       );
-      // The desktop Games tab lists future rounds latest first
-      // (test/tour_detail_round_ordering_test.dart); Combined turns that run
-      // around so all three platforms read Round 1 to Round 10.
+      // Combined and the single-category Games tab share the same order.
       expect(sections.map((section) => section.round.name), [
         for (var n = 1; n <= 10; n++) 'Round $n',
       ]);

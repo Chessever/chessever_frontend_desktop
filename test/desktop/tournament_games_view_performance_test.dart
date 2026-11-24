@@ -21,6 +21,7 @@ import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_grouped_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_provider.dart';
 import 'package:chessever/screens/tour_detail/games_tour/providers/games_tour_screen_provider.dart';
+import 'package:chessever/screens/tour_detail/games_tour/utils/knockout_match_detector.dart';
 import 'package:chessever/utils/responsive_helper.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -29,6 +30,98 @@ final _searchFocusGroupedStateProvider = StateProvider<GroupedGamesData>(
 );
 
 void main() {
+  testWidgets('the championship opener appears first and starts expanded', (
+    tester,
+  ) async {
+    final rounds = [
+      for (final (number, date) in [
+        (14, DateTime.utc(2099, 12, 11, 14)),
+        (1, DateTime.utc(2099, 11, 24, 14)),
+      ])
+        GamesAppBarModel(
+          id: 'world-match-$number',
+          name: 'Game $number',
+          startsAt: date,
+          roundStatus: RoundStatus.upcoming,
+        ),
+    ];
+    final games = [
+      for (final round in rounds)
+        GamesTourModel(
+          gameId: 'game-${round.id}',
+          whitePlayer: _player('Sindarov, Javokhir'),
+          blackPlayer: _player('Gukesh D'),
+          whiteTimeDisplay: '120:00',
+          blackTimeDisplay: '120:00',
+          whiteClockCentiseconds: 720000,
+          blackClockCentiseconds: 720000,
+          gameStatus: GameStatus.ongoing,
+          roundId: round.id,
+          tourId: '',
+        ),
+    ];
+    final grouped = GroupedGamesData(
+      filteredRounds: rounds,
+      gamesByRound: {
+        for (final game in games) game.roundId: [game],
+      },
+      upcomingPairingRoundIds: {for (final round in rounds) round.id},
+      matchFormatHeader: KnockoutMatchDetector.createMatchHeader(
+        'match',
+        games,
+      ),
+      isKnockoutTournament: false,
+      isMultiStageKnockout: false,
+      isLoading: false,
+      rounds: rounds,
+      allGames: games,
+      providerGameCount: games.length,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gamesTourGroupedProvider.overrideWith((ref) => grouped),
+          gamesTourScreenProvider.overrideWith(
+            (ref) => _SearchFocusGamesNotifier(ref),
+          ),
+          boardSettingsProviderNew.overrideWith(_EvaluationBarOffNotifier.new),
+          engineSettingsProviderNew.overrideWith(
+            _EngineSettingsOffNotifier.new,
+          ),
+          gameStreamRepositoryProvider.overrideWithValue(
+            _TrackingGameStreamRepository(),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: TournamentGamesView(
+              tabId: 'world-match-tab',
+              tournamentId: 'world-match-tour',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final firstHeader = tester.widget<RoundHeaderCard>(
+      find.byType(RoundHeaderCard).first,
+    );
+    expect(firstHeader.round.name, 'Game 1');
+    expect(firstHeader.expanded, isTrue);
+    expect(find.text('2 games · Upcoming'), findsOneWidget);
+
+    await tester.tap(find.text('Game 1'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<RoundHeaderCard>(find.byType(RoundHeaderCard).first)
+          .expanded,
+      isFalse,
+    );
+  });
+
   test('only the current top round expands on first paint', () {
     expect(
       shouldInitiallyExpandTournamentRound(

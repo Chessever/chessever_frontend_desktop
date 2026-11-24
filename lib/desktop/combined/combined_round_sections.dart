@@ -204,11 +204,8 @@ RoundStatus _roundStatusAt(
 /// single category. Only boards with a move or a result count as played, and
 /// an open round whose boards are all unplayed pairings has not started. So
 /// at most the next round is promoted to the top (when the latest round is
-/// fully played) and the other future rounds sit below the played ones.
-///
-/// One thing differs from that tab on purpose: the rounds still to come read
-/// soonest first (Round 6, 7, ... 10), as Combined does on the phone and on
-/// chessever.com, where the desktop Games tab lists them latest first.
+/// fully played) and the other future rounds sit below the played ones,
+/// soonest first.
 List<CombinedRoundSection> _inRegularOrder(
   List<CombinedRoundSection> sections,
   DateTime now,
@@ -233,14 +230,7 @@ List<CombinedRoundSection> _inRegularOrder(
         (round) => hasGames(round) && !_isPairingOnly(byRoundId[round.id]!),
     now: now,
   );
-  final result = [for (final round in ordered) byRoundId[round.id]!];
-  // The rounds still to come close the list, latest first; turn that run
-  // around. A promoted next round stays on top: it is not part of the run.
-  var tail = result.length;
-  while (tail > 0 && !_isStarted(result[tail - 1], now)) {
-    tail--;
-  }
-  return [...result.take(tail), ...result.skip(tail).toList().reversed];
+  return [for (final round in ordered) byRoundId[round.id]!];
 }
 
 /// An open round whose loaded boards are all unplayed pairings.

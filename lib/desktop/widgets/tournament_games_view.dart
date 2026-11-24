@@ -855,8 +855,8 @@ class _TournamentGamesViewState extends ConsumerState<TournamentGamesView> {
         roundStartsAtById.putIfAbsent(gameRoundId, () => round.startsAt);
       }
     }
-    // The list order is the source of truth: started rounds first in descending
-    // order, then future rounds in descending order. The next round goes on
+    // The list order is the source of truth: started rounds latest first,
+    // then future rounds soonest first. The next round goes on
     // top as soon as its boards are out and every started board is finished,
     // however far off its start time is, or if it has none at all.
     bool hasRoundGames(GamesAppBarModel model) =>
@@ -2733,6 +2733,12 @@ class _MatchHeaderBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final status =
+        match.isComplete
+            ? 'Match complete'
+            : match.games.any(isEventBoardGameVisible)
+            ? 'In progress'
+            : 'Upcoming';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Container(
@@ -2764,7 +2770,7 @@ class _MatchHeaderBanner extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${match.games.length} games · ${match.isComplete ? 'Match complete' : 'In progress'}',
+                    '${match.games.length} games · $status',
                     style: const TextStyle(
                       color: kLightGreyColor,
                       fontSize: 12,
