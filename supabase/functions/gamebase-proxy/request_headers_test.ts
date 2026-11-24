@@ -32,6 +32,26 @@ Deno.test("public project key is required, rather than mere header presence", ()
   equal(hasProjectClientKey(new Headers({ apikey: "" }), ""), false);
 });
 
+Deno.test("the proxy accepts the configured website publishable key", () => {
+  const publishable = "sb_publishable_web";
+  equal(
+    hasProjectClientKey(
+      new Headers({ apikey: publishable }),
+      "legacy",
+      publishable,
+    ),
+    true,
+  );
+  equal(
+    hasProjectClientKey(
+      new Headers({ apikey: "sb_publishable_another_project" }),
+      "legacy",
+      publishable,
+    ),
+    false,
+  );
+});
+
 Deno.test("caller cannot choose the upstream credential or leak other headers", () => {
   const headers = upstreamHeaders(
     new Headers({

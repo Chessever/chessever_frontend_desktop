@@ -4,11 +4,14 @@ import { type AllowedRoute, bearerNamesAccount } from "./allowed_routes.ts";
 // Account authorization is enforced by Gamebase for member/viewer operations.
 export function hasProjectClientKey(
   headers: Headers,
-  publicKey: string,
+  ...publicKeys: string[]
 ): boolean {
-  return publicKey.length > 0 &&
-    (headers.get("apikey") === publicKey ||
-      headers.get("authorization") === `Bearer ${publicKey}`);
+  const apikey = headers.get("apikey");
+  const authorization = headers.get("authorization");
+  return publicKeys.some((key) =>
+    key.length > 0 &&
+    (apikey === key || authorization === `Bearer ${key}`)
+  );
 }
 
 export function upstreamHeaders(

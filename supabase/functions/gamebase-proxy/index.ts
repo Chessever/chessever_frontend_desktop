@@ -55,7 +55,11 @@ Deno.serve(async (req: Request) => {
 
   const publicKey = (Deno.env.get("GAMEBASE_CLIENT_ANON_KEY") ??
     Deno.env.get("SUPABASE_ANON_KEY") ?? "").trim();
-  if (!hasProjectClientKey(req.headers, publicKey)) {
+  const publishableKeys = (Deno.env.get("GAMEBASE_CLIENT_PUBLISHABLE_KEYS") ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter((key) => key.startsWith("sb_publishable_"));
+  if (!hasProjectClientKey(req.headers, publicKey, ...publishableKeys)) {
     return jsonResponse({ error: "unauthorized" }, 401);
   }
 
@@ -67,7 +71,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // Gamebase verifies the account token and its permissions. Gateway JWT
-  // verification stays off because it rejects the project's legacy anon key.
+  // verification stays off to accept both project key formats.
   const authorization = req.headers.get("authorization") ?? "";
   if (route.member && !bearerNamesAccount(authorization)) {
     return jsonResponse({ error: "unauthorized" }, 401);
