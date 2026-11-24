@@ -56,8 +56,24 @@ void main() {
 
     expect(repo.requestedPositions, List.filled(6, 12));
     expect(container.read(settled).valueOrNull?.first.san, 'e4');
-    visit.close();
     container.dispose();
-    await tester.pump(const Duration(seconds: 12));
+  });
+
+  testWidgets('closing a board cancels a pending prediction retry', (
+    tester,
+  ) async {
+    final repo = _BusyGamebase();
+    final container = ProviderContainer(
+      overrides: [gamebaseRepositoryProvider.overrideWithValue(repo)],
+    );
+    addTearDown(container.dispose);
+    final provider = nextMovePredictionProvider(jsonEncode({'ply': 42}));
+    container.listen(provider, (_, _) {});
+    await tester.pump(const Duration(milliseconds: 180));
+    expect(repo.requestedPositions, [42]);
+
+    container.dispose();
+    await tester.pump();
+    expect(repo.requestedPositions, [42]);
   });
 }

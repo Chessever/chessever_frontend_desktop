@@ -31,21 +31,46 @@ class NextMoveCandidate {
 final nextMovePredictionProvider = FutureProvider.autoDispose
     .family<List<NextMoveCandidate>, String>((ref, request) async {
       final cancellation = CancelToken();
-      ref.onDispose(() => cancellation.cancel());
       final repo = ref.read(gamebaseRepositoryProvider);
       final payload = jsonDecode(request) as Map<String, dynamic>;
-      final deadline = Timer(const Duration(seconds: 12), cancellation.cancel);
-      ref.onDispose(deadline.cancel);
+      Timer? delayTimer;
+      Completer<void>? delayCompletion;
+
+      void finishDelay() {
+        delayTimer?.cancel();
+        delayTimer = null;
+        delayCompletion?.complete();
+        delayCompletion = null;
+      }
+
+      Future<void> waitBeforeRequest(Duration duration) {
+        final completion = Completer<void>();
+        delayCompletion = completion;
+        delayTimer = Timer(duration, finishDelay);
+        return completion.future;
+      }
+
+      void cancel() {
+        cancellation.cancel();
+        finishDelay();
+      }
+
+      final deadline = Timer(const Duration(seconds: 12), cancel);
+      ref.onDispose(() {
+        deadline.cancel();
+        cancel();
+      });
       // An unobserved request is disposed before the CPU work is sent. The
       // position last visited during rapid navigation is the only cold query.
-      await Future<void>.delayed(_moveSettle);
+      await waitBeforeRequest(_moveSettle);
       for (
         var attempt = 0;
         attempt <= _busyRetriesMs.length && !cancellation.isCancelled;
         attempt++
       ) {
         final reply = await repo.getNextMove(payload, cancellation);
-        if (!reply.pending || cancellation.isCancelled) {
+        if (cancellation.isCancelled) return const [];
+        if (!reply.pending) {
           deadline.cancel();
           final json = reply.data;
           final raw = json?['moves'];
@@ -94,7 +119,7 @@ final nextMovePredictionProvider = FutureProvider.autoDispose
           return result;
         }
         if (attempt < _busyRetriesMs.length) {
-          await Future<void>.delayed(
+          await waitBeforeRequest(
             Duration(
               milliseconds: _busyRetriesMs[attempt] + _retryJitter.nextInt(100),
             ),
