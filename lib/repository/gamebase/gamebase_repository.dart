@@ -995,6 +995,8 @@ class GamebaseRepository {
     int? yearFrom,
     int? yearTo,
     bool? isOnline,
+    bool prewarmGames = true,
+    CancelToken? cancelToken,
   }) async {
     try {
       final body = buildMoveAggregatesQueryBody(
@@ -1010,6 +1012,8 @@ class GamebaseRepository {
         yearTo: yearTo,
         isOnline: isOnline,
       );
+
+      if (!prewarmGames) body['prewarmGames'] = false;
 
       if (kDebugMode) {
         debugPrint('[GamebaseRepository] getMoveAggregates:');
@@ -1033,6 +1037,7 @@ class GamebaseRepository {
           response = await _dio.post(
             '$_baseUrl/api/game-position/aggregates/query',
             data: body,
+            cancelToken: cancelToken,
             options: _requestOptions(receiveTimeout: _aggregateReceiveTimeout),
           );
           break;
@@ -1047,6 +1052,7 @@ class GamebaseRepository {
           }
 
           if (e.type == DioExceptionType.receiveTimeout &&
+              cancelToken?.isCancelled != true &&
               attempt < _aggregateReceiveTimeoutRetries) {
             if (kDebugMode) {
               debugPrint(

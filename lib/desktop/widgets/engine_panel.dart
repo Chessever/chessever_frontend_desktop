@@ -2,6 +2,9 @@ import 'dart:async';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/state/engine_formatted_display.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/services/engine/engine_played.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
@@ -65,6 +68,8 @@ class EnginePanel extends ConsumerStatefulWidget {
     super.key,
     required this.fen,
     required this.sideToMove,
+    this.playedPosition,
+    this.playedContext,
     this.onPlayUci,
     this.pvPlayOwner,
     this.game,
@@ -88,6 +93,8 @@ class EnginePanel extends ConsumerStatefulWidget {
   });
 
   final String fen;
+  final EnginePlayedPosition? playedPosition;
+  final DesktopAccessContext? playedContext;
 
   /// `'w'` or `'b'`. Unused now that the singleton normalizes evaluations to
   /// white-perspective; kept on the API to avoid touching every call site.
@@ -399,7 +406,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     ) {
       if (before != null && before != after) _reportController.invalidate();
     });
-    ref.watch(desktopAccountIdentityProvider);
+    final identity = ref.watch(desktopAccountIdentityProvider);
     final reportAccess =
         !kIsWeb ||
         desktopPremiumAccess(ref.watch(subscriptionProvider)) ==
@@ -433,6 +440,23 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     // nothing about engine availability; keep its controls reachable.
     final engineActive =
         engineOn && runLiveBoardAnalysis && widget.fen.isNotEmpty;
+
+    final playedContext = widget.playedContext;
+    final playedPosition = widget.playedPosition;
+    final played =
+        engineActive &&
+                playedContext != null &&
+                playedPosition != null &&
+                playedPosition.fen == widget.fen &&
+                identity.isPermanent &&
+                !identity.staleSession &&
+                evaluateDesktopAccess(
+                  context: playedContext,
+                  subscription: ref.watch(subscriptionProvider),
+                  entitlement: ref.watch(desktopEntitlementProvider),
+                ).isAllowed
+            ? ref.watch(enginePlayedProvider(playedPosition)).valueOrNull
+            : null;
 
     final reportContent = GameReportView(
       state: reportState,
@@ -499,6 +523,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                         state: reading,
                         sanLines: _display.snapshot?.sanLines ?? const [],
                         interactive: linesCurrent,
+                        played: _display.fen == widget.fen ? played : null,
                         // Scope presentation to the target position, even while
                         // the previous formatted reading is retained briefly.
                         playOwner: (
@@ -691,6 +716,8 @@ class _EngineLinesSnapshot {
       Object.hash(isEvaluating, statusText, Object.hashAll(pvs));
 }
 
+const double _enginePlayedWidth = 52;
+
 class _EngineLinesSurface extends StatefulWidget {
   const _EngineLinesSurface({
     required this.fen,
@@ -699,10 +726,12 @@ class _EngineLinesSurface extends StatefulWidget {
     required this.state,
     required this.interactive,
     required this.sanLines,
+    required this.played,
   });
 
   final BoardEvalState state;
   final List<List<String>> sanLines;
+  final EnginePlayed? played;
   final bool interactive;
 
   final String fen;
@@ -729,6 +758,7 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
         old.fen == widget.fen &&
         old.playOwner == widget.playOwner &&
         old.interactive == widget.interactive &&
+        old.played == widget.played &&
         (old.onPlayUci != null) == (widget.onPlayUci != null) &&
         listEquals(old.formattedSan, san)) {
       return old;
@@ -741,6 +771,7 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
       playOwner: widget.playOwner,
       interactive: widget.interactive,
       formattedSan: san,
+      played: widget.played,
     );
   }
 
@@ -763,14 +794,30 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
         ),
       );
     }
-    return DesktopScrollHost(
-      child: ListView.separated(
-        physics: const DesktopScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        itemCount: pvs.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 6),
-        itemBuilder: (context, index) => _row(index),
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.played != null)
+          const Padding(
+            padding: EdgeInsets.only(right: 45, bottom: 6),
+            child: Text(
+              'Played',
+              textAlign: TextAlign.end,
+              style: TextStyle(color: kWhiteColor70, fontSize: 12),
+            ),
+          ),
+        Expanded(
+          child: DesktopScrollHost(
+            child: ListView.separated(
+              physics: const DesktopScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              itemCount: pvs.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 6),
+              itemBuilder: (context, index) => _row(index),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1734,6 +1781,7 @@ class _PvLine extends StatefulWidget {
     this.playOwner,
     this.formatSan,
     this.formattedSan,
+    this.played,
   });
 
   final int rank;
@@ -1744,6 +1792,7 @@ class _PvLine extends StatefulWidget {
   final Object? playOwner;
   final Future<List<String>> Function(Map<String, String>)? formatSan;
   final List<String>? formattedSan;
+  final EnginePlayed? played;
 
   @override
   State<_PvLine> createState() => _PvLineState();
@@ -2072,9 +2121,33 @@ class _PvLineState extends State<_PvLine> {
                       : _PvTokensLine(
                         tokens: _cachedTokens,
                         expanded: _expanded,
+                        fadeOverflow: widget.played != null,
                         onPreviewToken: _previewToken,
                       ),
             ),
+            if (widget.played != null) ...[
+              const SizedBox(width: 8),
+              SizedBox(
+                width: _enginePlayedWidth,
+                child: Text(
+                  widget.played?.labelFor(
+                        _firstUci,
+                        isCastling:
+                            _cachedTokens.isNotEmpty &&
+                            _cachedTokens.first.san.contains('O-O'),
+                      ) ??
+                      '',
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: kWhiteColor,
+                    fontSize: 12,
+                    height: 1.4,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(width: 4),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -2314,38 +2387,86 @@ class _PvTokensLine extends StatelessWidget {
   const _PvTokensLine({
     required this.tokens,
     required this.expanded,
+    required this.fadeOverflow,
     required this.onPreviewToken,
   });
 
   final List<_PvToken> tokens;
   final bool expanded;
+  final bool fadeOverflow;
   final ValueChanged<int> onPreviewToken;
+
+  static const _spacing = 5.0;
+  static const _style = TextStyle(
+    color: kWhiteColor70,
+    fontSize: 12,
+    height: 1.35,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
 
   @override
   Widget build(BuildContext context) {
+    final children = [
+      for (var i = 0; i < tokens.length; i++)
+        MouseRegion(
+          onEnter: (_) => onPreviewToken(i),
+          child: Text(tokens[i].san, style: _style),
+        ),
+    ];
     final line = Wrap(
-      spacing: 5,
+      spacing: _spacing,
       runSpacing: 2,
       crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < tokens.length; i++)
-          MouseRegion(
-            onEnter: (_) => onPreviewToken(i),
-            child: Text(
-              tokens[i].san,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                height: 1.35,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-      ],
+      children: children,
     );
 
     if (expanded) return line;
-    return SizedBox(height: 18, child: ClipRect(child: line));
+    if (!fadeOverflow) return SizedBox(height: 18, child: ClipRect(child: line));
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final direction = Directionality.of(context);
+        final painter = TextPainter(
+          textDirection: direction,
+          textScaler: MediaQuery.textScalerOf(context),
+        );
+        final style = DefaultTextStyle.of(context).style.merge(_style);
+        var width = -_spacing;
+        for (final token in tokens) {
+          painter.text = TextSpan(text: token.san, style: style);
+          painter.layout();
+          width += painter.width + _spacing;
+          if (width > constraints.maxWidth) break;
+        }
+        painter.dispose();
+
+        final visible = SizedBox(
+          height: 18,
+          child: ClipRect(
+            child: OverflowBox(
+              maxWidth: double.infinity,
+              alignment: AlignmentDirectional.centerStart,
+              child: Row(
+                textDirection: direction,
+                mainAxisSize: MainAxisSize.min,
+                spacing: _spacing,
+                children: children,
+              ),
+            ),
+          ),
+        );
+        if (width <= constraints.maxWidth) return visible;
+        return ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (bounds) => LinearGradient(
+            begin: AlignmentDirectional.centerStart,
+            end: AlignmentDirectional.centerEnd,
+            colors: const [Colors.white, Colors.transparent],
+            stops: [(1 - 22 / bounds.width).clamp(0.0, 1.0), 1.0],
+          ).createShader(bounds, textDirection: direction),
+          child: visible,
+        );
+      },
+    );
   }
 }
 

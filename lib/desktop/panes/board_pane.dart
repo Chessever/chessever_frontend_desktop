@@ -39,6 +39,7 @@ import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
+import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
 import 'package:chessever/desktop/services/board_pgn_clipboard.dart';
@@ -6430,6 +6431,22 @@ class _BoardPaneContent extends HookConsumerWidget {
                                         .toggleEngineAnalysis(true),
                                 enginePanel: EnginePanel(
                                   fen: activeEvalTarget.fen,
+                                  playedPosition:
+                                      activeEvalTarget.canPlayPv &&
+                                              boardPosition.fen == position.fen &&
+                                              !view.evalTarget.isThreatProbe
+                                          ? (
+                                            fen: position.fen,
+                                            line: lineUcis.join(' '),
+                                          )
+                                          : null,
+                                  playedContext: desktopExplorerAccessContext(
+                                    GamebaseExplorerState(
+                                      currentFen: position.fen,
+                                      game: chessGame.value,
+                                      movePointer: pointer.value,
+                                    ),
+                                  ),
                                   sideToMove:
                                       activeEvalTarget.isThreatProbe
                                           ? (boardPosition.turn == Side.white
