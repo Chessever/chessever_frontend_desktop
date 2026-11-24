@@ -12,6 +12,63 @@ import 'package:chessever/providers/board_settings_provider_new.dart';
 const _boardSize = 240.0;
 
 void main() {
+  testWidgets('rapid replay keeps each piece on its own animation path', (
+    tester,
+  ) async {
+    Position position = Chess.initial;
+    Move? lastMove;
+
+    Future<void> pumpBoard() => tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        ],
+        child: MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: DesktopChessBoard(
+              size: _boardSize,
+              fen: position.fen,
+              orientation: Side.white,
+              playerSide: cg.PlayerSide.both,
+              sideToMove: position.turn,
+              validMoves: makeLegalMoves(position),
+              lastMove: lastMove,
+              onMove: (_, {viaDragAndDrop}) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await pumpBoard();
+    for (final san in ['Nf3', 'd5', 'Rg1']) {
+      lastMove = position.parseSan(san)!;
+      position = position.play(lastMove);
+      await pumpBoard();
+      await tester.pump(const Duration(milliseconds: 32));
+    }
+
+    final knightOrigin =
+        _translations(tester).translationOrigins!.value[Square.f3]!;
+
+    // The white rook is sliding into g1, the white knight's original square.
+    // A black move must continue both animations from their own positions.
+    lastMove = position.parseSan('Nf6')!;
+    position = position.play(lastMove);
+    await pumpBoard();
+
+    final board = tester.widget<cg.Chessboard>(find.byType(cg.Chessboard));
+    expect(board.controller.pieces, cg.readFen(position.fen));
+    final painter = _translations(tester);
+    expect(painter.translatingPieces[Square.f3]?.piece, Piece.whiteKnight);
+    final newOrigin = painter.translationOrigins!.value[Square.f3]!;
+    expect(newOrigin.dx, inExclusiveRange(Square.f3.file, knightOrigin.dx));
+    expect(newOrigin.dy, inExclusiveRange(knightOrigin.dy, Square.f3.rank));
+    await tester.pumpAndSettle();
+    expect(_translations(tester).translatingPieces, isEmpty);
+  });
+
   testWidgets('secondary click cancels an active piece drag', (tester) async {
     final moves = <Move>[];
 
@@ -75,6 +132,13 @@ void main() {
     expect(_dragPainters(tester), isEmpty);
   });
 }
+
+TranslatingPiecesPainter _translations(WidgetTester tester) =>
+    tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .map((widget) => widget.painter)
+        .whereType<TranslatingPiecesPainter>()
+        .single;
 
 HighlightsPainter _highlights(WidgetTester tester) =>
     tester

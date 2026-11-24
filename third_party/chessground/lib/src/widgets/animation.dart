@@ -76,29 +76,32 @@ Map<Square, Offset> retargetPieceAnimations({
   Move? lastDrop,
 }) {
   if (previous.isEmpty || progress >= 1) return const {};
-  final displayed = <Square, Offset>{};
-  for (final entry in previous.entries) {
-    final from =
-        previousOrigins[entry.key] ??
-        Offset(
-          entry.value.from.file.toDouble(),
-          entry.value.from.rank.toDouble(),
-        );
-    final to = Offset(entry.key.file.toDouble(), entry.key.rank.toDouble());
-    displayed[entry.key] = Offset.lerp(from, to, progress)!;
-    if (newPosition[entry.key] == entry.value.piece &&
-        !next.containsKey(entry.key) &&
-        entry.key != lastDrop?.to) {
-      next[entry.key] = entry.value;
-    }
-  }
-  return {
-    for (final entry in next.entries)
-      if (displayed.containsKey(entry.value.from))
-        entry.key: displayed[entry.value.from]!
-      else if (previous[entry.key] == entry.value)
-        entry.key: displayed[entry.key]!,
+  // Only new moves use their source squares to find an in-flight piece. A
+  // carried move's original square may now be another piece's destination.
+  final destinationsBySource = {
+    for (final entry in next.entries) entry.value.from: entry.key,
   };
+  final origins = <Square, Offset>{};
+  for (final MapEntry(key: square, value: translation) in previous.entries) {
+    final destination = destinationsBySource[square];
+    if (destination == null) {
+      if (newPosition[square] != translation.piece ||
+          next.containsKey(square) ||
+          square == lastDrop?.to) {
+        continue;
+      }
+      next[square] = translation;
+    }
+    final from =
+        previousOrigins[square] ??
+        Offset(
+          translation.from.file.toDouble(),
+          translation.from.rank.toDouble(),
+        );
+    final to = Offset(square.file.toDouble(), square.rank.toDouble());
+    origins[destination ?? square] = Offset.lerp(from, to, progress)!;
+  }
+  return origins;
 }
 
 /// Returns the closest square to the target square from a list of squares.
