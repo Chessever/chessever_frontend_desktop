@@ -112,22 +112,9 @@ class LocalChessDatabaseUnavailableException implements Exception {
   String get fileName {
     final normalized = path.replaceAll('\\', '/');
     final index = normalized.lastIndexOf('/');
-    var name = (index < 0 ? normalized : normalized.substring(index + 1)).trim();
-    if (name.isEmpty) return 'the local database';
-    for (final suffix in const <String>[
-      '.cetg',
-      '.ceti',
-      '.previous',
-      '-wal',
-      '-shm',
-    ]) {
-      if (name.toLowerCase().endsWith(suffix)) {
-        name = name.substring(0, name.length - suffix.length);
-      }
-    }
-    final staged = RegExp(r'\.build-\d+$');
-    name = name.replaceFirst(staged, '');
-    return name.trim().isEmpty ? 'the local database' : name;
+    final name = normalized.substring(index + 1).trim();
+    final sourceName = name.replaceFirst(_generatedFileSuffixes, '').trim();
+    return sourceName.isEmpty ? 'the local database' : sourceName;
   }
 
   String get displayName {
@@ -168,6 +155,11 @@ class LocalChessDatabaseUnavailableException implements Exception {
   }
 }
 
+final RegExp _generatedFileSuffixes = RegExp(
+  r'(?:\.(?:cetg|ceti|previous|build-\d+)|-wal|-shm|-journal)+$',
+  caseSensitive: false,
+);
+
 /// True when re-running the same request can plausibly succeed: a database that
 /// is being rebuilt, replaced or written by another connection.
 bool isRetryableLocalChessDatabaseFailure(Object error) {
@@ -186,9 +178,8 @@ bool isRetryableLocalChessDatabaseFailure(Object error) {
 /// A raw driver open failure must never reach the user: it names an internal
 /// sidecar path and class, and widget-level string surgery on
 /// `<Type>Exception: Failed to open database at "..."` once produced
-/// `<Type>Failed to open database at "..."` (the text users actually saw). Everything else keeps its own message with
-/// a leading `SomeException: ` type prefix removed, since that prefix is Dart
-/// framing rather than a user-facing explanation.
+/// `<Type>Failed to open database at "..."`. For other failures, remove any
+/// Dart exception prefixes before displaying the message.
 String localChessDatabaseUserMessage(Object error) {
   if (error is LocalChessDatabaseUnavailableException) return error.message;
   if (isLocalChessDatabaseOpenFailure(error)) {
@@ -202,7 +193,7 @@ String localChessDatabaseUserMessage(Object error) {
 }
 
 final RegExp _leadingExceptionType = RegExp(
-  r'^(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*(?:Exception|Error)\s*:\s*',
+  r'^(?:(?:Bad state|(?:[A-Za-z_]\w*\.)*(?:[A-Za-z_]\w*)?(?:Exception|Error))\s*:\s*)+',
 );
 
 /// True when [error] is SQLite refusing to *open* a database file.

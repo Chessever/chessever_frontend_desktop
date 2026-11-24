@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:sqlite3/wasm.dart' as sqlite;
 
 import 'package:chessever/desktop/services/local_sqlite/local_sqlite_types.dart';
+import 'package:chessever/web/web_document_base.dart';
 import 'package:chessever/web/web_file_system.dart';
 
 export 'package:chessever/desktop/services/local_sqlite/local_sqlite_types.dart';
@@ -36,6 +37,10 @@ export 'package:chessever/desktop/services/local_sqlite/local_sqlite_types.dart'
 /// imports are generated with the Dart bindings of that exact release.
 const String _wasmAsset = 'sqlite/sqlite3-3.8.0.wasm';
 
+/// sqlite3 resolves relative URLs against the current route. Resolve against
+/// the app's HTML base so deep links and both deployment mounts work.
+Uri get webSqliteWasmUri => webDocumentBase().resolve(_wasmAsset);
+
 /// Tests that run in a browser load the module from their own server.
 String? debugLocalSqliteWasmUrl;
 
@@ -44,8 +49,9 @@ Future<sqlite.WasmSqlite3>? _engine;
 Future<sqlite.WasmSqlite3> _loadEngine() {
   final pending =
       _engine ??= () async {
+        final override = debugLocalSqliteWasmUrl;
         final engine = await sqlite.WasmSqlite3.loadFromUrl(
-          Uri.parse(debugLocalSqliteWasmUrl ?? _wasmAsset),
+          override == null ? webSqliteWasmUri : Uri.parse(override),
         );
         engine.registerVirtualFileSystem(_WebFsVfs(), makeDefault: true);
         return engine;

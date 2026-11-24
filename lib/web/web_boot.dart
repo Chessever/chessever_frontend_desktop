@@ -4,8 +4,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show BrowserContextMenu;
+import 'package:flutter/widgets.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:sqflite/sqflite.dart' show databaseFactory;
@@ -25,6 +25,7 @@ import 'package:chessever/providers/for_you_games_provider.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
+import 'package:chessever/web/shims/local_sqlite_web.dart' show webSqliteWasmUri;
 import 'package:chessever/web/web_file_system.dart';
 import 'package:chessever/web/web_storage_notice.dart';
 import 'package:chessever/web/web_frame_stats.dart';
@@ -120,7 +121,12 @@ Future<void> _boot() async {
     print('[web] sqlite ready (${elapsed()})');
   } catch (e) {
     print('[web] sqlite worker unavailable ($e); using main thread');
-    databaseFactory = databaseFactoryFfiWebNoWebWorker;
+    // This path uses the app's Dart SQLite bindings. The root sqlite3.wasm
+    // is paired with the separately compiled sqflite worker.
+    databaseFactory = createDatabaseFactoryFfiWeb(
+      noWebWorker: true,
+      options: SqfliteFfiWebOptions(sqlite3WasmUri: webSqliteWasmUri),
+    );
     try {
       await AppDatabase.instance.database;
       print('[web] sqlite ready (main thread, ${elapsed()})');
