@@ -970,16 +970,22 @@ class GamebaseRepository {
         '$_baseUrl/api/next-move',
         data: input,
         cancelToken: cancelToken,
-        options: _requestOptions(
-          receiveTimeout: const Duration(seconds: 3),
-        ),
+        options: _requestOptions(receiveTimeout: const Duration(seconds: 3)),
       );
       return (
         pending: response.statusCode == 202,
         data: response.statusCode == 200 ? response.data : null,
       );
-    } on DioException {
-      return (pending: false, data: null);
+    } on DioException catch (error) {
+      return (
+        pending:
+            !cancelToken.isCancelled &&
+            ({429, 502, 503, 504}.contains(error.response?.statusCode) ||
+                error.type == DioExceptionType.connectionError ||
+                error.type == DioExceptionType.connectionTimeout ||
+                error.type == DioExceptionType.receiveTimeout),
+        data: null,
+      );
     }
   }
 

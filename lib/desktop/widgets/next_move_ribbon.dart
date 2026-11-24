@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 const nextMoveRibbonHeight = 82.0;
-const _busyRetriesMs = [250, 500, 750];
+const _moveSettle = Duration(milliseconds: 180);
+const _busyRetriesMs = [250, 450, 700, 1000, 1500, 2000, 2500, 3000];
+final _retryJitter = math.Random();
 const _colors = [Color(0xFF83C7C4), Color(0xFF9AADD1), Color(0xFFD5B487)];
 
 class NextMoveCandidate {
@@ -32,9 +34,11 @@ final nextMovePredictionProvider = FutureProvider.autoDispose
       ref.onDispose(() => cancellation.cancel());
       final repo = ref.read(gamebaseRepositoryProvider);
       final payload = jsonDecode(request) as Map<String, dynamic>;
-      final deadline = Timer(const Duration(seconds: 4), cancellation.cancel);
+      final deadline = Timer(const Duration(seconds: 12), cancellation.cancel);
       ref.onDispose(deadline.cancel);
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+      // An unobserved request is disposed before the CPU work is sent. The
+      // position last visited during rapid navigation is the only cold query.
+      await Future<void>.delayed(_moveSettle);
       for (
         var attempt = 0;
         attempt <= _busyRetriesMs.length && !cancellation.isCancelled;
@@ -91,7 +95,9 @@ final nextMovePredictionProvider = FutureProvider.autoDispose
         }
         if (attempt < _busyRetriesMs.length) {
           await Future<void>.delayed(
-            Duration(milliseconds: _busyRetriesMs[attempt]),
+            Duration(
+              milliseconds: _busyRetriesMs[attempt] + _retryJitter.nextInt(100),
+            ),
           );
         }
       }
