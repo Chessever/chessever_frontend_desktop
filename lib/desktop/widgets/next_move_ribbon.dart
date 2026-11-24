@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 const nextMoveRibbonHeight = 82.0;
+const _busyRetriesMs = [250, 500, 750];
 const _colors = [Color(0xFF83C7C4), Color(0xFF9AADD1), Color(0xFFD5B487)];
 
 class NextMoveCandidate {
@@ -31,9 +32,14 @@ final nextMovePredictionProvider = FutureProvider.autoDispose
       ref.onDispose(() => cancellation.cancel());
       final repo = ref.read(gamebaseRepositoryProvider);
       final payload = jsonDecode(request) as Map<String, dynamic>;
-      final deadline = Timer(const Duration(seconds: 3), cancellation.cancel);
+      final deadline = Timer(const Duration(seconds: 4), cancellation.cancel);
       ref.onDispose(deadline.cancel);
-      for (var i = 0; i < 2 && !cancellation.isCancelled; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      for (
+        var attempt = 0;
+        attempt <= _busyRetriesMs.length && !cancellation.isCancelled;
+        attempt++
+      ) {
         final reply = await repo.getNextMove(payload, cancellation);
         if (!reply.pending || cancellation.isCancelled) {
           deadline.cancel();
@@ -83,8 +89,10 @@ final nextMovePredictionProvider = FutureProvider.autoDispose
           ref.onDispose(timer.cancel);
           return result;
         }
-        if (i == 0) {
-          await Future<void>.delayed(const Duration(milliseconds: 300));
+        if (attempt < _busyRetriesMs.length) {
+          await Future<void>.delayed(
+            Duration(milliseconds: _busyRetriesMs[attempt]),
+          );
         }
       }
       deadline.cancel();
@@ -93,9 +101,9 @@ final nextMovePredictionProvider = FutureProvider.autoDispose
 
 final _uci = RegExp(r'^[a-h][1-8][a-h][1-8][qrbn]?$');
 
-String? nextMoveCadence(String? category, String? timeControl) {
+String nextMoveCadence(String? category, String? timeControl) {
   final speed = category?.toLowerCase() ?? '';
-  if (speed.contains('bullet')) return null;
+  if (speed.contains('bullet')) return 'blitz';
   if (speed.contains('blitz') || speed.contains('rapid')) {
     return speed.contains('blitz') ? 'blitz' : 'rapid';
   }
@@ -107,7 +115,6 @@ String? nextMoveCadence(String? category, String? timeControl) {
   ).firstMatch(timeControl ?? '');
   if (tag == null) return 'classical';
   final seconds = int.parse(tag[1]!) + 40 * (int.tryParse(tag[2] ?? '') ?? 0);
-  if (seconds < 120) return null;
   if (seconds <= 600) return 'blitz';
   return seconds < 3600 ? 'rapid' : 'classical';
 }

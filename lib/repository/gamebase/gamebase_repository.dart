@@ -966,8 +966,6 @@ class GamebaseRepository {
     CancelToken cancelToken,
   ) async {
     try {
-      final user = Supabase.instance.client.auth.currentSession?.user;
-      if (user == null || user.isAnonymous) return (pending: false, data: null);
       final response = await _dio.post<Map<String, dynamic>>(
         '$_baseUrl/api/next-move',
         data: input,

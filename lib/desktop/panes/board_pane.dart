@@ -39,7 +39,6 @@ import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart' show DragToMoveArea;
 
 import 'package:chessever/desktop/auth/desktop_explorer_access.dart';
-import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/desktop/panes/board_editor_pane.dart';
 import 'package:chessever/desktop/panes/player_score_card_pane.dart';
@@ -9956,35 +9955,25 @@ class _BoardArea extends HookConsumerWidget {
       sourceGame?.timeControl,
       pgn('TimeControl'),
     );
-    final account = ref.watch(desktopAccountIdentityProvider);
-    final ratedGame = switch (sourceGame?.source) {
-      GameSource.supabase ||
-      GameSource.gamebase ||
-      GameSource.twic ||
-      GameSource.openingExplorer => true,
-      _ => false,
-    };
     final hasPredictionSlot =
         !focusMode &&
         !pictureInPicture &&
-        ratedGame &&
-        whiteRating > 0 &&
-        blackRating > 0 &&
+        sourceGame != null &&
         !RegExp(
-          r'960|fischer',
+          r'960|fischer|crazyhouse|atomic|antichess|horde|racing kings|three.check|king of the hill',
           caseSensitive: false,
-        ).hasMatch(pgn('Variant')) &&
-        cadence != null;
+        ).hasMatch(pgn('Variant'));
+    final estimatedWhiteRating =
+        whiteRating > 0 ? whiteRating : (blackRating > 0 ? blackRating : 2700);
+    final estimatedBlackRating =
+        blackRating > 0 ? blackRating : estimatedWhiteRating;
     final predictionKey =
-        hasPredictionSlot &&
-                account.isPermanent &&
-                !account.staleSession &&
-                predictionMoves != null
+        hasPredictionSlot && predictionMoves != null
             ? jsonEncode({
               'fen': predictionStartFen,
               'moves': predictionMoves,
-              'whiteRating': whiteRating,
-              'blackRating': blackRating,
+              'whiteRating': estimatedWhiteRating.clamp(1, 3600),
+              'blackRating': estimatedBlackRating.clamp(1, 3600),
               'timeControl': cadence,
               'mode': 'fast',
             })

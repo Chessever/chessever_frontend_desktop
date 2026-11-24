@@ -59,7 +59,7 @@ const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/streaks\/[^/]+$/ },
   { method: "GET", pattern: /^\/api\/game\/[^/]+$/ },
   { method: "GET", pattern: /^\/api\/eval$/ },
-  { method: "POST", pattern: /^\/api\/next-move$/, member: true },
+  { method: "POST", pattern: /^\/api\/next-move$/, viewer: true },
   { method: "GET", pattern: /^\/api\/search$/ },
   { method: "GET", pattern: /^\/api\/search\/events$/ },
   { method: "GET", pattern: /^\/api\/search\/metadata$/ },
