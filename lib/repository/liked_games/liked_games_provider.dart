@@ -5,6 +5,7 @@ import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/repository/library/library_repository.dart';
 import 'package:chessever/repository/library/models/library_folder.dart';
 import 'package:chessever/repository/library/models/saved_analysis.dart';
+import 'package:chessever/repository/liked_games/like_realtime.dart';
 import 'package:chessever/repository/supabase/game/game_repository.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/models/like_tag.dart';
@@ -18,6 +19,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 /// `user_folders` row with `is_liked_games = true`. A like is an ordinary
 /// `user_saved_analyses` row inside it.
 final likedGamesFolderProvider = FutureProvider<LibraryFolder>((ref) async {
+  ref.watch(currentUserProvider.select((user) => user?.id));
   final repo = ref.watch(libraryRepositoryProvider);
   return repo.ensureLikedGamesFolder();
 });
@@ -28,6 +30,21 @@ final likedGamesProvider =
     AsyncNotifierProvider<LikedGamesNotifier, List<SavedAnalysis>>(
       LikedGamesNotifier.new,
     );
+
+/// Completed like writes also refresh counts when using the previous schema.
+final likedGamesWriteRevisionProvider = StateProvider<int>((ref) => 0);
+
+// Show a new like while its PGN is being resolved, before the saved row
+// can be represented in the list. Scope it to the account that tapped.
+final _pendingGameLikeOwnerProvider = StateProvider.family<String?, String>(
+  (ref, likeId) => null,
+);
+
+final isGameLikePendingProvider = Provider.family<bool, String>((ref, likeId) {
+  final owner = ref.watch(_pendingGameLikeOwnerProvider(likeId));
+  return owner != null &&
+      ref.watch(currentUserProvider.select((user) => user?.id)) == owner;
+});
 
 /// Immediate per-game tag selection while the canonical liked row is being
 /// created or updated. `null` means "use the saved row"; an empty list means
@@ -64,6 +81,80 @@ final likedGameRecordedHookProvider = Provider<LikedGameRecordedHook?>(
 class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
   LibraryRepository get _repo => ref.read(libraryRepositoryProvider);
 
+  // Discard a background read that overlapped optimistic edits.
+  int _localMutation = 0;
+
+  void _serverChanged() =>
+      ref.read(likedGamesWriteRevisionProvider.notifier).state++;
+  final _removalOps = <Future<void>>{};
+
+  void _listenForAccountChanges(Future<LibraryFolder> folderFuture) {
+    final repo = _repo;
+    final client = repo.supabase;
+    final owner = client.auth.currentUser;
+    if (owner == null || owner.isAnonymous) return;
+
+    var active = true;
+    Timer? timer;
+    var refreshing = false;
+    var dirty = false;
+    Future<void> refresh() async {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        final folder = await folderFuture;
+        if (!active) return;
+        try {
+          await future;
+        } catch (_) {
+          // A resumed connection can recover a failed initial list read.
+        }
+        while (active &&
+            dirty &&
+            client.auth.currentUser?.id == folder.userId) {
+          await Future.wait<Object?>([
+            ..._toggleOps.values,
+            ..._removalOps,
+            ..._tagWriteChains.values,
+          ]);
+          if (!active || client.auth.currentUser?.id != folder.userId) return;
+          if (_toggleOps.isNotEmpty ||
+              _removalOps.isNotEmpty ||
+              _tagWriteChains.isNotEmpty) {
+            continue;
+          }
+          final revision = _localMutation;
+          dirty = false;
+          final rows = await repo.getSavedAnalyses(folderId: folder.id);
+          if (!active || client.auth.currentUser?.id != folder.userId) return;
+          if (revision != _localMutation) {
+            dirty = true;
+            continue;
+          }
+          state = AsyncValue.data(rows);
+        }
+      } catch (error) {
+        debugPrint('[LikedGames] live refresh failed: $error');
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    final stop = listenForLikeChanges(client, 'account-likes:${owner.id}', () {
+      dirty = true;
+      timer?.cancel();
+      timer = Timer(
+        const Duration(milliseconds: 150),
+        () => unawaited(refresh()),
+      );
+    });
+    ref.onDispose(() {
+      active = false;
+      timer?.cancel();
+      stop();
+    });
+  }
+
   /// In-flight per-game-id toggle calls, so rapid re-taps don't race.
   final Set<String> _inFlight = <String>{};
 
@@ -80,12 +171,9 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
 
   @override
   Future<List<SavedAnalysis>> build() async {
-    ref.onDispose(() {
-      _inFlight.clear();
-      _tagWriteChains.clear();
-      _toggleOps.clear();
-    });
-    final folder = await ref.watch(likedGamesFolderProvider.future);
+    final folderFuture = ref.watch(likedGamesFolderProvider.future);
+    _listenForAccountChanges(folderFuture);
+    final folder = await folderFuture;
     final all = await _repo.getSavedAnalyses(folderId: folder.id);
     return all;
   }
@@ -112,24 +200,39 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
     // a tag write started while the like is mid-flight can wait for the liked
     // row to be created instead of racing ahead of the optimistic insert.
     final op = Completer<void>();
+    _localMutation++;
     _toggleOps[likeId] = op.future;
 
+    final ownerIdAtTap = ref.read(currentUserProvider)?.id;
+    final lookedLiked = isLiked(likeId);
+    final wasLoaded = state.hasValue && !state.isLoading && !state.hasError;
+    List<SavedAnalysis> removed = const [];
     try {
       final folder = await ref.read(likedGamesFolderProvider.future);
-      final list = List<SavedAnalysis>.from(state.valueOrNull ?? const []);
+      final userId = ref.read(currentUserProvider)?.id;
+      if (userId == null || userId != folder.userId) {
+        throw StateError('My Likes account changed');
+      }
+      if (!wasLoaded) await future;
+      final list = List<SavedAnalysis>.from(state.requireValue);
       final existing = list.firstWhereOrNull((a) => a.sourceGameId == likeId);
 
       if (existing != null) {
-        // OPTIMISTIC unlike
-        list.removeWhere((a) => a.id == existing.id);
+        if (!wasLoaded || !lookedLiked || existing.id.isEmpty) return true;
+        removed = list.where((a) => a.sourceGameId == likeId).toList();
+        list.removeWhere((a) => a.sourceGameId == likeId);
         state = AsyncValue.data(list);
-        await _repo.deleteSavedAnalysis(existing.id);
+        await _repo.deleteGameLike(existing);
+        if (ref.read(currentUserProvider)?.id != ownerIdAtTap) return false;
+        _serverChanged();
         return false;
       }
 
-      final userId = ref.read(currentUserProvider)?.id;
-      if (userId == null) throw Exception('User not authenticated');
+      if (lookedLiked || ref.read(currentUserProvider)?.id != ownerIdAtTap) {
+        return false;
+      }
 
+      ref.read(_pendingGameLikeOwnerProvider(likeId).notifier).state = userId;
       final chessGame = await _resolveChessGame(game);
       // Local placeholder times only. The insert payload omits created_at and
       // updated_at so Postgres `DEFAULT now()` is the authoritative liked-at,
@@ -154,10 +257,14 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
       );
 
       // OPTIMISTIC insert with a placeholder id; reconciled below.
-      list.insert(0, analysis);
-      state = AsyncValue.data(list);
+      if (ref.read(currentUserProvider)?.id != ownerIdAtTap) return false;
+      final current = state.requireValue;
+      if (current.any((row) => row.sourceGameId == likeId)) return true;
+      state = AsyncValue.data([analysis, ...current]);
+      ref.read(_pendingGameLikeOwnerProvider(likeId).notifier).state = null;
 
-      final created = await _repo.createSavedAnalysis(analysis);
+      final created = await _repo.createGameLike(analysis);
+      if (ref.read(currentUserProvider)?.id != ownerIdAtTap) return false;
       final localTags =
           (state.valueOrNull ?? const <SavedAnalysis>[])
               .firstWhereOrNull((a) => a.id.isEmpty && a.sourceGameId == likeId)
@@ -168,9 +275,14 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
               : created;
       final reconciled =
           List<SavedAnalysis>.from(state.valueOrNull ?? const [])
-            ..removeWhere((a) => a.id.isEmpty && a.sourceGameId == likeId)
+            ..removeWhere(
+              (a) =>
+                  (a.id.isEmpty && a.sourceGameId == likeId) ||
+                  a.id == created.id,
+            )
             ..insert(0, displayCreated);
       state = AsyncValue.data(reconciled);
+      _serverChanged();
       try {
         final hook = ref.read(likedGameRecordedHookProvider);
         if (hook != null) await hook(userId: userId);
@@ -182,11 +294,20 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
       return true;
     } catch (e) {
       debugPrint('[LikedGames] toggle failed: $e');
-      // Not an in-place revert: re-read the server so the list reflects what
-      // actually persisted (no phantom optimistic row, no lost real row).
-      await _reload();
+      ref.read(_pendingGameLikeOwnerProvider(likeId).notifier).state = null;
+      final current = state.valueOrNull;
+      if (current != null &&
+          ref.read(currentUserProvider)?.id == ownerIdAtTap) {
+        state = AsyncValue.data([
+          ...removed.where((row) => !current.any((a) => a.id == row.id)),
+          ...current.where((a) => a.id.isNotEmpty || a.sourceGameId != likeId),
+        ]);
+        await _reload();
+      }
       return isLiked(likeId);
     } finally {
+      ref.read(_pendingGameLikeOwnerProvider(likeId).notifier).state = null;
+      _localMutation++;
       _inFlight.remove(likeId);
       if (identical(_toggleOps[likeId], op.future)) {
         _toggleOps.remove(likeId);
@@ -294,11 +415,26 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
   /// reloads and returns `false` on failure so the caller can surface it.
   /// Removing a like is never gated.
   Future<bool> removeAnalysis(SavedAnalysis analysis) async {
+    final op = Completer<void>();
+    _removalOps.add(op.future);
+    _localMutation++;
+    try {
+      return await _removeAnalysis(analysis);
+    } finally {
+      _localMutation++;
+      _removalOps.remove(op.future);
+      op.complete();
+    }
+  }
+
+  Future<bool> _removeAnalysis(SavedAnalysis analysis) async {
     final list = List<SavedAnalysis>.from(state.valueOrNull ?? const [])
       ..removeWhere((a) => a.id == analysis.id);
     state = AsyncValue.data(list);
     try {
-      await _repo.deleteSavedAnalysis(analysis.id);
+      final folder = await ref.read(likedGamesFolderProvider.future);
+      await _repo.deleteSavedAnalysis(analysis.id, folderId: folder.id);
+      _serverChanged();
       return true;
     } catch (e) {
       debugPrint('[LikedGames] removeAnalysis failed: $e');
@@ -316,6 +452,7 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
   /// survives the toggle's reconcile. No-op if the game isn't (or stops being)
   /// liked. Tagging is never gated.
   Future<bool> setTagsForLikeId(String likeId, List<String> tags) {
+    _localMutation++;
     final normalized = _normalizeTags(tags);
     ref.read(likedGamePendingTagsProvider(likeId).notifier).state = normalized;
     _applyOptimisticTags(likeId, normalized);
@@ -430,10 +567,11 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
   }
 
   Future<void> _reload() async {
-    state = await AsyncValue.guard(() async {
+    final next = await AsyncValue.guard(() async {
       final folder = await ref.read(likedGamesFolderProvider.future);
       return _repo.getSavedAnalyses(folderId: folder.id);
     });
+    if (!next.hasError || !state.hasValue) state = next;
   }
 
   Future<void> refresh() => _reload();
@@ -441,6 +579,7 @@ class LikedGamesNotifier extends AsyncNotifier<List<SavedAnalysis>> {
 
 /// Reactive check for whether a specific game is liked (by sourceGameId).
 final isGameLikedProvider = Provider.family<bool, String>((ref, gameId) {
+  if (ref.watch(isGameLikePendingProvider(gameId))) return true;
   final async = ref.watch(likedGamesProvider);
   return async.maybeWhen(
     data: (list) => list.any((a) => a.sourceGameId == gameId),

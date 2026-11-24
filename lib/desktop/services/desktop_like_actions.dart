@@ -26,6 +26,13 @@ Future<bool?> toggleDesktopGameLike({
   // ranking), so a guest or signed-out window signs in first, then the like
   // goes through in the same click. Desktop and the web port share this gate.
   final user = ref.read(currentUserProvider);
+  final listAtPress =
+      user == null || user.isAnonymous ? null : ref.read(likedGamesProvider);
+  final knowsLikes =
+      listAtPress != null &&
+      listAtPress.hasValue &&
+      !listAtPress.isLoading &&
+      !listAtPress.hasError;
   if (user == null || user.isAnonymous) {
     final signedIn = await showDesktopAccountSignIn(
       context,
@@ -50,6 +57,7 @@ Future<bool?> toggleDesktopGameLike({
     }
     return null;
   }
+  if (!context.mounted) return null;
   final notifier = ref.read(likedGamesProvider.notifier);
   final legacyLike =
       legacyLikeId == null
@@ -61,6 +69,8 @@ Future<bool?> toggleDesktopGameLike({
               .firstOrNull;
   final canonicalLiked = notifier.isLiked(likeId);
   final wasLiked = canonicalLiked || legacyLike != null;
+  // An outline pressed during loading or sign-in asked to like this game.
+  if (!knowsLikes && wasLiked) return null;
   var nowLiked =
       canonicalLiked || legacyLike == null
           ? await notifier.toggle(game)

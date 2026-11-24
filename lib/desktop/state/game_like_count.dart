@@ -1,41 +1,95 @@
+import 'package:chessever/desktop/services/desktop_supabase_init.dart';
+import 'package:chessever/providers/auth_state_provider.dart';
+import 'package:chessever/repository/liked_games/like_realtime.dart';
+import 'package:chessever/repository/liked_games/liked_games_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:chessever/desktop/services/desktop_supabase_init.dart';
-import 'package:chessever/providers/auth_state_provider.dart';
-import 'package:chessever/repository/liked_games/liked_games_provider.dart';
+final _likeSessionProvider =
+    Provider<({SupabaseClient client, String userId})?>((ref) {
+      final user = ref.watch(currentUserProvider);
+      if (!DesktopSupabaseInit.isInitialized ||
+          user == null ||
+          user.isAnonymous) {
+        return null;
+      }
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentSession?.user.id;
+      return userId == null ? null : (client: client, userId: userId);
+    });
 
-/// A game's community like count, keyed by `GamesTourModel.likeId`, straight
-/// from the server (`public.game_like_count`, the same like definition the
-/// Likes ranking counts). Same read as the phone's `gameLikeCountProvider`.
-///
-/// Null when unknown (signed out, offline, any error): the board's Like
-/// button then shows a plain heart rather than a wrong number. Invalidate it
-/// after a like write lands so the viewer's own like is counted.
-final desktopGameLikeCountProvider = FutureProvider.autoDispose.family<
-  int?,
+final _likeChangesProvider = StreamProvider.autoDispose.family<int, String>((
+  ref,
+  likeId,
+) {
+  final client = ref.watch(_likeSessionProvider)?.client;
+  if (client == null || likeId.isEmpty) return const Stream.empty();
+  return gameLikeChanges(client, likeId);
+});
+
+typedef _LikeSummary = ({int count, bool? liked});
+
+final _likeSummaryProvider = FutureProvider.autoDispose.family<
+  _LikeSummary?,
   String
 >((ref, likeId) async {
-  final user = ref.watch(currentUserProvider);
-  if (user == null || user.isAnonymous) return null;
-  // Likes can also change in a card menu or My Likes while this board stays open.
-  ref.watch(likedGamesProvider);
-  final id = likeId.trim();
-  if (id.isEmpty || !DesktopSupabaseInit.isInitialized) return null;
-  final client = Supabase.instance.client;
-  if (client.auth.currentSession == null) return null;
+  ref.watch(_likeChangesProvider(likeId).select((value) => value.valueOrNull));
+  final client = ref.watch(_likeSessionProvider)?.client;
+  if (client == null || likeId.isEmpty) return null;
   try {
-    final result = await client.rpc(
-      'game_like_count',
-      params: {'p_source_game_id': id},
-    );
-    return parseDesktopGameLikeCount(result);
+    Object? raw;
+    try {
+      raw = await client.rpc(
+        'game_like_summary',
+        params: {'p_source_game_id': likeId},
+      );
+    } on PostgrestException catch (error) {
+      if (error.code != 'PGRST202') rethrow;
+      // Keep the old count during a staggered rollout.
+      final count = parseDesktopGameLikeCount(
+        await client.rpc(
+          'game_like_count',
+          params: {'p_source_game_id': likeId},
+        ),
+      );
+      return count == null ? null : (count: count, liked: null);
+    }
+    if (raw is! Map || raw['liked'] is! bool) return null;
+    final count = parseDesktopGameLikeCount(raw['count']);
+    return count == null ? null : (count: count, liked: raw['liked'] as bool);
   } catch (error) {
-    debugPrint('[LikeCount] $id failed: $error');
+    debugPrint('[LikeCount] $likeId failed: $error');
     return null;
   }
 });
+
+/// The server's count of other accounts plus this account's local heart.
+final desktopGameLikeCountProvider = FutureProvider.autoDispose
+    .family<int?, String>((ref, likeId) async {
+      final id = likeId.trim();
+      if (ref.watch(_likeSessionProvider) == null || id.isEmpty) {
+        return null;
+      }
+      final pending = ref.watch(isGameLikePendingProvider(id));
+      final local = ref.watch(
+        likedGamesProvider.select(
+          (value) => value.valueOrNull?.any((row) => row.sourceGameId == id),
+        ),
+      );
+      final summary = ref.watch(_likeSummaryProvider(id));
+      final snapshot =
+          summary.hasValue
+              ? summary.valueOrNull
+              : await ref.watch(_likeSummaryProvider(id).future);
+      if (snapshot == null) return null;
+      final serverLiked = snapshot.liked;
+      if (serverLiked == null || (local == null && !pending)) {
+        return snapshot.count;
+      }
+      final others = snapshot.count - (serverLiked ? 1 : 0);
+      return others + (pending || local == true ? 1 : 0);
+    });
 
 /// The RPC answers a bare bigint, which PostgREST may send as a number or a
 /// numeric string.

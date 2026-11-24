@@ -83,7 +83,7 @@ class _Repository extends LibraryRepository {
   }
 
   @override
-  Future<SavedAnalysis> createSavedAnalysis(SavedAnalysis analysis) async {
+  Future<SavedAnalysis> createGameLike(SavedAnalysis analysis) async {
     insertPayloads.add(analysis.toSupabaseInsert());
     final gate = createGate;
     if (gate != null) await gate.future;
@@ -100,8 +100,22 @@ class _Repository extends LibraryRepository {
   }
 
   @override
-  Future<void> deleteSavedAnalysis(String analysisId) async {
-    server.removeWhere((a) => a.id == analysisId);
+  Future<void> deleteGameLike(SavedAnalysis analysis) async {
+    server.removeWhere(
+      (row) =>
+          row.folderId == analysis.folderId &&
+          row.sourceGameId == analysis.sourceGameId,
+    );
+  }
+
+  @override
+  Future<void> deleteSavedAnalysis(
+    String analysisId, {
+    String? folderId,
+  }) async {
+    server.removeWhere(
+      (a) => a.id == analysisId && (folderId == null || a.folderId == folderId),
+    );
   }
 
   @override
