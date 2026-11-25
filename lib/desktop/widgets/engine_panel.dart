@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:chessever/desktop/widgets/cut_item_fade.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
+import 'package:chessever/desktop/utils/text_line_metrics.dart';
 import 'package:chessever/desktop/state/engine_formatted_display.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -27,8 +29,8 @@ import 'package:chessever/desktop/services/engine/game_report_request_coordinato
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
 import 'package:chessever/desktop/services/engine/server_game_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
-import 'package:chessever/desktop/state/toby_panel.dart'
-    show tobyPanelHeight, tobyPanelSlotsFor;
+import 'package:chessever/desktop/services/toby/toby_label.dart'
+    show kTobyFeatureLabel;
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -40,7 +42,7 @@ import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart'
-    show TobyPanelSlots;
+    show TobyViewTabs, WhatTobyThinks;
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -56,41 +58,6 @@ const String desktopEngineReportSplitStorageKey =
 
 @visibleForTesting
 const double desktopEngineReportGutterThickness = 10;
-
-/// The engine header while the engine runs: its tallest piece, the 22 px
-/// score readout (31 px at the theme's body line height, taller than the
-/// 28 px controls), with 12 px above and below.
-const double desktopEngineHeaderHeight = 55;
-
-/// One collapsed Stockfish row: its tallest line (the 13 px bold score, 19 px
-/// at the theme's body line height), 6 px of padding above and below, and its
-/// 1 px border. A shorter line only leaves room below Toby.
-const double desktopEnginePvRowHeight = 33;
-const double _pvRowGap = 6;
-const double _pvListBottomPadding = 12;
-
-/// The Stockfish list with [rows] collapsed rows, gaps and bottom padding.
-double desktopEngineLinesHeight(int rows) =>
-    rows <= 0
-        ? 0
-        : rows * desktopEnginePvRowHeight +
-            (rows - 1) * _pvRowGap +
-            _pvListBottomPadding;
-
-/// The least the game report gets beside the live engine or Toby.
-const double _reportMinimumHeight = 140;
-
-/// The engine pane's comfortable height in the right rail: the header, up
-/// to three of the [lines] Stockfish lines, and Toby at [tobyHeight] (its
-/// full height when expanded). It follows the settings and Toby's state,
-/// never the position, so stepping through a game does not move the split.
-double desktopEnginePaneComfortableSize({
-  required int lines,
-  required double tobyHeight,
-}) =>
-    desktopEngineHeaderHeight +
-    desktopEngineLinesHeight(math.min(lines, 3)) +
-    tobyHeight;
 
 /// Live engine evaluation panel for the active board position.
 ///
@@ -131,7 +98,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.pictureInPictureSelected = false,
     this.headerTrailing,
     this.toby,
-    this.tobyExpanded = false,
+    this.tobyTabSelected = false,
   });
 
   final String fen;
@@ -197,15 +164,18 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// Optional action clustered with the engine gear (board more-actions).
   final Widget? headerTrailing;
 
-  /// The "What Toby Thinks" panel. It sits directly under the Stockfish
-  /// block (lines or status), never under the report; with the engine off it
-  /// sits under the header. Built outside this panel's engine-tick builder.
-  /// This panel tells it how many candidate slots fit ([TobyPanelSlots]).
+  /// The "What Toby Thinks" view. With it, the engine's name in the header
+  /// becomes two tabs ([TobyViewTabs]), "Stockfish" and "What Toby Thinks";
+  /// without it (picture in picture, other hosts) the header is unchanged.
+  /// Built outside this panel's engine-tick builder, so a Stockfish update
+  /// never rebuilds it.
   final Widget? toby;
 
-  /// Whether [toby] is expanded, which with the room here decides its
-  /// height.
-  final bool tobyExpanded;
+  /// Whether the reader chose the What Toby Thinks tab. Its view then takes the list area in place of Stockfish's lines, with
+  /// the engine on or off, and the live-engine half of the split when the
+  /// report is open. The engine keeps analysing: its score stays in the
+  /// header.
+  final bool tobyTabSelected;
 
   /// Test seam for driving report lifecycle transitions without spawning a
   /// real Stockfish process. The controller must remain stable for this
@@ -221,9 +191,85 @@ class EnginePanel extends ConsumerStatefulWidget {
   @visibleForTesting
   final Future<List<String>> Function(Map<String, String>)? pvSanFormatter;
 
+  /// The least width at which the header holds its controls and Toby's
+  /// tabs, whole, at [kEngineHeaderTabsMinScale] of their size or more.
+  /// [trailing] and [pictureInPicture] say whether the host adds the
+  /// more-actions button ([headerTrailing]) and the picture-in-picture
+  /// control ([onPictureInPicture]). The board's right rail keeps at least
+  /// this width, so the labels never shrink past that floor.
+  static double headerMinWidth(
+    BuildContext context, {
+    required bool trailing,
+    required bool pictureInPicture,
+  }) =>
+      _kHeaderPadding.horizontal +
+      (trailing ? _kHeaderControl + _kHeaderTrailingGap : 0) +
+      _kHeaderControl +
+      _kHeaderNameGap -
+      TobyViewTabs.labelInset +
+      TobyViewTabs.widthOf(context, compact: true) * kEngineHeaderTabsMinScale +
+      _kHeaderPowerGap +
+      _kHeaderControl +
+      _kHeaderEndGap +
+      (pictureInPicture ? _kHeaderControl + _kHeaderEndGap : 0);
+
+  /// The least height at which the pane still reads: its header closed up,
+  /// one whole line, and on the What Toby Thinks tab Toby's attribution
+  /// under it. The board's right rail keeps at least this for the pane
+  /// whenever it can, before the notation under it.
+  static double leastHeight(BuildContext context) =>
+      _kCompactHeaderPadding.vertical +
+      math.max(_kHeaderControl, _EngineScoreDepthReadout.lineHeight(context)) +
+      WhatTobyThinks.leastHeight(context);
+
+  /// The height the board's right rail gives this pane, [width] wide,
+  /// whenever the notation under it can spare it; null for none.
+  ///
+  /// On the What Toby Thinks tab: the header, Toby's reading line, three
+  /// whole rows and the attribution ([WhatTobyThinks.comfortableHeight]),
+  /// with the game report's least share under them while the report is
+  /// open. On the Stockfish tab: none, the rail's split alone decides.
+  /// It changes with the tab, never with the position, so moving through a
+  /// game never resizes the rail.
+  double? railComfortableHeight(BuildContext context, {required double width}) {
+    if (toby == null || !tobyTabSelected) return null;
+    return _kHeaderPadding.vertical +
+        math.max(
+          _kHeaderControl,
+          _EngineScoreDepthReadout.lineHeight(context),
+        ) +
+        WhatTobyThinks.comfortableHeight(context, width: width) +
+        (reportVisible
+            ? desktopEngineReportGutterThickness + _kReportMinHeight
+            : 0);
+  }
+
   @override
   ConsumerState<EnginePanel> createState() => _EnginePanelState();
 }
+
+/// The least share of their size Toby's tabs are drawn at in the engine
+/// header, wherever the pane is at least [EnginePanel.headerMinWidth] wide.
+const double kEngineHeaderTabsMinScale = 0.9;
+
+/// The header's padding, its 28 px controls, and the gaps between them.
+const EdgeInsets _kHeaderPadding = EdgeInsets.fromLTRB(16, 12, 8, 12);
+const double _kHeaderControl = 28;
+const double _kHeaderTrailingGap = 4;
+const double _kHeaderNameGap = 8;
+const double _kHeaderPowerGap = 6;
+const double _kHeaderEndGap = 4;
+
+/// A pane shorter than the right rail's least engine pane (120 px, which
+/// only a rail too short for every pane's minimum hands out) closes its
+/// header up, so the lines keep room for one whole line.
+const double _kCompactHeaderBelow = 119;
+const EdgeInsets _kCompactHeaderPadding = EdgeInsets.fromLTRB(16, 6, 8, 6);
+
+/// The least heights of the list area and the game report while both are
+/// open, one over the other.
+const double _kReportListMinHeight = 80;
+const double _kReportMinHeight = 140;
 
 class _EnginePanelState extends ConsumerState<EnginePanel> {
   late final GameAnalysisReportController _reportController;
@@ -245,6 +291,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   GameReportRequestResult? _requestNotice;
   bool _requesting = false;
   bool Function()? _reportOwnerIsCurrent;
+
+  /// Keeps the Toby view's state (focus, the what-if menu) as it moves
+  /// between the list area and the live half of the report split.
+  final GlobalKey _tobyKey = GlobalKey(debugLabel: 'Toby view');
 
   @override
   void initState() {
@@ -523,14 +573,13 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     );
     // Built once per panel build, outside the engine-tick builder below, so a
     // Stockfish update reuses this exact widget and never rebuilds Toby.
-    final tobySection =
-        widget.toby == null ? null : RepaintBoundary(child: widget.toby);
-    final tobyExpanded = widget.tobyExpanded;
-    final engineLines =
-        (settings ?? const EngineSettings()).multiPvForStockfish();
-    // Two Stockfish lines (or as many as there are) always stay in view
-    // beside Toby; it shows fewer candidate slots before taking them.
-    final linesFloor = desktopEngineLinesHeight(math.min(engineLines, 2));
+    final tobyView =
+        widget.toby != null && widget.tobyTabSelected
+            ? KeyedSubtree(
+              key: _tobyKey,
+              child: RepaintBoundary(child: widget.toby),
+            )
+            : null;
     // Engine ticks do not rebuild the report or schedule automatic analysis.
     return ListenableBuilder(
       listenable: _display,
@@ -574,7 +623,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                 widget.onPlayUci?.call(uci);
               }
 
-              final linesOrStatus =
+              final engineContent =
                   liveAnalysisPausedForReport
                       ? const _EngineStatusMessage(
                         'Live analysis paused while the game report runs.',
@@ -602,29 +651,17 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                             ? 'Select a position to start analysis.'
                             : 'Live analysis resumes when this tab is active.',
                       );
-              final engineContent =
-                  tobySection == null
-                      ? linesOrStatus
-                      : _WithToby(
-                        content: linesOrStatus,
-                        toby: tobySection,
-                        tobyExpanded: tobyExpanded,
-                        contentFloor: linesFloor,
-                      );
-              final reportBody =
-                  tobySection == null || engineOn
-                      ? reportContent
-                      : _WithToby(
-                        content: reportContent,
-                        toby: tobySection,
-                        tobyExpanded: tobyExpanded,
-                        contentFloor: _reportMinimumHeight,
-                        tobyFirst: true,
-                        fillContent: true,
-                      );
 
-              final Widget? body =
-                  engineOn && reportOn
+              // The list area shows the chosen tab: Toby's view, or the live
+              // Stockfish lines while the engine is on.
+              final Widget? listContent =
+                  tobyView ?? (engineOn ? engineContent : null);
+
+              // [width] is the pane's: with the report open under Toby's
+              // view, the view grows toward its three whole rows from the
+              // report's share, as the pane does from the notation's.
+              Widget? bodyFor(double width) =>
+                  listContent != null && reportOn
                       ? ResizableSplitView(
                         axis: Axis.vertical,
                         storageKey: desktopEngineReportSplitStorageKey,
@@ -632,24 +669,24 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                         gutterColor: kPrimaryColor,
                         children: [
                           SplitChild(
-                            minSize: 80,
+                            minSize: _kReportListMinHeight,
                             initialWeight: 0.40,
-                            label: 'Live engine',
+                            label:
+                                tobyView != null
+                                    ? kTobyFeatureLabel
+                                    : 'Live engine',
                             dismissible: false,
-                            // Up to three Stockfish rows and Toby before the
-                            // report gives up room; the header is outside
-                            // this split.
                             comfortableSize:
-                                tobySection == null
-                                    ? null
-                                    : desktopEngineLinesHeight(
-                                          math.min(engineLines, 3),
-                                        ) +
-                                        tobyPanelHeight(expanded: tobyExpanded),
-                            child: engineContent,
+                                tobyView != null
+                                    ? WhatTobyThinks.comfortableHeight(
+                                      context,
+                                      width: width,
+                                    )
+                                    : null,
+                            child: listContent,
                           ),
                           SplitChild(
-                            minSize: _reportMinimumHeight,
+                            minSize: _kReportMinHeight,
                             initialWeight: 0.60,
                             label: 'Game report',
                             dismissible: false,
@@ -657,40 +694,28 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                           ),
                         ],
                       )
-                      : engineOn
-                      ? engineContent
-                      : reportOn
-                      ? reportBody
-                      : null;
+                      : listContent ?? (reportOn ? reportContent : null);
 
               // Engine lines and the report remain independently toggled; when both
               // are visible, either can be resized without moving the notation boundary.
               return Container(
                 color: kBlack2Color,
-                child: Column(
-                  // With nothing below the header but Toby, the panel is as
-                  // tall as its content: the rail caps it so notation keeps
-                  // its floor, and Toby scrolls inside that cap.
-                  mainAxisSize:
-                      body == null ? MainAxisSize.min : MainAxisSize.max,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildHeader(
-                      engineOn: engineOn,
-                      engineActive: engineActive,
-                      reading: reading,
-                    ),
-                    if (body != null)
-                      Expanded(child: body)
-                    else if (tobySection != null)
-                      Flexible(
-                        child: _WithToby(
-                          content: const SizedBox.shrink(),
-                          toby: tobySection,
-                          tobyExpanded: tobyExpanded,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final body = bodyFor(constraints.maxWidth);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildHeader(
+                          engineOn: engineOn,
+                          engineActive: engineActive,
+                          reading: reading,
+                          compact: constraints.maxHeight < _kCompactHeaderBelow,
                         ),
-                      ),
-                  ],
+                        if (body != null) Expanded(child: body),
+                      ],
+                    );
+                  },
                 ),
               );
             },
@@ -701,54 +726,77 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   /// Persistent header carrying the engine toggle, optional PiP control,
   /// engine gear, and optional trailing chrome. The engine readout collapses
   /// away when the engine is off so the report can own the panel alone.
+  ///
+  /// With Toby, the engine's name becomes the two tabs, in the same place
+  /// and the same row. The tabs are never cut: in a narrow pane the readout
+  /// yields first, the depth and then the score (the eval bar beside the
+  /// board still shows it); the controls stay.
   Widget _buildHeader({
     required bool engineOn,
     required bool engineActive,
     required BoardEvalState reading,
+    bool compact = false,
   }) {
+    final withToby = widget.toby != null;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      padding: compact ? _kCompactHeaderPadding : _kHeaderPadding,
       child: Row(
         children: [
           if (widget.headerTrailing != null) ...[
-            SizedBox.square(dimension: 28, child: widget.headerTrailing!),
-            const SizedBox(width: 4),
-          ],
-          const EngineSettingsPopover(dimension: 28),
-          const SizedBox(width: 8),
-          Expanded(
-            // A clipped "St…" reads as broken; in a narrow rail the score and
-            // controls say enough, so the name steps aside instead.
-            child: LayoutBuilder(
-              builder:
-                  (context, constraints) =>
-                      constraints.maxWidth < 64
-                          ? const SizedBox.shrink()
-                          : Text(
-                            'Stockfish',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: engineOn ? kWhiteColor : kWhiteColor70,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+            SizedBox.square(
+              dimension: _kHeaderControl,
+              child: widget.headerTrailing!,
             ),
+            const SizedBox(width: _kHeaderTrailingGap),
+          ],
+          const EngineSettingsPopover(dimension: _kHeaderControl),
+          // The first tab's label lands where the engine's name stood.
+          SizedBox(
+            width:
+                withToby
+                    ? _kHeaderNameGap - TobyViewTabs.labelInset
+                    : _kHeaderNameGap,
           ),
-          if (engineActive) ...[
+          Expanded(
+            child:
+                withToby
+                    ? _TabsAndReadout(reading: engineActive ? reading : null)
+                    // A clipped "St…" reads as broken; in a narrow rail the
+                    // score and controls say enough, so the name steps aside
+                    // instead.
+                    : LayoutBuilder(
+                      builder:
+                          (context, constraints) =>
+                              constraints.maxWidth < 64
+                                  ? const SizedBox.shrink()
+                                  : Text(
+                                    'Stockfish',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          engineOn
+                                              ? kWhiteColor
+                                              : kWhiteColor70,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                    ),
+          ),
+          if (!withToby && engineActive) ...[
             const SizedBox(width: 8),
             _EngineScoreDepthReadout(snapshot: reading),
           ],
-          const SizedBox(width: 6),
+          const SizedBox(width: _kHeaderPowerGap),
           _EngineQuickToggle(enabled: engineOn),
-          const SizedBox(width: 4),
+          const SizedBox(width: _kHeaderEndGap),
           if (widget.onPictureInPicture != null) ...[
             _EnginePictureInPictureButton(
               selected: widget.pictureInPictureSelected,
               onPress: widget.onPictureInPicture!,
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: _kHeaderEndGap),
           ],
         ],
       ),
@@ -756,10 +804,125 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   }
 }
 
+/// The header's middle with Toby: the two tabs, and the engine's readout at
+/// the end. The tabs always keep their whole labels. As room runs out the
+/// depth goes first; then the labels move closer together, which keeps the
+/// score; then the score goes (the eval bar beside the board still shows
+/// it). While the engine shows a reading the row keeps the score's height
+/// either way, so the lines under the header never jump when the score
+/// comes and goes.
+///
+/// Only a pane narrower than [EnginePanel.headerMinWidth] (a split that
+/// cannot honour its minimums) scales the labels below
+/// [kEngineHeaderTabsMinScale]; they still shrink whole rather than clip.
+class _TabsAndReadout extends StatelessWidget {
+  const _TabsAndReadout({required this.reading});
+
+  /// The engine's reading, or null when it shows none (engine off, paused).
+  final BoardEvalState? reading;
+
+  /// Between the tabs and the readout, and inside the readout.
+  static const double _gap = 8;
+
+  @override
+  Widget build(BuildContext context) {
+    final reading = this.reading;
+    final score =
+        reading == null
+            ? null
+            : _EngineScoreDepthReadout.scoreSize(context, reading);
+    final depth =
+        reading == null
+            ? 0.0
+            : _DepthChip.widthOf(
+              context,
+              depth: reading.depth,
+              isEvaluating: reading.isEvaluating,
+            );
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: score?.height ?? 0),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final room = constraints.maxWidth;
+          final full = TobyViewTabs.widthOf(context);
+          final compact = TobyViewTabs.widthOf(context, compact: true);
+          bool fits(
+            double tabs, {
+            bool withScore = false,
+            bool withDepth = false,
+          }) =>
+              tabs +
+                  (withScore ? _gap + score!.width : 0) +
+                  (withDepth ? _gap + depth : 0) <=
+              room;
+
+          // The labels close up as soon as the tabs and the score no longer
+          // fit side by side, and stay close as the pane narrows further.
+          final compactTabs = !fits(full, withScore: score != null);
+          final tabsWidth = compactTabs ? compact : full;
+          final showScore = score != null && fits(tabsWidth, withScore: true);
+          final showDepth =
+              showScore &&
+              depth > 0 &&
+              fits(tabsWidth, withScore: true, withDepth: true);
+          final Widget tabs =
+              compactTabs && compact > room
+                  ? Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: const TobyViewTabs(compact: true),
+                    ),
+                  )
+                  : TobyViewTabs(compact: compactTabs);
+          return Row(
+            children: [
+              tabs,
+              if (showScore) ...[
+                const Spacer(),
+                _EngineScoreDepthReadout(
+                  snapshot: reading!,
+                  showDepth: showDepth,
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _EngineScoreDepthReadout extends StatelessWidget {
-  const _EngineScoreDepthReadout({required this.snapshot});
+  const _EngineScoreDepthReadout({
+    required this.snapshot,
+    this.showDepth = true,
+  });
 
   final BoardEvalState snapshot;
+
+  /// Whether the depth shows beside the score. A narrow header with Toby's
+  /// tabs lets it go first.
+  final bool showDepth;
+
+  static const TextStyle _scoreStyle = TextStyle(
+    color: kPrimaryColor,
+    fontSize: 22,
+    fontWeight: FontWeight.w700,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+
+  /// The score's size for [snapshot], laid out as it is here.
+  static Size scoreSize(BuildContext context, BoardEvalState snapshot) =>
+      desktopTextLineSize(
+        context,
+        _formatScore(snapshot.evaluation, snapshot.mate),
+        _scoreStyle,
+      );
+
+  /// The score's line height, whatever the score.
+  static double lineHeight(BuildContext context) =>
+      desktopTextLineSize(context, '+0.00', _scoreStyle).height;
 
   @override
   Widget build(BuildContext context) {
@@ -768,15 +931,17 @@ class _EngineScoreDepthReadout extends StatelessWidget {
       children: [
         Text(
           _formatScore(snapshot.evaluation, snapshot.mate),
-          style: const TextStyle(
-            color: kPrimaryColor,
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
+          maxLines: 1,
+          softWrap: false,
+          style: _scoreStyle,
         ),
-        const SizedBox(width: 8),
-        _DepthChip(depth: snapshot.depth, isEvaluating: snapshot.isEvaluating),
+        if (showDepth) ...[
+          const SizedBox(width: 8),
+          _DepthChip(
+            depth: snapshot.depth,
+            isEvaluating: snapshot.isEvaluating,
+          ),
+        ],
       ],
     );
   }
@@ -823,6 +988,9 @@ class _EngineLinesSnapshot {
 }
 
 const double _enginePlayedWidth = 52;
+
+/// Between two engine lines.
+const double _kLineGap = 6;
 
 class _EngineLinesSurface extends StatefulWidget {
   const _EngineLinesSurface({
@@ -891,7 +1059,6 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
         padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
         child: Align(
           alignment: Alignment.topLeft,
-          heightFactor: 1,
           child: Text(
             snapshot.isEvaluating
                 ? 'Searching…'
@@ -901,10 +1068,7 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
         ),
       );
     }
-    // As tall as the lines (Toby follows the last one directly), scrolling
-    // only when they do not fit.
     return Column(
-      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (widget.played != null)
@@ -916,20 +1080,34 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
               style: TextStyle(color: kWhiteColor70, fontSize: 12),
             ),
           ),
-        Flexible(
-          child: DesktopScrollHost(
-            child: ListView.separated(
-              shrinkWrap: true,
-              physics: const DesktopScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(
-                16,
-                0,
-                16,
-                _pvListBottomPadding,
+        Expanded(
+          // A line the pane's bottom edge cuts dissolves into the pane, as
+          // in the What Toby Thinks tab, instead of losing its glyphs'
+          // lower half to the edge.
+          child: CutItemFade(
+            child: DesktopScrollHost(
+              child: ListView(
+                physics: const DesktopScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                children: [
+                  CutFadeItems(
+                    gap: _kLineGap,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var index = 0; index < pvs.length; index++)
+                          Padding(
+                            padding: EdgeInsets.only(
+                              bottom: index == pvs.length - 1 ? 0 : _kLineGap,
+                            ),
+                            // Each line repaints on its own engine ticks.
+                            child: RepaintBoundary(child: _row(index)),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              itemCount: pvs.length,
-              separatorBuilder: (_, __) => const SizedBox(height: _pvRowGap),
-              itemBuilder: (context, index) => _row(index),
             ),
           ),
         ),
@@ -2362,29 +2540,52 @@ class _DepthChip extends StatelessWidget {
   final int depth;
   final bool isEvaluating;
 
+  static const double _height = 28;
+  static const double _minWidth = 28;
+  static const double _padding = 6;
+  static const TextStyle _style = TextStyle(
+    fontSize: 10,
+    fontWeight: FontWeight.w700,
+    letterSpacing: 0.4,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+
+  static String? _label(int depth, bool isEvaluating) {
+    if (depth <= 0 && !isEvaluating) return null;
+    final visible = depth.clamp(0, 99).toInt();
+    return visible > 0 ? 'd$visible' : '…';
+  }
+
+  /// The chip's width, or 0 when it shows nothing.
+  static double widthOf(
+    BuildContext context, {
+    required int depth,
+    required bool isEvaluating,
+  }) {
+    final label = _label(depth, isEvaluating);
+    if (label == null) return 0;
+    final width = desktopTextLineWidth(context, label, _style) + 2 * _padding;
+    return width < _minWidth ? _minWidth : width;
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (depth <= 0 && !isEvaluating) {
+    final label = _label(depth, isEvaluating);
+    if (label == null) {
       return const SizedBox.shrink();
     }
-    final visible = depth.clamp(0, 99).toInt();
-    final label = visible > 0 ? 'd$visible' : '…';
     // Web unboxed readout: no chip edge or fill, just the depth in the row's
     // quiet ink. Kept at 28px so the header never shifts when it appears.
     return Container(
-      height: 28,
-      constraints: const BoxConstraints(minWidth: 28),
+      height: _height,
+      constraints: const BoxConstraints(minWidth: _minWidth),
       alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
+      padding: const EdgeInsets.symmetric(horizontal: _padding),
       child: Text(
         label,
-        style: TextStyle(
+        style: _style.copyWith(
           // Still a step below the score beside it.
           color: isEvaluating ? kWhiteColor70 : kLightGreyColor,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.4,
-          fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
     );
@@ -2463,70 +2664,6 @@ class _EngineQuickToggle extends ConsumerWidget {
   }
 }
 
-/// [content] (the Stockfish block, or the report with the engine off) and
-/// the Toby panel, stacked.
-///
-/// The content is as tall as it needs (the report, [fillContent], takes all
-/// the room left), and Toby follows it directly; room left over goes below
-/// Toby. Toby shows fewer candidate slots before it takes [contentFloor]
-/// from the content, and only when even that does not fit do the two scroll
-/// as one, so neither is ever clipped. The tree is the same either way, so
-/// Toby keeps its state.
-class _WithToby extends StatelessWidget {
-  const _WithToby({
-    required this.content,
-    required this.toby,
-    required this.tobyExpanded,
-    this.contentFloor = 0,
-    this.tobyFirst = false,
-    this.fillContent = false,
-  });
-
-  final Widget content;
-  final Widget toby;
-  final bool tobyExpanded;
-  final double contentFloor;
-  final bool tobyFirst;
-  final bool fillContent;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final room = constraints.maxHeight;
-        final slots = tobyPanelSlotsFor(room, reserved: contentFloor);
-        final tobyHeight = tobyPanelHeight(
-          expanded: tobyExpanded,
-          slots: slots,
-        );
-        final contentRoom = math.max(contentFloor, room - tobyHeight);
-        final fits = contentRoom + tobyHeight <= room + 0.5;
-        final contentBox =
-            fillContent
-                ? SizedBox(height: contentRoom, child: content)
-                : ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: contentRoom),
-                  child: content,
-                );
-        final tobyBox = SizedBox(
-          height: tobyHeight,
-          child: TobyPanelSlots(slots: slots, child: toby),
-        );
-        return SingleChildScrollView(
-          physics:
-              fits
-                  ? const NeverScrollableScrollPhysics()
-                  : const DesktopScrollPhysics(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: tobyFirst ? [tobyBox, contentBox] : [contentBox, tobyBox],
-          ),
-        );
-      },
-    );
-  }
-}
-
 class _EngineStatusMessage extends StatelessWidget {
   const _EngineStatusMessage(this.message);
 
@@ -2534,23 +2671,13 @@ class _EngineStatusMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
+    return Container(
       color: kBlack2Color,
-      child: Align(
-        alignment: Alignment.topLeft,
-        // As tall as the message, so Toby follows it directly.
-        heightFactor: 1,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            message,
-            style: const TextStyle(
-              color: kWhiteColor70,
-              fontSize: 12,
-              height: 1.4,
-            ),
-          ),
-        ),
+      padding: const EdgeInsets.all(16),
+      alignment: Alignment.topLeft,
+      child: Text(
+        message,
+        style: const TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
       ),
     );
   }

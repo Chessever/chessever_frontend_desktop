@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
-import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/services/toby/toby_access.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -102,23 +101,13 @@ TobyQuery _query(int plies, {String session = _session}) => TobyQuery(
   session: session,
 );
 
-const _premium = DesktopAccessDecision(
-  DesktopAccess.allowed,
-  DesktopAccessReason.allowedPremium,
-);
-const _free = DesktopAccessDecision(
-  DesktopAccess.premiumRequired,
-  DesktopAccessReason.premiumTobyPrediction,
-);
-
-ProviderContainer _container(
-  _FakeGamebase repo, {
-  DesktopAccessDecision access = _premium,
-}) {
+/// [premium]: whether the client believes the reader has Premium. It gates
+/// nothing; it only shapes what a refusal from Gamebase leads to.
+ProviderContainer _container(_FakeGamebase repo, {bool premium = true}) {
   final container = ProviderContainer(
     overrides: [
       gamebaseRepositoryProvider.overrideWithValue(repo),
-      tobyPredictionAccessProvider.overrideWithValue(access),
+      tobyReaderHasPremiumProvider.overrideWithValue(premium),
     ],
   );
   addTearDown(container.dispose);
@@ -306,24 +295,49 @@ void main() {
       container.dispose();
     });
 
-    testWidgets('a refusal the app agrees with is not re-checked', (
-      tester,
-    ) async {
+    testWidgets('a Premium refusal for a reader without Premium is not '
+        're-checked: the view offers the upgrade', (tester) async {
       final repo = _FakeGamebase(
         (_, _) => Future.delayed(
           const Duration(milliseconds: 10),
-          () => _reply(401, {'error': 'unauthorized'}),
+          () => _reply(403, {'error': 'premium_required'}),
         ),
       );
-      final container = _container(repo, access: _free);
+      final container = _container(repo, premium: false);
       final provider = tobyReadingProvider(_query(5));
       container.listen(provider, (_, _) {});
       await tester.pump(const Duration(milliseconds: 180));
       await tester.pump(const Duration(seconds: 30));
 
       expect(repo.calls, hasLength(1));
-      expect(container.read(provider).status, TobyStatus.premiumUnconfirmed);
+      expect(container.read(provider).status, TobyStatus.premiumRequired);
+
+      // After an upgrade the view asks again.
+      container.read(provider.notifier).retry();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(repo.calls, hasLength(2));
       container.dispose();
+    });
+
+    testWidgets('an account refusal asks for sign-in, with no re-check, '
+        'whatever the membership', (tester) async {
+      for (final premium in [false, true]) {
+        final repo = _FakeGamebase(
+          (_, _) => Future.delayed(
+            const Duration(milliseconds: 10),
+            () => _reply(401, {'error': 'unauthorized'}),
+          ),
+        );
+        final container = _container(repo, premium: premium);
+        final provider = tobyReadingProvider(_query(5));
+        container.listen(provider, (_, _) {});
+        await tester.pump(const Duration(milliseconds: 180));
+        await tester.pump(const Duration(seconds: 30));
+
+        expect(repo.calls, hasLength(1));
+        expect(container.read(provider).status, TobyStatus.signInRequired);
+        container.dispose();
+      }
     });
 
     testWidgets('a revisited position is answered from memory', (tester) async {
@@ -825,9 +839,22 @@ void main() {
           const Duration(seconds: 3),
         ),
       );
-      for (final status in [401, 403]) {
-        expect(interpretTobyReply(_reply(status)), isA<TobyReplyDenied>());
-      }
+      expect(
+        interpretTobyReply(_reply(401, {'error': 'unauthorized'})),
+        isA<TobyReplyDenied>().having((o) => o.signIn, 'signIn', isTrue),
+      );
+      expect(
+        interpretTobyReply(_reply(403, {'error': 'premium_required'})),
+        isA<TobyReplyDenied>().having((o) => o.signIn, 'signIn', isFalse),
+      );
+      expect(
+        interpretTobyReply(_reply(403, {'error': 'unauthorized'})),
+        isA<TobyReplyDenied>().having((o) => o.signIn, 'signIn', isTrue),
+      );
+      expect(
+        interpretTobyReply(_reply(403)),
+        isA<TobyReplyDenied>().having((o) => o.signIn, 'signIn', isFalse),
+      );
       for (final status in [429, 502, 503, 504]) {
         expect(
           interpretTobyReply(_reply(status)),

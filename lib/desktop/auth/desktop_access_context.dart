@@ -55,8 +55,8 @@ enum DesktopFeature {
   /// another is Premium.
   boardSplit,
 
-  /// Toby's prediction of the next move in the Board engine panel. Premium
-  /// on every edition; the panel stays visible, and opening it asks.
+  /// Toby's prediction of the next move in the Board engine panel. Free on
+  /// every edition; Gamebase decides who may read it.
   tobyPrediction,
 }
 

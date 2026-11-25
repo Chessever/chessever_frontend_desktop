@@ -20,9 +20,6 @@ class DesktopTooltip extends StatelessWidget {
     this.hoverEnterDuration = const Duration(milliseconds: 350),
     this.tipAnchor = Alignment.bottomCenter,
     this.childAnchor = Alignment.topCenter,
-    this.shift = FPortalShift.flip,
-    this.style,
-    this.tipBuilder,
   });
 
   final String message;
@@ -30,15 +27,6 @@ class DesktopTooltip extends StatelessWidget {
   final Duration hoverEnterDuration;
   final AlignmentGeometry tipAnchor;
   final AlignmentGeometry childAnchor;
-
-  /// Places the tip: its offset from [child]'s top left (see [FPortalShift]).
-  final Offset Function(Size view, FPortalChildBox child, FPortalBox tip) shift;
-
-  /// Adjusts the theme's tooltip style.
-  final FTooltipStyle Function(FTooltipStyle style)? style;
-
-  /// Builds the tip's content, in place of [message] set as text.
-  final WidgetBuilder? tipBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -49,8 +37,6 @@ class DesktopTooltip extends StatelessWidget {
         hoverEnterDuration: hoverEnterDuration,
         tipAnchor: tipAnchor,
         childAnchor: childAnchor,
-        shift: shift,
-        style: style,
         // Desktop chrome is mouse-driven, and FTooltip's long-press support
         // wraps the child in an ancestor `GestureDetector(onLongPressStart:)`.
         // That recognizer shares the gesture arena with the button's own tap
@@ -59,7 +45,7 @@ class DesktopTooltip extends StatelessWidget {
         // control is swallowed and the button looks dead. Hover already covers
         // the desktop affordance, so drop the long-press path entirely.
         longPress: false,
-        tipBuilder: (context, _) => tipBuilder?.call(context) ?? Text(message),
+        tipBuilder: (_, _) => Text(message),
         child: child,
       ),
     );

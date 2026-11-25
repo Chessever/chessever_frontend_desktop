@@ -7,8 +7,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:chessever/desktop/auth/desktop_access_decision.dart';
-import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/services/toby/toby_access.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -148,12 +146,7 @@ void main() {
             baseUrl: 'http://gamebase.test',
           ),
         ),
-        tobyPredictionAccessProvider.overrideWithValue(
-          const DesktopAccessDecision(
-            DesktopAccess.allowed,
-            DesktopAccessReason.allowedPremium,
-          ),
-        ),
+        tobyReaderHasPremiumProvider.overrideWithValue(true),
       ],
     );
     addTearDown(container.dispose);
