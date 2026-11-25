@@ -70,3 +70,20 @@ approval is the superadmin console.
 A function deployed before these routes existed answers `route_not_allowed`
 (or `method_not_allowed` for PUT and DELETE). The desktop app reads that as
 "publishing is not available here yet" and still lets a folder be deleted.
+
+## Next-move predictions and polling
+
+`POST /api/next-move` is a viewer route: Gamebase decides from the caller's
+bearer whether the reading is theirs to see. The function relays `Retry-After`
+(exposed to browsers) so clients pace their polls, and never relays or exposes
+`X-Prediction-Cache`, which would tell one reader what others looked at.
+
+Browsers may reuse a CORS preflight for ten minutes (`Access-Control-Max-Age:
+600`), so a poll costs one request instead of two. When a caller hangs up
+before its answer has been relayed in full (a board moved on during a long
+poll), the function aborts the upstream request too. This is best effort and
+depends on the runtime reporting the hang-up; Gamebase also drops a reader's
+old position when the same board asks for a new one.
+
+The request handling lives in `handler.ts` so it can be tested without a
+server: `deno test` in this directory runs every test.
