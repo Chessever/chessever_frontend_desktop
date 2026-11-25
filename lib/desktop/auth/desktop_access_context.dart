@@ -54,6 +54,10 @@ enum DesktopFeature {
   /// Opening a game on its own board stays free; adding a board beside
   /// another is Premium.
   boardSplit,
+
+  /// Toby's prediction of the next move in the Board engine panel. Premium
+  /// on every edition; the panel stays visible, and opening it asks.
+  tobyPrediction,
 }
 
 /// Where the user discovered the content a request acts on.

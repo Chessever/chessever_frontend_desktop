@@ -66,6 +66,8 @@ import 'package:chessever/desktop/state/active_board_shortcuts.dart';
 import 'package:chessever/desktop/widgets/desktop_board_access_gate.dart';
 import 'package:chessever/desktop/state/active_player.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
+import 'package:chessever/desktop/state/toby_panel.dart';
+import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_focus_mode.dart';
@@ -112,7 +114,7 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
-import 'package:chessever/desktop/widgets/next_move_ribbon.dart';
+import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart';
 import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
@@ -1127,6 +1129,13 @@ class _BoardPaneContent extends HookConsumerWidget {
     // useState rebuilt this whole pane, notation included, on every step.
     final explorerPreviewLineStep = useValueNotifier<int>(0);
     final explorerPreviewLineAutoplay = useState<bool>(true);
+    // Toby's per-board state (what-if, hover, pin) and the one arrow it puts
+    // on the board. Owned here so the panel can move inside the engine pane
+    // without losing it, and so only the board listens to the arrow.
+    final tobyPanel = useMemoized(TobyPanelController.new, [activeTabId]);
+    useEffect(() => tobyPanel.dispose, [tobyPanel]);
+    // Changes on expand and collapse only.
+    final tobyExpanded = ref.watch(tobyPanelExpandedProvider);
     final threatMode = useState<bool>(false);
     final explorerPreviewSoundKey = useRef<String?>(null);
     final loadedFrom = useState<String?>(restoredSession?.loadedFrom);
@@ -6076,14 +6085,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                             shareCaptureKey: boardShareCaptureKey,
                             fen: boardPosition.fen,
                             analysisFen: view.evalTarget.fen,
-                            predictionMoves:
-                                isForegroundSurface &&
-                                        boardPosition.fen == position.fen &&
-                                        !position.isGameOver &&
-                                        !view.evalTarget.isThreatProbe
-                                    ? lineUcis
-                                    : null,
-                            predictionStartFen: chessGame.value.startingFen,
+                            tobyPanel: tobyPanel,
                             threatMode: view.evalTarget.isThreatProbe,
                             flipped: flipped.value,
                             sideToMove: boardPosition.turn,
@@ -6262,6 +6264,40 @@ class _BoardPaneContent extends HookConsumerWidget {
                               final view = boardViewAt(previewStep);
                               final activeEvalTarget = view.evalTarget;
                               final boardPosition = view.position;
+                              final headers = pgnHeaders.value;
+                              final sourceGame = boardArgs?.sourceGame;
+                              final toby = WhatTobyThinks(
+                                target: resolveTobyTarget(
+                                  foreground: isForegroundSurface,
+                                  previewing:
+                                      boardPosition.fen != position.fen ||
+                                      activeEvalTarget.isThreatProbe,
+                                  gameOver: position.isGameOver,
+                                  variant: headers['Variant'],
+                                  positionKey: position.fen,
+                                  // Raw game facts: Gamebase derives the
+                                  // ratings, cadence and rating pool.
+                                  request:
+                                      () => TobyRequest(
+                                        startFen: chessGame.value.startingFen,
+                                        moves: lineUcis,
+                                        whiteRating: _tobyRating(
+                                          sourceGame?.whitePlayer.rating,
+                                          headers['WhiteElo'],
+                                        ),
+                                        blackRating: _tobyRating(
+                                          sourceGame?.blackPlayer.rating,
+                                          headers['BlackElo'],
+                                        ),
+                                        timeControl: headers['TimeControl'],
+                                        category: sourceGame?.timeControl,
+                                        site: headers['Site'],
+                                        event: headers['Event'],
+                                      ),
+                                ),
+                                controller: tobyPanel,
+                                onPlayUci: playUci,
+                              );
                               return NotationOpeningPanel(
                                 tabId: activeTabId,
                                 explorerScope: boardExplorerScope,
@@ -6415,6 +6451,20 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 trailingActions: boardActionCluster,
                                 onFullToolbarWidthChanged:
                                     publishAnalysisToolbarWidth,
+                                engineComfortableSize:
+                                    desktopEnginePaneComfortableSize(
+                                      lines: ref.watch(
+                                        engineSettingsProviderNew.select(
+                                          (s) =>
+                                              (s.valueOrNull ??
+                                                      const EngineSettings())
+                                                  .multiPvForStockfish(),
+                                        ),
+                                      ),
+                                      tobyHeight: tobyPanelHeight(
+                                        expanded: tobyExpanded,
+                                      ),
+                                    ),
                                 showEngine: ref.watch(
                                   engineSettingsProviderNew.select(
                                     (s) =>
@@ -6504,6 +6554,8 @@ class _BoardPaneContent extends HookConsumerWidget {
                                   headerTrailing: _BoardMoreActionsButton(
                                     onPressed: openBoardContextMenu,
                                   ),
+                                  toby: toby,
+                                  tobyExpanded: tobyExpanded,
                                 ),
                               );
                             },
@@ -9635,15 +9687,20 @@ String? _firstClockDisplay(
   return null;
 }
 
-class _BoardArea extends HookConsumerWidget {
+/// A player's rating for Toby: the event row's, else the PGN tag's. Null
+/// when neither is a plausible rating, so Gamebase can mirror the other side
+/// or assume a default.
+int? _tobyRating(int? sourceRating, String? pgnElo) =>
+    tobyRating(sourceRating) ?? tobyRating(int.tryParse((pgnElo ?? '').trim()));
+
+class _BoardArea extends ConsumerWidget {
   const _BoardArea({
     required this.tabId,
     required this.boardRenderKey,
     required this.shareCaptureKey,
     required this.fen,
     required this.analysisFen,
-    required this.predictionMoves,
-    required this.predictionStartFen,
+    required this.tobyPanel,
     required this.threatMode,
     required this.flipped,
     required this.sideToMove,
@@ -9690,8 +9747,10 @@ class _BoardArea extends HookConsumerWidget {
   final GlobalKey shareCaptureKey;
   final String fen;
   final String analysisFen;
-  final List<String>? predictionMoves;
-  final String predictionStartFen;
+
+  /// Toby's per-board state. The board draws its arrow (in
+  /// [_BoardWithAnnotations] only) and drops its hover on a right-click.
+  final TobyPanelController tobyPanel;
   final bool threatMode;
   final bool flipped;
   final Side sideToMove;
@@ -9951,49 +10010,6 @@ class _BoardArea extends HookConsumerWidget {
     final bottomRowHeight = chromeMetrics.bottomRowHeight;
     final headerGapTotal = chromeMetrics.headerGapTotal;
     final extraVertical = topRowHeight + bottomRowHeight + headerGapTotal;
-    final cadence = nextMoveCadence(
-      sourceGame?.timeControl,
-      pgn('TimeControl'),
-    );
-    final hasPredictionSlot =
-        !focusMode &&
-        !pictureInPicture &&
-        sourceGame != null &&
-        !RegExp(
-          r'960|fischer|crazyhouse|atomic|antichess|horde|racing kings|three.check|king of the hill',
-          caseSensitive: false,
-        ).hasMatch(pgn('Variant'));
-    final estimatedWhiteRating =
-        whiteRating > 0 ? whiteRating : (blackRating > 0 ? blackRating : 2700);
-    final estimatedBlackRating =
-        blackRating > 0 ? blackRating : estimatedWhiteRating;
-    final predictionKey =
-        hasPredictionSlot && predictionMoves != null
-            ? jsonEncode({
-              'fen': predictionStartFen,
-              'moves': predictionMoves,
-              'whiteRating': estimatedWhiteRating.clamp(1, 3600),
-              'blackRating': estimatedBlackRating.clamp(1, 3600),
-              'timeControl': cadence,
-              'mode': 'fast',
-            })
-            : null;
-    final prediction =
-        predictionKey == null
-            ? null
-            : ref.watch(nextMovePredictionProvider(predictionKey)).valueOrNull;
-    final chosen = useState<({String key, NextMoveCandidate move})?>(null);
-    final selected =
-        chosen.value?.key == predictionKey ? chosen.value?.move : null;
-    final parsed = selected?.uci == null ? null : Move.parse(selected!.uci!);
-    final predictionArrow =
-        parsed is NormalMove
-            ? cg.Arrow(
-              color: selected!.color,
-              orig: parsed.from,
-              dest: parsed.to,
-            )
-            : null;
 
     // Top header is whichever player sits at the top of the board: black
     // when not flipped, white when flipped. Nothing here depends on the
@@ -10099,19 +10115,9 @@ class _BoardArea extends HookConsumerWidget {
                 0.0,
                 constraints.biggest.width - evalBarReservation,
               );
-              // Keep the board and both headers fixed during loading,
-              // navigation, and a failed or empty prediction.
-              final ribbonHeight =
-                  hasPredictionSlot &&
-                          hLimit >= 250 &&
-                          constraints.maxHeight >= extraVertical + 320
-                      ? nextMoveRibbonHeight
-                      : 0.0;
-              final showPrediction =
-                  ribbonHeight > 0 && prediction?.isNotEmpty == true;
               final vLimit = math.max(
                 0.0,
-                constraints.biggest.height - extraVertical - ribbonHeight,
+                constraints.biggest.height - extraVertical,
               );
               final maxBoardSize = math.min(hLimit, vLimit);
               final defaultSize = math.min(
@@ -10173,21 +10179,6 @@ class _BoardArea extends HookConsumerWidget {
                   bottomRowHeight: bottomRowHeight,
                   topHeader: topHeader,
                   bottomHeader: bottomHeader,
-                  ribbonHeight: ribbonHeight,
-                  predictionArrow: showPrediction ? predictionArrow : null,
-                  ribbon:
-                      showPrediction
-                          ? DesktopNextMoveRibbon(
-                            moves: prediction!,
-                            selectedUci: selected?.uci,
-                            onSelect:
-                                (move) =>
-                                    chosen.value =
-                                        move == null
-                                            ? null
-                                            : (key: predictionKey!, move: move),
-                          )
-                          : null,
                 );
               }
 
@@ -10209,6 +10200,11 @@ class _BoardArea extends HookConsumerWidget {
               return Listener(
                 behavior: HitTestBehavior.opaque,
                 onPointerDown: (event) {
+                  // A right-click on the board (to draw) ends any Toby hover
+                  // left behind, so the reader's shapes come back.
+                  if (event.buttons & kSecondaryMouseButton != 0) {
+                    tobyPanel.clearHover();
+                  }
                   if (event.buttons & kPrimaryMouseButton == 0) return;
                   // Resizing is chrome interaction, not a board-square
                   // click. The overlay is a sibling of the annotation layer;
@@ -10216,11 +10212,7 @@ class _BoardArea extends HookConsumerWidget {
                   // erase annotations.
                   final cornerRight = (constraints.maxWidth + boardWithBar) / 2;
                   final cornerBottom =
-                      (constraints.maxHeight -
-                              ribbonHeight +
-                              boardSize +
-                              extraVertical) /
-                          2 -
+                      (constraints.maxHeight + boardSize + extraVertical) / 2 -
                       bottomRowHeight -
                       _BoardArea.headerGap;
                   if (hasHeaders &&
@@ -10234,22 +10226,10 @@ class _BoardArea extends HookConsumerWidget {
                       ).contains(event.localPosition)) {
                     return;
                   }
-                  if (showPrediction &&
-                      Rect.fromLTWH(
-                        cornerRight - boardWithBar,
-                        cornerBottom + bottomRowHeight + _BoardArea.headerGap,
-                        boardWithBar,
-                        ribbonHeight,
-                      ).contains(event.localPosition)) {
-                    return;
-                  }
                   final shouldClear =
                       shouldClearBoardAnnotationsForBoardAreaClick(
                         localPosition: event.localPosition,
-                        contentSize: Size(
-                          constraints.maxWidth,
-                          constraints.maxHeight - ribbonHeight,
-                        ),
+                        contentSize: constraints.biggest,
                         boardSize: boardSize,
                         boardWithBar: boardWithBar,
                         topRowHeight: topRowHeight,
@@ -10293,9 +10273,6 @@ class _BoardArea extends HookConsumerWidget {
     required double bottomRowHeight,
     required Widget? topHeader,
     required Widget? bottomHeader,
-    required double ribbonHeight,
-    required cg.Shape? predictionArrow,
-    required Widget? ribbon,
   }) {
     final boardRow = SizedBox(
       height: boardSize,
@@ -10344,7 +10321,7 @@ class _BoardArea extends HookConsumerWidget {
               gameEnding: gameEnding,
               onWheelStep: onWheelStep,
               engineArrowFen: engineArrowFen,
-              predictionArrow: predictionArrow,
+              tobyArrow: tobyPanel.boardArrow,
             ),
           ),
         ],
@@ -10393,35 +10370,28 @@ class _BoardArea extends HookConsumerWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              RepaintBoundary(
-                key: shareCaptureKey,
-                child: ColoredBox(
-                  color: kBackgroundColor,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      chromeRow(height: topRowHeight, header: topHeader),
-                      SizedBox(height: _BoardArea.headerGap),
-                      boardRow,
-                      SizedBox(height: _BoardArea.headerGap),
-                      chromeRow(height: bottomRowHeight, header: bottomHeader),
-                    ],
-                  ),
-                ),
+          RepaintBoundary(
+            key: shareCaptureKey,
+            child: ColoredBox(
+              color: kBackgroundColor,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  chromeRow(height: topRowHeight, header: topHeader),
+                  SizedBox(height: _BoardArea.headerGap),
+                  boardRow,
+                  SizedBox(height: _BoardArea.headerGap),
+                  chromeRow(height: bottomRowHeight, header: bottomHeader),
+                ],
               ),
-              if (ribbonHeight > 0)
-                chromeRow(height: ribbonHeight, header: ribbon),
-            ],
+            ),
           ),
           if (hasHeaders && !focusMode && resizeHandle != null)
             Positioned(
               // Coordinates are inside the squares, not a separate gutter.
               // Keep the target in the extreme 16px corner, away from the
               // piece centre, and outside share exports.
-              bottom: bottomRowHeight + _BoardArea.headerGap + ribbonHeight,
+              bottom: bottomRowHeight + _BoardArea.headerGap,
               right: 0,
               child: SizedBox.square(dimension: 16, child: resizeHandle),
             ),
@@ -10543,7 +10513,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.gameEnding,
     required this.onWheelStep,
     required this.engineArrowFen,
-    required this.predictionArrow,
+    required this.tobyArrow,
   });
 
   final String tabId;
@@ -10570,7 +10540,10 @@ class _BoardWithAnnotations extends ConsumerWidget {
 
   /// Position whose engine lines draw arrows, or null when arrows are off.
   final String? engineArrowFen;
-  final cg.Shape? predictionArrow;
+
+  /// Toby's hovered or pinned candidate. Listened to here alone, so a hover
+  /// rebuilds the chessboard and nothing around it.
+  final ValueListenable<TobyBoardArrow?> tobyArrow;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -10618,16 +10591,28 @@ class _BoardWithAnnotations extends ConsumerWidget {
     );
 
     // Merge user-drawn shapes (right-click overlay) with author-baked PGN
-    // arrows/circles and live engine PV arrows.
-    final mergedShapes = <cg.Shape>[
-      ...positionShapes,
-      ...pgnShapes,
-      if (predictionArrow case final arrow?) arrow else ...engineShapes,
-    ];
-    final shapes =
-        mergedShapes.isEmpty
-            ? const fic.ISet<cg.Shape>.empty()
-            : fic.ISet<cg.Shape>(mergedShapes);
+    // arrows/circles and live engine PV arrows. Toby's arrow joins below,
+    // only while the board shows the position it was read for.
+    fic.ISet<cg.Shape> shapesWith(TobyBoardArrow? toby) {
+      final mergedShapes = <cg.Shape>[
+        if (toby == null || toby.positionKey != fen) ...[
+          ...positionShapes,
+          ...pgnShapes,
+          ...engineShapes,
+        ] else if (toby.exclusive)
+          // A hovered candidate is the only shape on the board.
+          toby.arrow
+        else ...[
+          // A pinned one stands in for the engine arrows only.
+          ...positionShapes,
+          ...pgnShapes,
+          toby.arrow,
+        ],
+      ];
+      return mergedShapes.isEmpty
+          ? const fic.ISet<cg.Shape>.empty()
+          : fic.ISet<cg.Shape>(mergedShapes);
+    }
 
     final highlights =
         gameEnding == null
@@ -10749,22 +10734,26 @@ class _BoardWithAnnotations extends ConsumerWidget {
             positionKey: positionKey,
             persistentShapes: pgnShapes,
             onShapesChanged: onGraphicCommentaryChanged,
-            child: DesktopChessBoard(
-              key: ValueKey<String>(boardRenderKey),
-              size: boardSize,
-              fen: fen,
-              orientation: orientation,
-              playerSide: playerSide,
-              sideToMove: sideToMove,
-              validMoves: validMoves,
-              isCheck: isCheck,
-              lastMove: lastMove,
-              onMove: onMove,
-              promotionMove: promotionMove,
-              onPromotionSelection: onPromotionSelection,
-              shapes: shapes,
-              squareHighlights: highlights,
-              squareHighlightsUnderPieces: gameEnding?.isDraw ?? false,
+            child: ValueListenableBuilder<TobyBoardArrow?>(
+              valueListenable: tobyArrow,
+              builder:
+                  (context, toby, _) => DesktopChessBoard(
+                    key: ValueKey<String>(boardRenderKey),
+                    size: boardSize,
+                    fen: fen,
+                    orientation: orientation,
+                    playerSide: playerSide,
+                    sideToMove: sideToMove,
+                    validMoves: validMoves,
+                    isCheck: isCheck,
+                    lastMove: lastMove,
+                    onMove: onMove,
+                    promotionMove: promotionMove,
+                    onPromotionSelection: onPromotionSelection,
+                    shapes: shapesWith(toby),
+                    squareHighlights: highlights,
+                    squareHighlightsUnderPieces: gameEnding?.isDraw ?? false,
+                  ),
             ),
           ),
           if (badge != null) badge,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/state/engine_formatted_display.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
@@ -26,6 +27,8 @@ import 'package:chessever/desktop/services/engine/game_report_request_coordinato
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
 import 'package:chessever/desktop/services/engine/server_game_report.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
+import 'package:chessever/desktop/state/toby_panel.dart'
+    show tobyPanelHeight, tobyPanelSlotsFor;
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -36,6 +39,8 @@ import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart'
+    show TobyPanelSlots;
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -51,6 +56,41 @@ const String desktopEngineReportSplitStorageKey =
 
 @visibleForTesting
 const double desktopEngineReportGutterThickness = 10;
+
+/// The engine header while the engine runs: its tallest piece, the 22 px
+/// score readout (31 px at the theme's body line height, taller than the
+/// 28 px controls), with 12 px above and below.
+const double desktopEngineHeaderHeight = 55;
+
+/// One collapsed Stockfish row: its tallest line (the 13 px bold score, 19 px
+/// at the theme's body line height), 6 px of padding above and below, and its
+/// 1 px border. A shorter line only leaves room below Toby.
+const double desktopEnginePvRowHeight = 33;
+const double _pvRowGap = 6;
+const double _pvListBottomPadding = 12;
+
+/// The Stockfish list with [rows] collapsed rows, gaps and bottom padding.
+double desktopEngineLinesHeight(int rows) =>
+    rows <= 0
+        ? 0
+        : rows * desktopEnginePvRowHeight +
+            (rows - 1) * _pvRowGap +
+            _pvListBottomPadding;
+
+/// The least the game report gets beside the live engine or Toby.
+const double _reportMinimumHeight = 140;
+
+/// The engine pane's comfortable height in the right rail: the header, up
+/// to three of the [lines] Stockfish lines, and Toby at [tobyHeight] (its
+/// full height when expanded). It follows the settings and Toby's state,
+/// never the position, so stepping through a game does not move the split.
+double desktopEnginePaneComfortableSize({
+  required int lines,
+  required double tobyHeight,
+}) =>
+    desktopEngineHeaderHeight +
+    desktopEngineLinesHeight(math.min(lines, 3)) +
+    tobyHeight;
 
 /// Live engine evaluation panel for the active board position.
 ///
@@ -90,6 +130,8 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.onPictureInPicture,
     this.pictureInPictureSelected = false,
     this.headerTrailing,
+    this.toby,
+    this.tobyExpanded = false,
   });
 
   final String fen;
@@ -154,6 +196,16 @@ class EnginePanel extends ConsumerStatefulWidget {
 
   /// Optional action clustered with the engine gear (board more-actions).
   final Widget? headerTrailing;
+
+  /// The "What Toby Thinks" panel. It sits directly under the Stockfish
+  /// block (lines or status), never under the report; with the engine off it
+  /// sits under the header. Built outside this panel's engine-tick builder.
+  /// This panel tells it how many candidate slots fit ([TobyPanelSlots]).
+  final Widget? toby;
+
+  /// Whether [toby] is expanded, which with the room here decides its
+  /// height.
+  final bool tobyExpanded;
 
   /// Test seam for driving report lifecycle transitions without spawning a
   /// real Stockfish process. The controller must remain stable for this
@@ -469,6 +521,16 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
       onJumpToPly: widget.onJumpToPly,
       requestNotice: _requestNotice,
     );
+    // Built once per panel build, outside the engine-tick builder below, so a
+    // Stockfish update reuses this exact widget and never rebuilds Toby.
+    final tobySection =
+        widget.toby == null ? null : RepaintBoundary(child: widget.toby);
+    final tobyExpanded = widget.tobyExpanded;
+    final engineLines =
+        (settings ?? const EngineSettings()).multiPvForStockfish();
+    // Two Stockfish lines (or as many as there are) always stay in view
+    // beside Toby; it shows fewer candidate slots before taking them.
+    final linesFloor = desktopEngineLinesHeight(math.min(engineLines, 2));
     // Engine ticks do not rebuild the report or schedule automatic analysis.
     return ListenableBuilder(
       listenable: _display,
@@ -512,7 +574,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                 widget.onPlayUci?.call(uci);
               }
 
-              final engineContent =
+              final linesOrStatus =
                   liveAnalysisPausedForReport
                       ? const _EngineStatusMessage(
                         'Live analysis paused while the game report runs.',
@@ -540,6 +602,26 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                             ? 'Select a position to start analysis.'
                             : 'Live analysis resumes when this tab is active.',
                       );
+              final engineContent =
+                  tobySection == null
+                      ? linesOrStatus
+                      : _WithToby(
+                        content: linesOrStatus,
+                        toby: tobySection,
+                        tobyExpanded: tobyExpanded,
+                        contentFloor: linesFloor,
+                      );
+              final reportBody =
+                  tobySection == null || engineOn
+                      ? reportContent
+                      : _WithToby(
+                        content: reportContent,
+                        toby: tobySection,
+                        tobyExpanded: tobyExpanded,
+                        contentFloor: _reportMinimumHeight,
+                        tobyFirst: true,
+                        fillContent: true,
+                      );
 
               final Widget? body =
                   engineOn && reportOn
@@ -554,10 +636,20 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                             initialWeight: 0.40,
                             label: 'Live engine',
                             dismissible: false,
+                            // Up to three Stockfish rows and Toby before the
+                            // report gives up room; the header is outside
+                            // this split.
+                            comfortableSize:
+                                tobySection == null
+                                    ? null
+                                    : desktopEngineLinesHeight(
+                                          math.min(engineLines, 3),
+                                        ) +
+                                        tobyPanelHeight(expanded: tobyExpanded),
                             child: engineContent,
                           ),
                           SplitChild(
-                            minSize: 140,
+                            minSize: _reportMinimumHeight,
                             initialWeight: 0.60,
                             label: 'Game report',
                             dismissible: false,
@@ -568,7 +660,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                       : engineOn
                       ? engineContent
                       : reportOn
-                      ? reportContent
+                      ? reportBody
                       : null;
 
               // Engine lines and the report remain independently toggled; when both
@@ -576,6 +668,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
               return Container(
                 color: kBlack2Color,
                 child: Column(
+                  // With nothing below the header but Toby, the panel is as
+                  // tall as its content: the rail caps it so notation keeps
+                  // its floor, and Toby scrolls inside that cap.
+                  mainAxisSize:
+                      body == null ? MainAxisSize.min : MainAxisSize.max,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildHeader(
@@ -583,7 +680,16 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                       engineActive: engineActive,
                       reading: reading,
                     ),
-                    if (body != null) Expanded(child: body),
+                    if (body != null)
+                      Expanded(child: body)
+                    else if (tobySection != null)
+                      Flexible(
+                        child: _WithToby(
+                          content: const SizedBox.shrink(),
+                          toby: tobySection,
+                          tobyExpanded: tobyExpanded,
+                        ),
+                      ),
                   ],
                 ),
               );
@@ -785,6 +891,7 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
         padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
         child: Align(
           alignment: Alignment.topLeft,
+          heightFactor: 1,
           child: Text(
             snapshot.isEvaluating
                 ? 'Searching…'
@@ -794,7 +901,10 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
         ),
       );
     }
+    // As tall as the lines (Toby follows the last one directly), scrolling
+    // only when they do not fit.
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (widget.played != null)
@@ -806,13 +916,19 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
               style: TextStyle(color: kWhiteColor70, fontSize: 12),
             ),
           ),
-        Expanded(
+        Flexible(
           child: DesktopScrollHost(
             child: ListView.separated(
+              shrinkWrap: true,
               physics: const DesktopScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.fromLTRB(
+                16,
+                0,
+                16,
+                _pvListBottomPadding,
+              ),
               itemCount: pvs.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 6),
+              separatorBuilder: (_, __) => const SizedBox(height: _pvRowGap),
               itemBuilder: (context, index) => _row(index),
             ),
           ),
@@ -2347,6 +2463,70 @@ class _EngineQuickToggle extends ConsumerWidget {
   }
 }
 
+/// [content] (the Stockfish block, or the report with the engine off) and
+/// the Toby panel, stacked.
+///
+/// The content is as tall as it needs (the report, [fillContent], takes all
+/// the room left), and Toby follows it directly; room left over goes below
+/// Toby. Toby shows fewer candidate slots before it takes [contentFloor]
+/// from the content, and only when even that does not fit do the two scroll
+/// as one, so neither is ever clipped. The tree is the same either way, so
+/// Toby keeps its state.
+class _WithToby extends StatelessWidget {
+  const _WithToby({
+    required this.content,
+    required this.toby,
+    required this.tobyExpanded,
+    this.contentFloor = 0,
+    this.tobyFirst = false,
+    this.fillContent = false,
+  });
+
+  final Widget content;
+  final Widget toby;
+  final bool tobyExpanded;
+  final double contentFloor;
+  final bool tobyFirst;
+  final bool fillContent;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final room = constraints.maxHeight;
+        final slots = tobyPanelSlotsFor(room, reserved: contentFloor);
+        final tobyHeight = tobyPanelHeight(
+          expanded: tobyExpanded,
+          slots: slots,
+        );
+        final contentRoom = math.max(contentFloor, room - tobyHeight);
+        final fits = contentRoom + tobyHeight <= room + 0.5;
+        final contentBox =
+            fillContent
+                ? SizedBox(height: contentRoom, child: content)
+                : ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: contentRoom),
+                  child: content,
+                );
+        final tobyBox = SizedBox(
+          height: tobyHeight,
+          child: TobyPanelSlots(slots: slots, child: toby),
+        );
+        return SingleChildScrollView(
+          physics:
+              fits
+                  ? const NeverScrollableScrollPhysics()
+                  : const DesktopScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: tobyFirst ? [tobyBox, contentBox] : [contentBox, tobyBox],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _EngineStatusMessage extends StatelessWidget {
   const _EngineStatusMessage(this.message);
 
@@ -2354,13 +2534,23 @@ class _EngineStatusMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return ColoredBox(
       color: kBlack2Color,
-      padding: const EdgeInsets.all(16),
-      alignment: Alignment.topLeft,
-      child: Text(
-        message,
-        style: const TextStyle(color: kWhiteColor70, fontSize: 12, height: 1.4),
+      child: Align(
+        alignment: Alignment.topLeft,
+        // As tall as the message, so Toby follows it directly.
+        heightFactor: 1,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            message,
+            style: const TextStyle(
+              color: kWhiteColor70,
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+        ),
       ),
     );
   }

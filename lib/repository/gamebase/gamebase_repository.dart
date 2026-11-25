@@ -802,6 +802,12 @@ class GamebaseWireRequest {
   String toString() => 'GamebaseWireRequest($method $url $payload)';
 }
 
+/// What one Toby reading poll got back (see
+/// [GamebaseRepository.getTobyReading]). [statusCode] is null when no HTTP
+/// answer arrived.
+typedef GamebaseTobyReply =
+    ({int? statusCode, Map<String, dynamic>? data, Duration? retryAfter});
+
 class GamebaseRepository {
   final Dio _dio;
   final String _baseUrl;
@@ -961,32 +967,72 @@ class GamebaseRepository {
     );
   }
 
-  Future<({bool pending, Map<String, dynamic>? data})> getNextMove(
-    Map<String, dynamic> input,
-    CancelToken cancelToken,
-  ) async {
+  /// How long one Toby reading request may wait for its answer. Gamebase
+  /// holds a poll for up to 8 s before it answers "pending", so this must
+  /// outlast that on every platform: the browser adapter counts connect and
+  /// receive time together, and has no connect timeout of its own.
+  static const Duration tobyReceiveTimeout = Duration(seconds: 15);
+
+  /// One poll for Toby's reading of a position (`POST /api/next-move`,
+  /// protocol 2). [body] is the whole request, built by the caller.
+  ///
+  /// Returns what came back without judging it: the status code (null when
+  /// no HTTP answer arrived: a lost connection, a timeout or [cancelToken]),
+  /// the JSON body when there was one, and `Retry-After`. [recheckAccess]
+  /// asks the service to read the reader's membership fresh rather than from
+  /// its short-lived cache. The caller sends it once, for a reader the service
+  /// refused while the app believes they have Premium.
+  Future<GamebaseTobyReply> getTobyReading(
+    Map<String, Object?> body,
+    CancelToken cancelToken, {
+    bool recheckAccess = false,
+  }) async {
     try {
-      final response = await _dio.post<Map<String, dynamic>>(
+      final response = await _dio.post<Object?>(
         '$_baseUrl/api/next-move',
-        data: input,
+        data: body,
         cancelToken: cancelToken,
-        options: _requestOptions(receiveTimeout: const Duration(seconds: 3)),
+        options: Options(
+          headers: <String, String>{
+            ..._headers,
+            if (recheckAccess) 'Cache-Control': 'no-cache',
+          },
+          receiveTimeout: tobyReceiveTimeout,
+        ),
       );
       return (
-        pending: response.statusCode == 202,
-        data: response.statusCode == 200 ? response.data : null,
+        statusCode: response.statusCode,
+        data: _tobyJson(response.data),
+        retryAfter: _retryAfter(response.headers.value('retry-after')),
       );
     } on DioException catch (error) {
+      final response = error.response;
       return (
-        pending:
-            !cancelToken.isCancelled &&
-            ({429, 502, 503, 504}.contains(error.response?.statusCode) ||
-                error.type == DioExceptionType.connectionError ||
-                error.type == DioExceptionType.connectionTimeout ||
-                error.type == DioExceptionType.receiveTimeout),
-        data: null,
+        statusCode: response?.statusCode,
+        data: _tobyJson(response?.data),
+        retryAfter: _retryAfter(response?.headers.value('retry-after')),
       );
     }
+  }
+
+  static Map<String, dynamic>? _tobyJson(Object? data) {
+    var value = data;
+    if (value is String && value.isNotEmpty) {
+      try {
+        value = jsonDecode(value);
+      } on FormatException {
+        return null;
+      }
+    }
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
+
+  /// `Retry-After` in whole seconds. The HTTP-date form is not used by
+  /// Gamebase and reads as absent.
+  static Duration? _retryAfter(String? header) {
+    final seconds = int.tryParse(header?.trim() ?? '');
+    if (seconds == null || seconds < 0) return null;
+    return Duration(seconds: seconds);
   }
 
   Future<GamebaseResponse> getMoveAggregates({
