@@ -47,6 +47,7 @@ enum DesktopAccessReason {
   premiumPgnImport('premium_pgn_import'),
   premiumPgnCopy('premium_pgn_copy'),
   premiumBoardSplit('premium_board_split'),
+  premiumTobyPrediction('premium_toby_prediction'),
   premiumLikes('premium_likes'),
   premiumCommunityLikes('premium_community_likes'),
   quotaPrepOwnAccounts('quota_prep_own_accounts'),
@@ -318,6 +319,14 @@ _Requirement _requirementFor(
   if (context.feature == DesktopFeature.boardSplit) {
     return const _Requirement.premium(DesktopAccessReason.premiumBoardSplit);
   }
+  // Toby's prediction is Premium on every edition, on any board. Its
+  // provenance is irrelevant: the reading is computed for the reader, not
+  // read out of the game.
+  if (context.feature == DesktopFeature.tobyPrediction) {
+    return const _Requirement.premium(
+      DesktopAccessReason.premiumTobyPrediction,
+    );
+  }
   // The current phone gates every report, including the first and cached
   // reports. Native desktop retains its existing lifetime allowance.
   if (isWebApp && context.feature == DesktopFeature.gameReport) {
@@ -364,8 +373,10 @@ _Requirement _requirementFor(
     case DesktopFeature.pgnImport:
     case DesktopFeature.pgnCopy:
     case DesktopFeature.boardSplit:
+    case DesktopFeature.tobyPrediction:
       throw StateError(
-        'PGN and board split access are resolved before feature dispatch.',
+        'PGN, board split and Toby access are resolved before feature '
+        'dispatch.',
       );
     case DesktopFeature.eventDiscovery:
       if (context.action == DesktopAction.view) return _free;

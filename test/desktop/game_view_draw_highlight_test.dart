@@ -5,7 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('full game view opts only draw tints into under-piece painting', () {
     final pane = File('lib/desktop/panes/board_pane.dart').readAsStringSync();
-    final boardCall = pane.substring(pane.indexOf('child: DesktopChessBoard('));
+    // The one board the pane builds (under Toby's arrow listener).
+    final boardCall = pane.substring(pane.indexOf('=> DesktopChessBoard('));
     expect(
       boardCall,
       contains('squareHighlightsUnderPieces: gameEnding?.isDraw ?? false'),

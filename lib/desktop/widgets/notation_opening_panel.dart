@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
@@ -27,6 +28,8 @@ import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/engine_panel.dart'
+    show desktopEngineHeaderHeight;
 import 'package:chessever/desktop/widgets/explorer_filter_bar.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
@@ -58,6 +61,9 @@ const double desktopEngineRightRailInitialWeight = 0.1763;
 
 @visibleForTesting
 const double desktopEngineRightRailGutterThickness = 12;
+
+/// The least notation keeps under the engine pane.
+const double _notationMinimumHeight = 120;
 
 final localOpeningTreeCatalogProvider =
     FutureProvider.autoDispose<List<LocalOpeningTreeCatalogEntry>>((ref) async {
@@ -141,6 +147,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.showReport = true,
     this.onToggleReport,
     this.enginePanel,
+    this.engineComfortableSize,
     this.showEngine = true,
     this.onRestoreEngine,
   });
@@ -225,6 +232,12 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// When null (e.g. in isolated widget tests) the engine split is omitted and
   /// the notation content fills the pane directly.
   final Widget? enginePanel;
+
+  /// Height at which the engine pane shows its header, two Stockfish rows and
+  /// the Toby panel. While the engine is on, the split grows the pane toward
+  /// it with room notation can spare. It changes only when Toby expands or
+  /// collapses, so stepping through a game never moves the boundary.
+  final double? engineComfortableSize;
 
   /// Whether engine analysis is on. Drives collapse/restore of the engine
   /// pane so it reclaims space when both it and the report are off.
@@ -700,16 +713,33 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                   widget.enginePanel == null
                       ? notationContent
                       : !widget.showEngine && !widget.reportSelected
-                      ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // Keep only the compact Stockfish header in flow
-                          // while analysis/report content is off. The previous
-                          // collapsed split reserved a blank strip and painted
-                          // an engine chip in its center.
-                          RepaintBoundary(child: widget.enginePanel!),
-                          Expanded(child: notationContent),
-                        ],
+                      ? LayoutBuilder(
+                        builder:
+                            (context, constraints) => Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                // Keep only the compact Stockfish header (and
+                                // the Toby panel under it) in flow while
+                                // analysis/report content is off. The cap
+                                // keeps notation's floor; the engine panel
+                                // scrolls Toby inside it. The previous
+                                // collapsed split reserved a blank strip and
+                                // painted an engine chip in its center.
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxHeight: math.max(
+                                      desktopEngineHeaderHeight,
+                                      constraints.maxHeight -
+                                          _notationMinimumHeight,
+                                    ),
+                                  ),
+                                  child: RepaintBoundary(
+                                    child: widget.enginePanel!,
+                                  ),
+                                ),
+                                Expanded(child: notationContent),
+                              ],
+                            ),
                       )
                       : ResizableSplitView(
                         axis: Axis.vertical,
@@ -723,6 +753,10 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                           SplitChild(
                             minSize: 120,
                             initialWeight: desktopEngineRightRailInitialWeight,
+                            comfortableSize:
+                                widget.showEngine
+                                    ? widget.engineComfortableSize
+                                    : null,
                             label: 'Engine',
                             collapsedIcon: Icons.memory_rounded,
                             onRestore: _resumeEngineFromRail,
@@ -733,7 +767,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                           SplitChild(
                             // Compact floor so the report and notation can
                             // both be resized meaningfully on short windows.
-                            minSize: 120,
+                            minSize: _notationMinimumHeight,
                             initialWeight:
                                 1 - desktopEngineRightRailInitialWeight,
                             label: 'Notation',

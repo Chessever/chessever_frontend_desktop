@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart' show immutable;
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
+import 'package:chessever/desktop/services/toby/toby_label.dart';
 
 @immutable
 class DesktopPaywallCopy {
@@ -239,6 +240,13 @@ DesktopPaywallCopy _premiumCopy(
         body:
             'Upgrade to follow up to nine other boards in Round Wall. Opening a game '
             'on its own board stays free.',
+      );
+    case DesktopAccessReason.premiumTobyPrediction:
+      return const DesktopPaywallCopy(
+        title: '$kTobyFeatureLabel is Premium',
+        body:
+            'Upgrade to see which moves players at this level are likely to '
+            'choose, and how each one tends to end.',
       );
     case DesktopAccessReason.premiumLikes:
     case DesktopAccessReason.premiumCommunityLikes:
