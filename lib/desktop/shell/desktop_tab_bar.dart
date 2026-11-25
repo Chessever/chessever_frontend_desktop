@@ -1864,20 +1864,19 @@ class _HorizontalSplit extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final w = whiteRatio.clamp(0.04, 0.96);
-    return DesktopEvalMidpoint(
-      axis: Axis.horizontal,
-      child: Row(
-        children: [
-          Expanded(
-            flex: (w * 1000).round(),
-            child: const ColoredBox(color: kWhiteColor),
-          ),
-          Expanded(
-            flex: ((1.0 - w) * 1000).round(),
-            child: const ColoredBox(color: _trackColor),
-          ),
-        ],
-      ),
+    // No midpoint tick: on a 3px strip it reads as a stray dot under the
+    // tab title, not as a reference line.
+    return Row(
+      children: [
+        Expanded(
+          flex: (w * 1000).round(),
+          child: const ColoredBox(color: kWhiteColor),
+        ),
+        Expanded(
+          flex: ((1.0 - w) * 1000).round(),
+          child: const ColoredBox(color: _trackColor),
+        ),
+      ],
     );
   }
 }
