@@ -230,6 +230,52 @@ void main() {
     );
   });
 
+  test('a server report names the games row only for a broadcast tab', () {
+    BoardTabGameArgs args({
+      String? gameId = 'GLT6Si5W',
+      String databaseTitle = '',
+      GameSource? source,
+      bool withSourceGame = true,
+    }) => BoardTabGameArgs(
+      gameId: gameId,
+      pgn: '',
+      label: 'Game',
+      whiteName: '',
+      blackName: '',
+      databaseTitle: databaseTitle,
+      sourceGame:
+          !withSourceGame
+              ? null
+              : source == null
+              ? _preStartGame()
+              : _preStartGame().copyWith(source: source),
+    );
+
+    expect(boardReportDatabaseGameId(args()), 'GLT6Si5W');
+    // A tab opened by id alone, with no source model yet, is a broadcast tab.
+    expect(boardReportDatabaseGameId(args(withSourceGame: false)), 'GLT6Si5W');
+    expect(boardReportDatabaseGameId(args(gameId: ' GLT6Si5W ')), 'GLT6Si5W');
+
+    // No tab, a scratch board, or a detached PGN: there is no id to send.
+    expect(boardReportDatabaseGameId(null), isNull);
+    expect(boardReportDatabaseGameId(args(gameId: null)), isNull);
+    expect(boardReportDatabaseGameId(args(gameId: '  ')), isNull);
+    // A local database owns its snapshot even when its id looks like a row's.
+    expect(
+      boardReportDatabaseGameId(args(databaseTitle: 'My database')),
+      isNull,
+    );
+    // Every other source carries an id from another store.
+    for (final source in GameSource.values) {
+      if (source == GameSource.supabase) continue;
+      expect(
+        boardReportDatabaseGameId(args(source: source)),
+        isNull,
+        reason: source.name,
+      );
+    }
+  });
+
   test('safety poll only feeds rows that changed the board', () {
     final update = _liveUpdate();
     final current = mergeLiveGameUpdateWithBase(
