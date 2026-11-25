@@ -164,14 +164,15 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// Optional action clustered with the engine gear (board more-actions).
   final Widget? headerTrailing;
 
-  /// The "What Toby Thinks" view. With it, the engine's name in the header
-  /// becomes two tabs ([TobyViewTabs]), "Stockfish" and "What Toby Thinks";
+  /// The "Toby Predicts" view. With it, the engine's name in the header
+  /// becomes two tabs ([TobyViewTabs]), "Stockfish" and "Toby Predicts";
   /// without it (picture in picture, other hosts) the header is unchanged.
   /// Built outside this panel's engine-tick builder, so a Stockfish update
   /// never rebuilds it.
   final Widget? toby;
 
-  /// Whether the reader chose the What Toby Thinks tab. Its view then takes the list area in place of Stockfish's lines, with
+  /// Whether the reader chose the Toby Predicts tab. Its view then takes
+  /// the list area in place of Stockfish's lines, with
   /// the engine on or off, and the live-engine half of the split when the
   /// report is open. The engine keeps analysing: its score stays in the
   /// header.
@@ -214,7 +215,7 @@ class EnginePanel extends ConsumerStatefulWidget {
       (pictureInPicture ? _kHeaderControl + _kHeaderEndGap : 0);
 
   /// The least height at which the pane still reads: its header closed up,
-  /// one whole line, and on the What Toby Thinks tab Toby's attribution
+  /// one whole line, and on the Toby Predicts tab Toby's attribution
   /// under it. The board's right rail keeps at least this for the pane
   /// whenever it can, before the notation under it.
   static double leastHeight(BuildContext context) =>
@@ -225,12 +226,14 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// The height the board's right rail gives this pane, [width] wide,
   /// whenever the notation under it can spare it; null for none.
   ///
-  /// On the What Toby Thinks tab: the header, Toby's reading line, three
+  /// On the Toby Predicts tab: the header, Toby's reading line, three
   /// whole rows and the attribution ([WhatTobyThinks.comfortableHeight]),
   /// with the game report's least share under them while the report is
   /// open. On the Stockfish tab: none, the rail's split alone decides.
   /// It changes with the tab, never with the position, so moving through a
-  /// game never resizes the rail.
+  /// game never resizes the rail. The rail applies it once, as the tab is
+  /// chosen ([SplitChild.comfortableOnArrival]); the reader's drags and the
+  /// window's size decide after that.
   double? railComfortableHeight(BuildContext context, {required double width}) {
     if (toby == null || !tobyTabSelected) return null;
     return _kHeaderPadding.vertical +
@@ -676,6 +679,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                                     ? kTobyFeatureLabel
                                     : 'Live engine',
                             dismissible: false,
+                            // Grows once on choosing Toby, then follows
+                            // drags and resizes like Stockfish's half.
+                            comfortableOnArrival: true,
                             comfortableSize:
                                 tobyView != null
                                     ? WhatTobyThinks.comfortableHeight(
@@ -1082,7 +1088,7 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
           ),
         Expanded(
           // A line the pane's bottom edge cuts dissolves into the pane, as
-          // in the What Toby Thinks tab, instead of losing its glyphs'
+          // in the Toby Predicts tab, instead of losing its glyphs'
           // lower half to the edge.
           child: CutItemFade(
             child: DesktopScrollHost(
@@ -2738,7 +2744,8 @@ class _PvTokensLine extends StatelessWidget {
     );
 
     if (expanded) return line;
-    if (!fadeOverflow) return SizedBox(height: 18, child: ClipRect(child: line));
+    if (!fadeOverflow)
+      return SizedBox(height: 18, child: ClipRect(child: line));
     return LayoutBuilder(
       builder: (context, constraints) {
         final direction = Directionality.of(context);
@@ -2774,12 +2781,13 @@ class _PvTokensLine extends StatelessWidget {
         if (width <= constraints.maxWidth) return visible;
         return ShaderMask(
           blendMode: BlendMode.dstIn,
-          shaderCallback: (bounds) => LinearGradient(
-            begin: AlignmentDirectional.centerStart,
-            end: AlignmentDirectional.centerEnd,
-            colors: const [Colors.white, Colors.transparent],
-            stops: [(1 - 22 / bounds.width).clamp(0.0, 1.0), 1.0],
-          ).createShader(bounds, textDirection: direction),
+          shaderCallback:
+              (bounds) => LinearGradient(
+                begin: AlignmentDirectional.centerStart,
+                end: AlignmentDirectional.centerEnd,
+                colors: const [Colors.white, Colors.transparent],
+                stops: [(1 - 22 / bounds.width).clamp(0.0, 1.0), 1.0],
+              ).createShader(bounds, textDirection: direction),
           child: visible,
         );
       },

@@ -1,8 +1,8 @@
-/// "What Toby Thinks": Toby's prediction of the move a human plays next, as
+/// "Toby Predicts": Toby's prediction of the move a human plays next, as
 /// the engine pane's second tab beside Stockfish.
 ///
 /// The pane's header carries two text tabs ([TobyViewTabs]), "Stockfish" and
-/// "What Toby Thinks", where the engine's name used to stand. Choosing Toby
+/// "Toby Predicts", where the engine's name used to stand. Choosing Toby
 /// puts [WhatTobyThinks] in the list area in place of Stockfish's lines,
 /// drawn as Stockfish rows: the chance where the score sits, the move
 /// where the line starts, and each row's own surface filled to the move's
@@ -31,6 +31,7 @@ import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/toby/toby_access.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
+import 'package:chessever/desktop/services/toby/toby_quality.dart';
 import 'package:chessever/desktop/state/toby_panel.dart';
 import 'package:chessever/desktop/widgets/cut_item_fade.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
@@ -123,6 +124,23 @@ const double _kNetworkFillAlpha = 0.07;
 const Color _kWdlWhite = Color(0xFFE8E6E1);
 const Color _kWdlDraw = Color(0xFF8E8E93);
 const Color _kWdlBlack = Color(0xFF3A3A3C);
+
+/// A row's chance and fill for each move quality, on the pane's dark
+/// surface (the desktop shell is dark only): light, desaturated tones of the
+/// board arrows' hues ([tobyArrowHue]), each well clear of the row surface
+/// for its 13 px chance. Neutral is Toby's teal.
+const Color _kRowGood = Color(0xFF8CC4A0);
+const Color _kRowDubious = Color(0xFFD9B77E);
+const Color _kRowBad = Color(0xFFE0948C);
+
+/// The tone of a row whose move is [quality].
+@visibleForTesting
+Color tobyRowTone(TobyMoveQuality quality) => switch (quality) {
+  TobyMoveQuality.good => _kRowGood,
+  TobyMoveQuality.dubious => _kRowDubious,
+  TobyMoveQuality.bad => _kRowBad,
+  TobyMoveQuality.neutral => kTobyAccent,
+};
 
 const String _kThinking = 'Toby is thinking…';
 const String _kBusy = 'Toby is busy right now';
@@ -282,7 +300,7 @@ TobyTarget resolveTobyTarget({
   return TobyTarget.read(request(), positionKey: positionKey);
 }
 
-/// The What Toby Thinks tab's list area. The board pane builds it with an
+/// The Toby Predicts tab's list area. The board pane builds it with an
 /// immutable [target] and its own [controller]; the engine pane mounts it in
 /// place of Stockfish's lines only while the tab is shown. It alone watches
 /// Toby's reading, so nothing is asked while Stockfish is shown. While it is
@@ -390,6 +408,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
       oldWidget.controller
         ..removeListener(_onControllerChanged)
         ..holdBoardSoon(false)
+        ..showReadingSoon(null, null)
         ..clearMarksSoon();
       widget.controller.addListener(_onControllerChanged);
     }
@@ -409,6 +428,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     // the view that drew it.
     _controller
       ..holdBoardSoon(false)
+      ..showReadingSoon(null, null)
       ..clearMarksSoon();
     _rowsFocus
       ..removeListener(_onRowsFocusChanged)
@@ -599,6 +619,9 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
             reading == null || reading.candidates.isEmpty
                 ? const <TobyCandidate>[]
                 : tobyListedCandidates(reading);
+    // The board draws the reading's top three while nothing is hovered or
+    // pinned. Through the controller, so only the board hears it.
+    _controller.showReadingSoon(widget.target.positionKey, reading);
     return Focus(
       canRequestFocus: false,
       skipTraversal: true,
@@ -823,6 +846,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     required bool showBars,
   }) {
     final positionKey = widget.target.positionKey!;
+    final qualities = tobyMoveQualities(reading);
     final hovered = _controller.hoveredUci(positionKey);
     final pinned = _controller.pinnedUci(positionKey);
     final focused =
@@ -865,6 +889,9 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
                         child: _TobyRow(
                           key: ValueKey<String>(listed[i].uci),
                           candidate: listed[i],
+                          quality:
+                              qualities[listed[i].uci] ??
+                              TobyMoveQuality.neutral,
                           muted: !reading.isFinal,
                           showBar: showBars,
                           highlighted:
@@ -1051,10 +1078,15 @@ ProviderContainer _windowContainer(BuildContext context) {
   return container;
 }
 
-/// "Nb3, 71 percent, first instinct 64 percent. After it: White 30, draw 55,
-/// Black 15". The first instinct is spoken when the row shows it.
+/// "Nb3, 71 percent, first instinct 64 percent, a mistake. After it: White
+/// 30, draw 55, Black 15". The first instinct is spoken when the row shows
+/// it, and the move's [quality] when it is dubious or a mistake (a good
+/// move's colour says nothing worth a word).
 @visibleForTesting
-String tobyCandidateSemanticsLabel(TobyCandidate candidate) {
+String tobyCandidateSemanticsLabel(
+  TobyCandidate candidate, {
+  TobyMoveQuality quality = TobyMoveQuality.neutral,
+}) {
   String spoken(double probability) =>
       probability > 0 && probability < .001
           ? 'under 0.1 percent'
@@ -1064,10 +1096,12 @@ String tobyCandidateSemanticsLabel(TobyCandidate candidate) {
       prior != null && candidate.priorDiffers
           ? ', first instinct ${spoken(prior)}'
           : '';
+  final judged = tobyQualitySpoken(quality);
+  final verdict = judged.isEmpty ? '' : ', $judged';
   final wdl = candidate.wdl?.percentages;
   return wdl == null
-      ? '${candidate.san}, ${spoken(candidate.probability)}$instinct'
-      : '${candidate.san}, ${spoken(candidate.probability)}$instinct. '
+      ? '${candidate.san}, ${spoken(candidate.probability)}$instinct$verdict'
+      : '${candidate.san}, ${spoken(candidate.probability)}$instinct$verdict. '
           'After it: White ${wdl.white}, draw ${wdl.draw}, Black ${wdl.black}';
 }
 
@@ -1086,11 +1120,13 @@ String _wholePercent(double probability) =>
 /// One candidate, as a Stockfish row: the chance in the score column, then
 /// the move with Toby's first instinct when it differs by five points or
 /// more, and the outcome bar at the end. The row's own surface fills to its
-/// chance; the hover fill and the pin's edge compose over it.
+/// chance; the hover fill and the pin's edge compose over it. The chance and
+/// the fill take the move's [quality] tone, as its arrow on the board does.
 class _TobyRow extends StatelessWidget {
   const _TobyRow({
     super.key,
     required this.candidate,
+    required this.quality,
     required this.muted,
     required this.showBar,
     required this.highlighted,
@@ -1099,6 +1135,7 @@ class _TobyRow extends StatelessWidget {
   });
 
   final TobyCandidate candidate;
+  final TobyMoveQuality quality;
 
   /// The quick network stage: fills and text are muted until the final
   /// reading replaces them in place.
@@ -1113,11 +1150,12 @@ class _TobyRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final prior = candidate.prior;
+    final tone = tobyRowTone(quality);
     final content = Row(
       children: [
         _Chance(
           candidate.percentage,
-          color: muted ? kTobyAccent.withValues(alpha: 0.6) : kTobyAccent,
+          color: muted ? tone.withValues(alpha: 0.6) : tone,
         ),
         const SizedBox(width: _kScoreGap),
         Expanded(
@@ -1139,7 +1177,7 @@ class _TobyRow extends StatelessWidget {
     return Semantics(
       button: true,
       selected: pinned,
-      label: tobyCandidateSemanticsLabel(candidate),
+      label: tobyCandidateSemanticsLabel(candidate, quality: quality),
       excludeSemantics: true,
       onTap: onActivate,
       child: SingleMotionBuilder(
@@ -1149,7 +1187,7 @@ class _TobyRow extends StatelessWidget {
             (context, value, child) => CustomPaint(
               painter: _TobyRowPainter(
                 chance: candidate.probability,
-                fill: kTobyAccent.withValues(
+                fill: tone.withValues(
                   alpha: muted ? _kNetworkFillAlpha : _kFillAlpha,
                 ),
                 hover: value.clamp(0.0, 1.0),
@@ -1645,7 +1683,7 @@ class _WhatIfLabel extends StatelessWidget {
 }
 
 /// The engine pane's two tabs, in its header where the engine's name stood:
-/// "Stockfish" and "What Toby Thinks". The chosen tab is set in white at full
+/// "Stockfish" and "Toby Predicts". The chosen tab is set in white at full
 /// weight; the other in 70% white until the pointer reaches it. A static
 /// 2 px rule under the chosen label, as wide as the label, marks it too.
 /// Nothing moves on hover or on a switch: each tab keeps the width of its

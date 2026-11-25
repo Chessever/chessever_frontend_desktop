@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart' show Side, Square;
 import 'package:dio/dio.dart';
 import 'package:flutter/gestures.dart';
@@ -21,6 +20,7 @@ import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
+import 'package:chessever/desktop/services/toby/toby_quality.dart';
 import 'package:chessever/desktop/state/toby_panel.dart';
 import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
@@ -698,6 +698,18 @@ void main() {
       );
       expect(h.repo.calls, hasLength(2));
       expect(h.repo.calls.last.body['have'], 'network');
+      // No outcome yet: the rows and the board's arrows are Toby's teal.
+      expect(
+        tester.widget<Text>(find.text('71.0%')).style!.color,
+        kTobyAccent.withValues(alpha: 0.6),
+      );
+      await tester.pump();
+      expect(
+        h.controller.boardArrows.value!.arrows.map(
+          (arrow) => arrow.color.withValues(alpha: 1),
+        ),
+        everyElement(kTobyArrowNeutral),
+      );
       final nf3 = tester.getTopLeft(find.text('Nf3'));
 
       last.complete(_reply(200, _payload()));
@@ -725,7 +737,8 @@ void main() {
       await _settle(tester);
 
       final chance = tester.widget<Text>(find.text('71.0%'));
-      expect(chance.style!.color, kTobyAccent);
+      // Nf3 is the best move here: its quality's tone.
+      expect(chance.style!.color, tobyRowTone(TobyMoveQuality.good));
       expect(chance.style!.fontWeight, FontWeight.w700);
       final view = tester.getRect(find.byType(WhatTobyThinks));
       // The 16 px list inset, then the row's 1 px border and 8 px padding.
@@ -1010,14 +1023,17 @@ void main() {
       expect(find.text('Nf3'), findsOneWidget);
 
       final gesture = await _hover(tester, find.text('d4'));
-      final hovered = h.controller.boardArrow.value!;
+      final hovered = h.controller.boardArrows.value!;
       expect(hovered.exclusive, isTrue);
       expect(hovered.positionKey, _positionKey);
+      final arrow = hovered.arrows.single;
       expect(
-        (orig: hovered.arrow.orig, dest: hovered.arrow.dest),
+        (orig: arrow.orig, dest: arrow.dest),
         (orig: Square.d2, dest: Square.d4),
       );
-      expect(hovered.arrow.color, kTobyArrowColor);
+      // d4 gives away half a point against Nf3: good, at full weight.
+      expect(arrow.color, kTobyArrowGood.withValues(alpha: kTobyArrowAlpha));
+      expect(arrow.scale, kTobyArrowScale);
 
       // The gap under a row belongs to it: no flicker back to the engine.
       final nf3Row = _painted(tester, '_TobyRowPainter').first;
@@ -1034,10 +1050,19 @@ void main() {
       // Off the rows, the pin stands in for the engine arrows only.
       await gesture.moveTo(const Offset(890, 690));
       await tester.pump();
-      final pinned = h.controller.boardArrow.value!;
+      final pinned = h.controller.boardArrows.value!;
       expect(pinned.exclusive, isFalse);
-      expect(pinned.arrow, isA<cg.Arrow>());
-      expect(pinned.arrow.orig, Square.g1);
+      // The pin stands in for the top three.
+      expect(pinned.arrows.single.orig, Square.g1);
+
+      // Unpinned, the board shows the top candidates again.
+      await tester.tap(find.text('Nf3'));
+      await tester.pump();
+      await gesture.moveTo(const Offset(890, 690));
+      await tester.pump();
+      final top = h.controller.boardArrows.value!;
+      expect(top.exclusive, isFalse);
+      expect(top.arrows.map((a) => a.orig), [Square.d2, Square.g1]);
     });
 
     testWidgets('a pin resets when the position changes', (tester) async {
@@ -1051,7 +1076,8 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(h.controller.pinnedUci(_positionKey), isNull);
-      expect(h.controller.boardArrow.value, isNull);
+      // Nothing read for the old position stays on the board.
+      expect(h.controller.boardArrows.value?.positionKey, isNot(_positionKey));
     });
 
     testWidgets('leaving the tab clears the pin, gives the board back the '
@@ -1061,12 +1087,12 @@ void main() {
       expect(h.controller.holdsBoard.value, isTrue);
       await tester.tap(find.text('Nf3'));
       await tester.pump();
-      expect(h.controller.boardArrow.value, isNotNull);
+      expect(h.controller.boardArrows.value, isNotNull);
 
       await _tapTab(tester, 'Stockfish');
       await tester.pump();
       expect(find.byType(WhatTobyThinks), findsNothing);
-      expect(h.controller.boardArrow.value, isNull);
+      expect(h.controller.boardArrows.value, isNull);
       expect(h.controller.holdsBoard.value, isFalse);
       final asked = h.repo.calls.length;
 
@@ -1151,7 +1177,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.pump();
       expect(h.controller.hoveredUci(_positionKey), 'd2d4');
-      expect(h.controller.boardArrow.value!.exclusive, isTrue);
+      expect(h.controller.boardArrows.value!.exclusive, isTrue);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -1164,7 +1190,9 @@ void main() {
     ) async {
       final h = await _pump(tester, premium: true, toby: true);
       await _settle(tester);
-      expect(h.controller.boardArrow.value, isNull);
+      // Before focus arrives, the board shows the top candidates.
+      expect(h.controller.boardArrows.value!.exclusive, isFalse);
+      expect(h.controller.boardArrows.value!.arrows, hasLength(2));
 
       for (var i = 0; i < 8; i++) {
         if (FocusManager.instance.primaryFocus?.debugLabel ==
@@ -1176,7 +1204,7 @@ void main() {
       }
       expect(FocusManager.instance.primaryFocus?.debugLabel, 'Toby candidates');
       expect(h.controller.hoveredUci(_positionKey), 'g1f3');
-      expect(h.controller.boardArrow.value!.exclusive, isTrue);
+      expect(h.controller.boardArrows.value!.exclusive, isTrue);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.pump();
@@ -1240,6 +1268,108 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Both players rated'), findsNothing);
       expect(h.closes, 0);
+    });
+
+    testWidgets('each row takes its move\'s quality: tone on the chance and '
+        'the fill, spoken in its label; the board draws the top three, least '
+        'likely first, weighted and coloured the same way', (tester) async {
+      Map<String, dynamic> row(
+        String uci,
+        String san,
+        double p,
+        List<double> w,
+      ) => {
+        'uci': uci,
+        'san': san,
+        'probability': p,
+        'prior': p,
+        'wdl': {'white': w[0], 'draw': w[1], 'black': w[2]},
+      };
+      final judged =
+          _payload()
+            ..['moves'] = [
+              // White to move. Expected scores: .575, .525, .375.
+              row('g1f3', 'Nf3', 0.5, [0.30, 0.55, 0.15]),
+              row('d2d4', 'd4', 0.4, [0.25, 0.55, 0.20]),
+              row('d1h5', 'Qh5', 0.1, [0.15, 0.45, 0.40]),
+            ];
+      final h = await _pump(
+        tester,
+        premium: true,
+        toby: true,
+        height: 640,
+        answer: (_, _) => _reply(200, judged),
+      );
+      await _settle(tester);
+
+      Color chance(String text) =>
+          tester.widget<Text>(find.text(text)).style!.color!;
+      expect(chance('50.0%'), tobyRowTone(TobyMoveQuality.good));
+      expect(chance('40.0%'), tobyRowTone(TobyMoveQuality.dubious));
+      expect(chance('10.0%'), tobyRowTone(TobyMoveQuality.bad));
+      final fills = [
+        for (final element in _paintedBy('_TobyRowPainter').evaluate())
+          ((element.widget as CustomPaint).painter as dynamic).fill as Color,
+      ];
+      expect(fills.map((fill) => fill.withValues(alpha: 1)), [
+        tobyRowTone(TobyMoveQuality.good),
+        tobyRowTone(TobyMoveQuality.dubious),
+        tobyRowTone(TobyMoveQuality.bad),
+      ]);
+      expect(
+        find.bySemanticsLabel(
+          'Nf3, 50 percent. After it: White 30, draw 55, Black 15',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsLabel(
+          'd4, 40 percent, dubious. After it: White 25, draw 55, Black 20',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsLabel(
+          'Qh5, 10 percent, a mistake. After it: White 15, draw 45, Black 40',
+        ),
+        findsOneWidget,
+      );
+
+      final top = h.controller.boardArrows.value!;
+      expect(top.positionKey, _positionKey);
+      expect(top.exclusive, isFalse);
+      expect(
+        [for (final a in top.arrows) (a.orig, a.dest)],
+        [
+          (Square.d1, Square.h5),
+          (Square.d2, Square.d4),
+          (Square.g1, Square.f3),
+        ],
+      );
+      expect(top.arrows.map((a) => a.color.withValues(alpha: 1)), [
+        kTobyArrowBad,
+        kTobyArrowDubious,
+        kTobyArrowGood,
+      ]);
+      expect(top.arrows.last.scale, kTobyArrowScale);
+      expect(top.arrows.last.color.a, moreOrLessEquals(kTobyArrowAlpha));
+      expect(top.arrows[1].scale, moreOrLessEquals(0.8 * 0.8));
+      expect(top.arrows[1].color.a, moreOrLessEquals(0.9 * 0.8, epsilon: 0.01));
+      expect(top.arrows.first.scale, kTobyArrowMinScale);
+      expect(
+        top.arrows.first.color.a,
+        moreOrLessEquals(kTobyArrowMinAlpha, epsilon: 0.01),
+      );
+
+      // A hovered bad move is the only arrow, at full weight in its hue.
+      await _hover(tester, find.text('Qh5'));
+      final hovered = h.controller.boardArrows.value!;
+      expect(hovered.exclusive, isTrue);
+      expect(
+        hovered.arrows.single.color,
+        kTobyArrowBad.withValues(alpha: kTobyArrowAlpha),
+      );
+      expect(hovered.arrows.single.scale, kTobyArrowScale);
     });
 
     testWidgets('a certainty reads 100% in the chance column', (tester) async {

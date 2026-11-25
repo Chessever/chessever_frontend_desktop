@@ -442,4 +442,103 @@ void main() {
       await tester.pumpAndSettle();
     });
   });
+
+  group('comfortable size on arrival', () {
+    // An 8 px gutter: a 408 px split leaves 400 px. Weights give Engine
+    // 120 and Notation 280; Engine's comfortable size is 200.
+    Widget harness({required double height, double? comfortable}) {
+      return MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 300,
+            height: height,
+            child: ResizableSplitView(
+              axis: Axis.vertical,
+              children: [
+                SplitChild(
+                  minSize: 60,
+                  initialWeight: 0.3,
+                  label: 'Engine',
+                  comfortableOnArrival: true,
+                  comfortableSize: comfortable,
+                  child: const SizedBox(key: ValueKey<String>('engine')),
+                ),
+                const SplitChild(
+                  minSize: 60,
+                  initialWeight: 0.7,
+                  label: 'Notation',
+                  child: SizedBox(key: ValueKey<String>('notation')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    double engine(WidgetTester tester) =>
+        tester.getSize(find.byKey(const ValueKey<String>('engine'))).height;
+
+    testWidgets('grows once on arrival, then shrinks and grows with the '
+        'split like any pane', (tester) async {
+      await tester.pumpWidget(harness(height: 408));
+      expect(engine(tester), closeTo(120, 0.01));
+      await tester.pumpWidget(harness(height: 408, comfortable: 200));
+      expect(engine(tester), closeTo(200, 0.01));
+
+      // Half the room: half the pane, not held at 200.
+      await tester.pumpWidget(harness(height: 208, comfortable: 200));
+      expect(engine(tester), closeTo(100, 0.01));
+      await tester.pumpWidget(harness(height: 408, comfortable: 200));
+      expect(engine(tester), closeTo(200, 0.01));
+    });
+
+    testWidgets('a drag holds through any change of window size', (
+      tester,
+    ) async {
+      await tester.pumpWidget(harness(height: 408));
+      await tester.pumpWidget(harness(height: 408, comfortable: 200));
+      await tester.timedDragFrom(
+        const Offset(150, 204),
+        const Offset(0, -100),
+        const Duration(milliseconds: 200),
+      );
+      await tester.pump();
+      final dragged = engine(tester);
+      expect(dragged, lessThan(150));
+
+      await tester.pumpWidget(harness(height: 407, comfortable: 200));
+      expect(engine(tester), closeTo(dragged, 1));
+      await tester.pumpWidget(harness(height: 408, comfortable: 200));
+      expect(engine(tester), closeTo(dragged, 0.01));
+    });
+
+    testWidgets('leaving gives back the split from before, unless the '
+        'reader moved it', (tester) async {
+      await tester.pumpWidget(harness(height: 408));
+      await tester.pumpWidget(harness(height: 408, comfortable: 200));
+      await tester.pumpWidget(harness(height: 408));
+      expect(engine(tester), closeTo(120, 0.01));
+
+      await tester.pumpWidget(harness(height: 408, comfortable: 200));
+      await tester.timedDragFrom(
+        const Offset(150, 204),
+        const Offset(0, 60),
+        const Duration(milliseconds: 200),
+      );
+      await tester.pump();
+      final dragged = engine(tester);
+      expect(dragged, greaterThan(240));
+      await tester.pumpWidget(harness(height: 408));
+      expect(engine(tester), closeTo(dragged, 0.01));
+    });
+
+    testWidgets('mounted with a comfortable size grows on the first frame', (
+      tester,
+    ) async {
+      await tester.pumpWidget(harness(height: 408, comfortable: 200));
+      expect(engine(tester), closeTo(200, 0.01));
+    });
+  });
 }

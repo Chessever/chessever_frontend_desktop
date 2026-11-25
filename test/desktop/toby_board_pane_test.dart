@@ -20,6 +20,7 @@ import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
+import 'package:chessever/desktop/services/toby/toby_quality.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
@@ -39,7 +40,7 @@ import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 
-/// The whole board pane with the What Toby Thinks tab in its engine pane:
+/// The whole board pane with the Toby Predicts tab in its engine pane:
 /// what reaches the board, what is asked, and how the header and the rail
 /// hold their sizes.
 void main() {
@@ -122,8 +123,10 @@ void main() {
     expect(_boardShapes(tester).whereType<cg.Arrow>(), isNotEmpty);
   });
 
-  testWidgets('the Toby tab takes Stockfish\'s arrows off the board; '
-      'hovering a row leaves only its arrow', (tester) async {
+  testWidgets('the Toby tab takes Stockfish\'s arrows off the board and '
+      'draws Toby\'s top candidates; hovering a row leaves only its arrow', (
+    tester,
+  ) async {
     final probe = await _pumpBoard(tester, toby: false);
     probe.emitEngine(_engineLine);
     _drawCircle(tester, Square.e4);
@@ -136,8 +139,14 @@ void main() {
     await _tapTab(tester, kTobyFeatureLabel);
     await tester.pump();
     // The engine keeps analysing (its score stays in the header), but its
-    // arrows leave with its lines.
-    expect(_boardShapes(tester), {circle});
+    // arrows leave with its lines. Toby's candidates (two in this reading)
+    // join the reader's circle, the most likely drawn last.
+    await tester.pump();
+    expect(_nonToby(tester), {circle});
+    expect(_boardShapes(tester).where(_isToby).map(_tobyArrow), [
+      (Square.d2, Square.d4),
+      (Square.g1, Square.f3),
+    ]);
 
     // The pane's default height shows one whole row (the list ends on it,
     // over Toby's attribution): the most likely move.
@@ -148,7 +157,8 @@ void main() {
 
     await gesture.moveTo(const Offset(5, 5));
     await tester.pump();
-    expect(_boardShapes(tester), {circle});
+    expect(_nonToby(tester), {circle});
+    expect(_boardShapes(tester).where(_isToby), hasLength(2));
 
     // Back on Stockfish, its arrows return.
     await _tapTab(tester, 'Stockfish');
@@ -192,20 +202,26 @@ void main() {
 
     await tester.tap(find.text('Nf3'));
     await tester.pump();
-    expect(_boardShapes(tester).where(_isToby), hasLength(1));
+    expect(_boardShapes(tester).where(_isToby).map(_tobyArrow), [
+      (Square.g1, Square.f3),
+    ]);
 
     // Focus is on Toby's rows; → still steps the game.
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pump();
-    await tester.pump();
+    // The frame that moves the board still holds the old position's
+    // arrows: the board draws none of them on the new position.
     expect(_boardFen(tester), isNot(start));
     expect(_boardShapes(tester).where(_isToby), isEmpty);
+    await tester.pump();
+    // The pin is gone; the new position's reading draws its top two.
+    expect(_boardShapes(tester).where(_isToby), hasLength(2));
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await tester.pump();
     await tester.pump();
     expect(_boardFen(tester), start);
-    expect(_boardShapes(tester).where(_isToby), isEmpty);
+    expect(_boardShapes(tester).where(_isToby), hasLength(2));
   });
 
   testWidgets('each position visited on the Toby tab is asked about once', (
@@ -297,14 +313,89 @@ void main() {
       await tester.sendKeyEvent(key);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(engineHeight(), toby, reason: key.keyLabel);
+      expect(engineHeight(), moreOrLessEquals(toby), reason: key.keyLabel);
       expect(_engineComfortableSize(tester), comfortable, reason: key.keyLabel);
     }
 
     await _tapTab(tester, TobyViewTabs.stockfishLabel);
     await tester.pump(const Duration(seconds: 1));
     expect(_engineComfortableSize(tester), isNull);
-    expect(engineHeight(), stockfish);
+    expect(engineHeight(), moreOrLessEquals(stockfish));
+  });
+
+  testWidgets('on the Toby tab the engine pane follows the reader\'s drags '
+      'and the window, as on Stockfish: a window change never undoes a '
+      'drag', (tester) async {
+    await _pumpBoard(tester, size: const Size(1440, 860), toby: false);
+    double engineHeight() => tester.getSize(find.byType(EnginePanel)).height;
+    Future<void> resize(double height) async {
+      tester.view.physicalSize = Size(1440, height);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    // Stockfish's run, for the shape of the shrink.
+    await resize(640);
+    final stockfishAt640 = engineHeight();
+    await resize(860);
+    final stockfishAt860 = engineHeight();
+    expect(stockfishAt640, lessThan(stockfishAt860));
+
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    await _tapTab(tester, kTobyFeatureLabel);
+    await tester.pump(const Duration(seconds: 1));
+    final grown = engineHeight();
+    expect(grown, moreOrLessEquals(_engineComfortableSize(tester)!));
+
+    // The window shrinks: so does the pane, in step with the split's
+    // weights, never held at its comfortable height.
+    await resize(640);
+    final at640 = engineHeight();
+    expect(at640, lessThan(grown - 1));
+    await resize(560);
+    final at560 = engineHeight();
+    expect(at560, lessThan(at640));
+    await resize(860);
+    expect(engineHeight(), moreOrLessEquals(grown, epsilon: 1));
+
+    // Drag the gutter under the engine pane up, then down.
+    Future<void> drag(double dy) async {
+      final engine = tester.getRect(find.byType(EnginePanel));
+      await tester.timedDragFrom(
+        Offset(
+          engine.center.dx,
+          engine.bottom + desktopEngineRightRailGutterThickness / 2,
+        ),
+        Offset(0, dy),
+        const Duration(milliseconds: 200),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    await drag(-80);
+    final shorter = engineHeight();
+    expect(shorter, lessThan(grown - 40));
+    // A window change of one pixel keeps the drag.
+    await resize(859);
+    expect(engineHeight(), moreOrLessEquals(shorter, epsilon: 1));
+    await resize(820);
+    expect(engineHeight(), lessThanOrEqualTo(shorter + 0.5));
+    await resize(860);
+    expect(engineHeight(), moreOrLessEquals(shorter, epsilon: 1));
+
+    await drag(200);
+    final taller = engineHeight();
+    expect(taller, greaterThan(grown + 100));
+    await resize(859);
+    expect(engineHeight(), moreOrLessEquals(taller, epsilon: 1));
+
+    // Nothing ever overflows or throws on the way.
+    expect(tester.takeException(), isNull);
+
+    // Back on Stockfish, the reader's last drag stays.
+    await _tapTab(tester, TobyViewTabs.stockfishLabel);
+    await tester.pump(const Duration(seconds: 1));
+    expect(engineHeight(), moreOrLessEquals(taller, epsilon: 1));
   });
 
   testWidgets('the tabs replace the engine\'s name in the same header row: '
@@ -688,6 +779,38 @@ void main() {
       greaterThanOrEqualTo(140),
     );
 
+    // A drag on Toby's half holds through window changes: the split does
+    // not grow it back to the three rows.
+    final dragFrom = tester.getRect(find.byType(WhatTobyThinks));
+    await tester.timedDragFrom(
+      Offset(
+        dragFrom.center.dx,
+        dragFrom.bottom + desktopEngineReportGutterThickness / 2,
+      ),
+      const Offset(0, -30),
+      const Duration(milliseconds: 200),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    final dragged = tester.getSize(find.byType(WhatTobyThinks)).height;
+    expect(dragged, lessThan(comfortable - 20));
+    for (final height in [419.0, 400.0]) {
+      tester.view.physicalSize = Size(640, height);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        tester.getSize(find.byType(WhatTobyThinks)).height,
+        lessThanOrEqualTo(dragged + 0.5),
+        reason: '$height',
+      );
+    }
+    tester.view.physicalSize = const Size(640, 420);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      tester.getSize(find.byType(WhatTobyThinks)).height,
+      moreOrLessEquals(dragged, epsilon: 1),
+    );
+
     // Stockfish's half keeps the split's own share.
     await _tapTab(tester, TobyViewTabs.stockfishLabel);
     expect(
@@ -757,8 +880,16 @@ Set<cg.Shape> _boardShapes(WidgetTester tester) =>
         .shapes
         .toSet();
 
+/// Toby's arrows, in any quality's hue.
 bool _isToby(cg.Shape shape) =>
-    shape is cg.Arrow && shape.color == kTobyArrowColor;
+    shape is cg.Arrow &&
+    TobyMoveQuality.values
+        .map(tobyArrowHue)
+        .contains(shape.color.withValues(alpha: 1));
+
+/// Everything on the board but Toby's arrows.
+Set<cg.Shape> _nonToby(WidgetTester tester) =>
+    _boardShapes(tester).where((shape) => !_isToby(shape)).toSet();
 
 (Square, Square) _tobyArrow(cg.Shape shape) {
   expect(_isToby(shape), isTrue, reason: '$shape is not Toby\'s arrow');

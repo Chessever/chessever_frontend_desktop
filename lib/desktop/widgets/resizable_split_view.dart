@@ -29,6 +29,7 @@ class SplitChild {
     this.onRestore,
     this.comfortableSize,
     this.spareAbove,
+    this.comfortableOnArrival = false,
   });
 
   final Widget child;
@@ -82,6 +83,19 @@ class SplitChild {
   /// point, like a board column wider than the board it holds.
   final double? spareAbove;
 
+  /// Applies [comfortableSize] once, when it arrives (null to a value, or
+  /// mounted with one, or after a saved layout loads), instead of on every
+  /// change to the available space. The grown size is written into the
+  /// weights, so from then on the child follows gutter drags and window
+  /// resizes exactly like a child without a comfortable size: it shrinks
+  /// with the window and a drag holds through any resize. When the value
+  /// goes back to null the weights from before the arrival come back,
+  /// unless the reader moved the split since.
+  ///
+  /// For a pane that wants room on being chosen (the engine pane's Toby
+  /// Predicts tab), not a floor that undoes the reader's drags.
+  final bool comfortableOnArrival;
+
   /// Copy with [comfortableSize] and [spareAbove] replaced.
   SplitChild withSizing({double? comfortableSize, double? spareAbove}) {
     return SplitChild(
@@ -95,6 +109,7 @@ class SplitChild {
       onRestore: onRestore,
       comfortableSize: comfortableSize,
       spareAbove: spareAbove,
+      comfortableOnArrival: comfortableOnArrival,
       child: child,
     );
   }
@@ -193,6 +208,14 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
   int? _suspendedSizingSignature;
   Timer? _comfortableAnimationTimer;
 
+  /// Children with [SplitChild.comfortableOnArrival] whose comfortable size
+  /// just arrived: grown toward it at the next layout, then forgotten.
+  final Set<int> _arrivals = <int>{};
+
+  /// The weights from before the first pending arrival, restored when the
+  /// comfortable size leaves again. Cleared by any move of the split.
+  List<double>? _preArrivalWeights;
+
   @override
   void initState() {
     super.initState();
@@ -206,8 +229,52 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
           i,
     };
     widget.controller?._attach(this);
+    _queueArrivals(widget.children);
     if (widget.storageKey != null) {
       _restore();
+    }
+  }
+
+  /// Queues every arrival child of [children] that has a comfortable size.
+  void _queueArrivals(List<SplitChild> children) {
+    for (var i = 0; i < children.length; i++) {
+      final child = children[i];
+      if (child.comfortableOnArrival && child.comfortableSize != null) {
+        _preArrivalWeights ??= List<double>.of(_weights);
+        _arrivals.add(i);
+      }
+    }
+  }
+
+  /// Arrival children whose comfortable size came or went between [before]
+  /// and [after] (same length): a coming one is queued, a leaving one gives
+  /// back the weights from before it came.
+  void _trackArrivals(List<SplitChild> before, List<SplitChild> after) {
+    var left = false;
+    for (var i = 0; i < after.length; i++) {
+      if (!after[i].comfortableOnArrival) continue;
+      final was =
+          before[i].comfortableOnArrival ? before[i].comfortableSize : null;
+      final now = after[i].comfortableSize;
+      if (was == null && now != null) {
+        _preArrivalWeights ??= List<double>.of(_weights);
+        _arrivals.add(i);
+      } else if (was != null && now == null) {
+        _arrivals.remove(i);
+        left = true;
+      }
+    }
+    if (!left) return;
+    final previous = _preArrivalWeights;
+    final stillArrived = [
+      for (var i = 0; i < after.length; i++)
+        if (after[i].comfortableOnArrival && after[i].comfortableSize != null)
+          i,
+    ];
+    if (stillArrived.isNotEmpty) return;
+    _preArrivalWeights = null;
+    if (previous != null && previous.length == _weights.length) {
+      _weights = previous;
     }
   }
 
@@ -230,7 +297,25 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
       // needed.
       _collapsed = <int>{};
       _suspendedSizingSignature = null;
-    } else if (_comfortableSizeChanged(oldWidget.children, widget.children)) {
+      _arrivals.clear();
+      _preArrivalWeights = null;
+      _queueArrivals(widget.children);
+    } else {
+      _trackArrivals(oldWidget.children, widget.children);
+      _animateComfortableChange(oldWidget.children);
+    }
+    if (oldWidget.storageKey != widget.storageKey &&
+        widget.storageKey != null) {
+      // Storage key swap (e.g. focus-mode toggle) means a different saved
+      // layout is now authoritative. Re-load so the new key's weights and
+      // collapse state apply. _restore silently ignores length mismatches,
+      // so the reset above still wins when the new key holds stale data.
+      _restore();
+    }
+  }
+
+  void _animateComfortableChange(List<SplitChild> before) {
+    if (_comfortableSizeChanged(before, widget.children)) {
       // A pane that now needs more room, such as a toolbar that gained the
       // Explorer controls, slides to it instead of jumping. The first
       // measurement (null to a value) lands without motion.
@@ -241,14 +326,6 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
         if (!mounted || ticket != _animationTicket) return;
         setState(() => _animateLayout = false);
       });
-    }
-    if (oldWidget.storageKey != widget.storageKey &&
-        widget.storageKey != null) {
-      // Storage key swap (e.g. focus-mode toggle) means a different saved
-      // layout is now authoritative. Re-load so the new key's weights and
-      // collapse state apply. _restore silently ignores length mismatches,
-      // so the reset above still wins when the new key holds stale data.
-      _restore();
     }
   }
 
@@ -290,6 +367,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
 
     final sizes = _resolveVisibleSizes(visible, available);
     if (_resizeVisiblePane(sizes, visible, index, sizePx)) {
+      _preArrivalWeights = null;
       _suspendedSizingSignature = _sizingSignature(visible, available);
       _setWeightsFromVisibleSizes(sizes, visible);
       if (persist) _scheduleSave();
@@ -346,6 +424,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
               : nextOtherWeight / others.length;
     }
 
+    _preArrivalWeights = null;
     _animationTicket++;
     setState(() {
       _animateLayout = false;
@@ -387,6 +466,9 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
         // A saved layout is a starting point, not a drag: it still grows a
         // pane to its comfortable size when the window has room.
         _suspendedSizingSignature = null;
+        _arrivals.clear();
+        _preArrivalWeights = null;
+        _queueArrivals(widget.children);
       });
     } catch (_) {
       // Bad stored value — fall back to initial layout silently.
@@ -636,11 +718,42 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
     if (_comfortableSizingActive(visible, available)) {
       _growTowardComfortableSizes(sizes, visible);
     }
+    _applyArrivals(sizes, visible);
     return sizes;
   }
 
+  /// Grows the visible pending arrivals toward their comfortable sizes once
+  /// and writes the result into the weights, so later layouts (a smaller
+  /// window, a drag) start from it instead of growing the pane again.
+  void _applyArrivals(Map<int, double> sizes, List<int> visible) {
+    final arriving = [
+      for (final i in visible)
+        if (_arrivals.contains(i) &&
+            widget.children[i].comfortableOnArrival &&
+            widget.children[i].comfortableSize != null)
+          i,
+    ];
+    if (arriving.isEmpty) return;
+    _arrivals.removeAll(arriving);
+    if (visible.length < 2) return;
+    _growTowardComfortableSizes(sizes, visible, only: arriving.toSet());
+    final visibleTotal = visible.fold<double>(0, (a, i) => a + (sizes[i] ?? 0));
+    if (visibleTotal <= 0) return;
+    final visibleWeightSum = visible.fold<double>(0, (a, i) => a + _weights[i]);
+    final next = List<double>.from(_weights);
+    for (final i in visible) {
+      next[i] = (sizes[i] ?? 0) / visibleTotal * visibleWeightSum;
+    }
+    // Written during layout: the sizes returned already show it.
+    _weights = next;
+  }
+
   bool _comfortableSizingActive(List<int> visible, double available) {
-    if (!visible.any((i) => widget.children[i].comfortableSize != null)) {
+    if (!visible.any(
+      (i) =>
+          widget.children[i].comfortableSize != null &&
+          !widget.children[i].comfortableOnArrival,
+    )) {
       return false;
     }
     return _suspendedSizingSignature != _sizingSignature(visible, available);
@@ -653,7 +766,8 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
       available.round(),
       for (final i in visible) ...[
         i,
-        widget.children[i].comfortableSize?.round(),
+        if (!widget.children[i].comfortableOnArrival)
+          widget.children[i].comfortableSize?.round(),
         widget.children[i].spareAbove?.round(),
       ],
     ]);
@@ -663,19 +777,33 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
   /// its siblings can spare, nearest sibling first. A sibling never gives up
   /// space below its own comfortable size, its [SplitChild.spareAbove], or
   /// its minimum.
-  void _growTowardComfortableSizes(Map<int, double> sizes, List<int> visible) {
+  ///
+  /// [only] limits the growth to those children (the arrivals); without it,
+  /// every child but the arrival ones grows.
+  void _growTowardComfortableSizes(
+    Map<int, double> sizes,
+    List<int> visible, {
+    Set<int>? only,
+  }) {
     for (final index in visible) {
       final child = widget.children[index];
       final comfortable = child.comfortableSize;
       if (comfortable == null) continue;
+      if (only != null ? !only.contains(index) : child.comfortableOnArrival) {
+        continue;
+      }
       final target = math.min(comfortable, child.maxSize ?? double.infinity);
       var deficit = target - (sizes[index] ?? 0);
       if (deficit <= 0.5) continue;
       for (final donor in _resizeOrder(visible, index)) {
         final donorChild = widget.children[donor];
+        final donorComfortable =
+            donorChild.comfortableOnArrival
+                ? 0.0
+                : donorChild.comfortableSize ?? 0;
         final floor = math.max(
           donorChild.minSize,
-          math.max(donorChild.comfortableSize ?? 0, donorChild.spareAbove ?? 0),
+          math.max(donorComfortable, donorChild.spareAbove ?? 0),
         );
         final spare = (sizes[donor] ?? 0) - floor;
         if (spare <= 0) continue;
@@ -693,6 +821,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
     List<SplitChild> after,
   ) {
     for (var i = 0; i < after.length; i++) {
+      if (after[i].comfortableOnArrival) continue;
       final was = before[i].comfortableSize;
       final now = after[i].comfortableSize;
       if (was != null && now != null && (was - now).abs() >= 1) return true;
@@ -746,6 +875,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
     // dragged below its comfortable size from a pane on the far side of the
     // split, which the user never touched.
     _suspendedSizingSignature = _sizingSignature(visible, available);
+    _preArrivalWeights = null;
     _setWeightsFromVisibleSizes(sizes, visible);
   }
 

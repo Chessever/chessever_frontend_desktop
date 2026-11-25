@@ -6,7 +6,7 @@ import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 
-/// What Toby Thinks in the shared access policy. Toby's prediction is free
+/// Toby Predicts in the shared access policy. Toby's prediction is free
 /// on every edition, for guests too: Gamebase decides who may read it (its
 /// next-move access setting), so the client never gates the tab or a
 /// request, and nothing in the app asks the policy before reading. The
@@ -29,7 +29,7 @@ final tobyReaderHasPremiumProvider = Provider<bool>(
 
 /// The upgrade action of the view's notice when Gamebase answers a reading
 /// with `premium_required` (its access setting is stricter than the
-/// client's). Opens the window's Premium prompt for What Toby Thinks;
+/// client's). Opens the window's Premium prompt for Toby Predicts;
 /// [resume] runs once after a verified purchase, to ask again. Call only
 /// from an explicit tap.
 Future<bool> presentTobyServerGate(

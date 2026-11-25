@@ -14,7 +14,7 @@ import 'package:chessever/theme/app_theme.dart';
 /// Rows that fit whole are untouched, and nothing fades when the edge falls
 /// between two rows.
 ///
-/// The engine pane's Stockfish lines and its What Toby Thinks rows both use
+/// The engine pane's Stockfish lines and its Toby Predicts rows both use
 /// it, so the two lists end the same way.
 class CutItemFade extends StatefulWidget {
   const CutItemFade({

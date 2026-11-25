@@ -1,7 +1,7 @@
 /// The one name the app gives the Toby move-prediction panel. Every surface
 /// (the panel header, its paywall, menus) reads it from here, so the label
 /// can change in one place.
-const String kTobyFeatureLabel = 'What Toby Thinks';
+const String kTobyFeatureLabel = 'Toby Predicts';
 
 /// The attribution Toby's licence requires, verbatim, shown whenever the
 /// panel shows a reading.

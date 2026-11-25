@@ -240,7 +240,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   final Widget? enginePanel;
 
   /// Whether the engine pane has a list to show: engine analysis is on, or
-  /// the reader chose the What Toby Thinks tab (which works with the engine
+  /// the reader chose the Toby Predicts tab (which works with the engine
   /// off). Drives collapse/restore of the engine pane so it reclaims space
   /// when both it and the report are off.
   final bool showEngine;
@@ -398,12 +398,15 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   /// line and Toby's attribution; then the notation again. Only a rail
   /// shorter than the engine pane's least height shrinks both.
   ///
-  /// On the What Toby Thinks tab the engine pane, [width] wide, also grows
-  /// toward [EnginePanel.railComfortableHeight] (the header, Toby's reading
-  /// line, three whole rows and the attribution) with height the notation
-  /// can spare above its minimum. Choosing a tab can move the split; moving
-  /// through the game never does, because that height follows the tab
-  /// alone.
+  /// On choosing the Toby Predicts tab the engine pane, [width] wide, grows
+  /// once toward [EnginePanel.railComfortableHeight] (the header, Toby's
+  /// reading line, three whole rows and the attribution) with height the
+  /// notation can spare above its minimum. After that the split's weights
+  /// decide, as on Stockfish: the pane follows the reader's drags (taller
+  /// and shorter) and shrinks and grows with the window
+  /// ([SplitChild.comfortableOnArrival]); back on Stockfish the split
+  /// returns to where it was unless the reader moved it. Moving through the
+  /// game never moves the split, because that height follows the tab alone.
   List<SplitChild> _railSplitChildren(
     double height, {
     required double width,
@@ -435,6 +438,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
         label: 'Engine',
         collapsedIcon: Icons.memory_rounded,
         onRestore: _resumeEngineFromRail,
+        comfortableOnArrival: true,
         comfortableSize: switch (widget.enginePanel) {
           final EnginePanel engine => engine.railComfortableHeight(
             context,
