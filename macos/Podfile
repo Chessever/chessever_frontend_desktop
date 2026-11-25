@@ -29,6 +29,13 @@ flutter_macos_podfile_setup
 target 'Runner' do
   use_frameworks! :linkage => :static
 
+  # download.onnxruntime.ai stopped serving the ONNX Runtime pod archives in
+  # November 2026, so trunk's onnxruntime-c/-objc 1.22.0 cannot install.
+  # These podspecs are trunk's, with the source moved to a SHA-256 pinned
+  # mirror (see the vendor-onnxruntime-pods-1.22.0 release notes).
+  pod 'onnxruntime-c', :podspec => 'vendor/onnxruntime/onnxruntime-c.podspec.json'
+  pod 'onnxruntime-objc', :podspec => 'vendor/onnxruntime/onnxruntime-objc.podspec.json'
+
   flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths
