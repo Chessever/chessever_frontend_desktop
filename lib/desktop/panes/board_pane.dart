@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/arrow_move_eval_labels.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -4629,7 +4630,8 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void changeEngineLines(int delta) {
-      final current = ref.read(boardAnalysisPreferencesProvider).stockfishLineIndex;
+      final current =
+          ref.read(boardAnalysisPreferencesProvider).stockfishLineIndex;
       final next = (current + delta).clamp(
         0,
         EngineSettings.principalVariationLabels.length - 1,
@@ -4638,7 +4640,9 @@ class _BoardPaneContent extends HookConsumerWidget {
         showToast(delta > 0 ? 'Maximum engine lines' : 'Minimum engine lines');
         return;
       }
-      ref.read(boardAnalysisPreferencesProvider.notifier).setStockfishLineIndex(next);
+      ref
+          .read(boardAnalysisPreferencesProvider.notifier)
+          .setStockfishLineIndex(next);
       final count = EngineSettings.principalVariationLabels[next];
       if (context.mounted) {
         showToast('$count engine line${count == '1' ? '' : 's'}');
@@ -4758,10 +4762,14 @@ class _BoardPaneContent extends HookConsumerWidget {
           return;
         }
 
-        final shareShowsEval = shouldShowDesktopBoardEvalBar(shareSettings, analysisPrefs);
-        final shareEvalState = shareShowsEval
-            ? ref.read(boardEvalProvider(position.fen))
-            : const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
+        final shareShowsEval = shouldShowDesktopBoardEvalBar(
+          shareSettings,
+          analysisPrefs,
+        );
+        final shareEvalState =
+            shareShowsEval
+                ? ref.read(boardEvalProvider(position.fen))
+                : const BoardEvalState(pvs: [], isEvaluating: false, depth: 0);
         // Share/GIF follows the same activation opt-in as Copy and Save.
         final baseShareGame = chessGame.value;
         final evaluatedShareGame = hydrateGameWithReport(baseShareGame);
@@ -6305,7 +6313,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                                       .read(engineSettingsProviderNew)
                                       .valueOrNull ??
                                   const EngineSettings();
-                              final prefs = ref.read(boardAnalysisPreferencesProvider);
+                              final prefs = ref.read(
+                                boardAnalysisPreferencesProvider,
+                              );
                               final evalBarReservation =
                                   shouldShowDesktopBoardEvalBar(settings, prefs)
                                       ? _BoardArea.evalBarReservation
@@ -6438,8 +6448,11 @@ class _BoardPaneContent extends HookConsumerWidget {
                               final view = boardViewAt(previewStep);
                               final activeEvalTarget = view.evalTarget;
                               final boardPosition = view.position;
-                              final prefs = ref.watch(boardAnalysisPreferencesProvider);
-                              final showToby = prefs.tobyAnalysis &&
+                              final prefs = ref.watch(
+                                boardAnalysisPreferencesProvider,
+                              );
+                              final showToby =
+                                  prefs.tobyAnalysis &&
                                   tobyReadsVariant(pgnHeaders.value['Variant']);
                               final toby = WhatTobyThinks(
                                 target: tobyTargetAt(previewStep),
@@ -6609,12 +6622,14 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 trailingActions: boardActionCluster,
                                 onFullToolbarWidthChanged:
                                     publishAnalysisToolbarWidth,
-                                showEngine: !prefs.paused &&
+                                showEngine:
+                                    !prefs.paused &&
                                     (prefs.stockfishAnalysis || showToby),
                                 onRestoreEngine:
                                     () => ref
                                         .read(
-                                          boardAnalysisPreferencesProvider.notifier,
+                                          boardAnalysisPreferencesProvider
+                                              .notifier,
                                         )
                                         .setStockfishAnalysis(true),
                                 enginePanel: EnginePanel(
@@ -6672,10 +6687,13 @@ class _BoardPaneContent extends HookConsumerWidget {
                                     onPressed: openBoardContextMenu,
                                   ),
                                   toby: showToby ? toby : null,
-                                  tobyArrowsOnly: !showToby &&
-                                          tobyReadsVariant(pgnHeaders.value['Variant'])
-                                      ? toby
-                                      : null,
+                                  tobyArrowsOnly:
+                                      !showToby &&
+                                              tobyReadsVariant(
+                                                pgnHeaders.value['Variant'],
+                                              )
+                                          ? toby
+                                          : null,
                                   tobyTabSelected: tobyTab,
                                   unifiedAnalysis: true,
                                 ),
@@ -10024,10 +10042,10 @@ class _BoardArea extends ConsumerWidget {
     // here rebuilt this whole area, both player headers included, every time
     // a first PV move changed, which at low depth is several times in the
     // first second after each move, while the piece slide is running.
-    final engineArrowFen = showEngineAnalysis &&
-            arrowSource == BoardAnalysisArrows.stockfish
-        ? analysisFen
-        : null;
+    final engineArrowFen =
+        showEngineAnalysis && arrowSource == BoardAnalysisArrows.stockfish
+            ? analysisFen
+            : null;
     final showEvalBar = shouldShowDesktopBoardEvalBar(engineSettings, prefs);
     final showTobyBar = shouldShowDesktopBoardTobyBar(
       engineSettings,
@@ -10337,8 +10355,11 @@ class _BoardArea extends ConsumerWidget {
                   showTobyBar: showTobyBar,
                   tobyBarSettled: tobyBarSettled,
                   showEngineAnalysis: showEvalBar && !suppressEngineAnalysis,
-                  drawTobyArrows: !prefs.paused && !threatActive &&
-                      isOnScreen && arrowSource == BoardAnalysisArrows.toby,
+                  drawTobyArrows:
+                      !prefs.paused &&
+                      !threatActive &&
+                      isOnScreen &&
+                      arrowSource == BoardAnalysisArrows.toby,
                   threatActive: threatActive,
                   engineArrowFen: engineArrowFen,
                   hasHeaders: hasHeaders,
@@ -10493,6 +10514,7 @@ class _BoardArea extends ConsumerWidget {
               gameEnding: gameEnding,
               onWheelStep: onWheelStep,
               engineArrowFen: engineArrowFen,
+              moveEvalFen: showEngineAnalysis ? analysisFen : null,
               tobyArrows: tobyPanel.boardArrows,
               drawTobyArrows: drawTobyArrows,
             ),
@@ -10719,6 +10741,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.gameEnding,
     required this.onWheelStep,
     required this.engineArrowFen,
+    required this.moveEvalFen,
     required this.tobyArrows,
     required this.drawTobyArrows,
   });
@@ -10747,6 +10770,10 @@ class _BoardWithAnnotations extends ConsumerWidget {
 
   /// Position whose engine lines draw arrows, or null when arrows are off.
   final String? engineArrowFen;
+
+  /// Position the engine analyses, or null when analysis is off. Arrows the
+  /// reader draws carry the eval after their move only while it is on.
+  final String? moveEvalFen;
 
   /// Toby's top three candidates, or the hovered or pinned one. Listened to
   /// here alone, so a hover rebuilds the chessboard and nothing around it.
@@ -10962,14 +10989,28 @@ class _BoardWithAnnotations extends ConsumerWidget {
                   ),
             ),
           ),
+          if (moveEvalFen != null)
+            Positioned.fill(
+              child: ArrowMoveEvalLabels(
+                fen: fen,
+                arrows: [
+                  for (final shape in [...positionShapes, ...pgnShapes])
+                    if (shape is cg.Arrow) shape,
+                ],
+                boardSize: boardSize,
+                orientation: orientation,
+                liveLinesFen: moveEvalFen,
+              ),
+            ),
           // A hovered or pinned Toby candidate's class mark, drawn as the
           // report's mark is; it stands in for the report's on that square.
           ValueListenableBuilder<TobyBoardArrows?>(
             valueListenable: tobyArrows,
             builder: (context, toby, _) {
-              final mark = drawTobyArrows && toby?.positionKey == fen
-                  ? toby?.mark
-                  : null;
+              final mark =
+                  drawTobyArrows && toby?.positionKey == fen
+                      ? toby?.mark
+                      : null;
               if (mark == null) return badge ?? const SizedBox.shrink();
               return Stack(
                 children: [
