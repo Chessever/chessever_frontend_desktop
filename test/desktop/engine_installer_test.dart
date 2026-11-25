@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dartchess/dartchess.dart' show Side;
 
+import 'package:chessever/desktop/services/play/engine_catalog.dart';
 import 'package:chessever/desktop/services/play/engine_installer.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 
@@ -213,5 +214,19 @@ void main() {
         );
       },
     );
+  });
+
+  test('Maia downloads only from our own content-addressed mirror', () {
+    final artifacts = kEngineCatalog[BotEngineKind.maia]!.artifacts;
+    expect(artifacts, isNotEmpty);
+    for (final artifact in artifacts) {
+      final uri = Uri.parse(artifact.url);
+      // maiachess.com answers non-browser clients with HTTP 429, so the
+      // model must come from chessever.com, addressed by its own sha256.
+      expect(uri.scheme, 'https');
+      expect(uri.host, 'chessever.com');
+      expect(uri.pathSegments, contains(artifact.sha256));
+      expect(artifact.url, isNot(contains('maiachess')));
+    }
   });
 }

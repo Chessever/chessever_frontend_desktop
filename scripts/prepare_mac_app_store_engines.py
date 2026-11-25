@@ -62,12 +62,12 @@ subprocess.run(["lipo", "-create", *stockfish, "-output", str(root / "stockfish"
 for name, url, digest in [
     ("lc0", "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.0/lc0-v0.32.0-macos_12.6.1", "2d276ad784fc0a9a00dc6e0a71d0340fb8805acf27a1874c769f3d8e7c60c81e"),
     ("weights.pb.gz", "https://storage.lczero.org/files/networks-contrib/t1-256x10-distilled-swa-2432500.pb.gz", "bc27a6cae8ad36f2b9a80a6ad9dabb0d6fda25b1e7f481a79bc359e14f563406"),
-    # maiachess.com sits behind a Vercel bot checkpoint that answers CI with
-    # HTTP 429, so our byte-identical, content-addressed copy comes first.
-    ("maia3_simplified.onnx", [
-        "https://chessever.com/updates/engines/maia3/405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856/maia3_simplified.onnx",
-        "https://www.maiachess.com/maia3/maia3_simplified.onnx",
-    ], "405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856"),
+    # Maia downloads only from our own content-addressed copy, never from
+    # maiachess.com (a Vercel bot checkpoint answers non-browser clients with
+    # HTTP 429). Same rule as the Play catalog in engine_catalog.dart.
+    ("maia3_simplified.onnx",
+     "https://chessever.com/updates/engines/maia3/405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856/maia3_simplified.onnx",
+     "405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856"),
 ]:
     shutil.copyfile(fetch(name, url, digest), root / name)
 for name in ("stockfish", "lc0"):

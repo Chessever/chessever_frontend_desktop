@@ -214,7 +214,14 @@ final Map<BotEngineKind, EngineDescriptor> kEngineCatalog = {
       EngineArtifact(
         platform: 'universal',
         arch: 'universal',
-        url: 'https://www.maiachess.com/maia3/maia3_simplified.onnx',
+        // maiachess.com sits behind a Vercel bot checkpoint that answers
+        // the app's HttpClient with HTTP 429, so Play could never prepare
+        // Maia. This is our byte-identical, content-addressed copy (the
+        // sha256 below is in the path); it also allows app.chessever.com.
+        url:
+            'https://chessever.com/updates/engines/maia3/'
+            '405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856/'
+            'maia3_simplified.onnx',
         sha256:
             '405bf76c15727dad8728b352c06a8f3c1b80fb2760e8d666b32485c63d75b856',
         archiveKind: 'raw',

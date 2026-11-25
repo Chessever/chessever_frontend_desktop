@@ -115,9 +115,10 @@ class EngineInstallNotifier extends StateNotifier<EngineInstallState> {
           ? EngineInstallStatus.unsupported
           : EngineInstallStatus.installed;
 
-  /// Stockfish runs in a Web Worker; Maia's ONNX model loads straight from
-  /// maiachess.com (it allows any origin, and at 46 MB exceeds what the app
-  /// itself can host). Leela needs a native binary.
+  /// Stockfish runs in a Web Worker; Maia's ONNX model loads from our
+  /// content-addressed mirror on chessever.com (CORS allows app.chessever.com;
+  /// at 46 MB it is too large to ship inside the web build). Leela needs a
+  /// native binary.
   static String? _webEnginePath(BotEngineKind kind) => switch (kind) {
     BotEngineKind.stockfish => kWebStockfishEnginePath,
     BotEngineKind.maia => kEngineCatalog[kind]?.artifacts.first.url,
