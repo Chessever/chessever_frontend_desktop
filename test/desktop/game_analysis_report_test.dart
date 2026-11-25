@@ -416,7 +416,7 @@ void main() {
       );
     });
 
-    test('throwing a clear win produces Missed Win', () {
+    test('throwing a clear win produces a Blunder', () {
       expect(
         _classifyCp(
           game,
@@ -426,11 +426,7 @@ void main() {
           beforeWin: 80,
           afterWin: 50,
         ),
-        anyOf(
-          GameMoveClassification.missedWin,
-          GameMoveClassification.blunder,
-          GameMoveClassification.mistake,
-        ),
+        GameMoveClassification.blunder,
       );
     });
 

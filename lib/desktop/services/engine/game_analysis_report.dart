@@ -1804,7 +1804,7 @@ GameMoveClassification? _classifyGameReportMoveCore({
       index: index,
       game: game,
       positions: positions,
-      moverChange: moverChange,
+      winPercentages: winPercentages,
       moverBefore: moverBefore,
       moverAfter: moverAfter,
       previousMoveClassification: previousMoveClassification,
@@ -2052,7 +2052,7 @@ GameMoveClassification? _classifyGameReportMoveCore({
     index: index,
     game: game,
     positions: positions,
-    moverChange: moverChange,
+    winPercentages: winPercentages,
     moverBefore: moverBefore,
     moverAfter: moverAfter,
     previousMoveClassification: previousMoveClassification,
@@ -2092,6 +2092,8 @@ LichessJudgement? lichessJudgementForReportMove({
   );
 }
 
+const double _missedChanceAdvantagePp = 60;
+
 /// The negative half of the verdict: lichess's judgment, with ChessEver's
 /// decided-outcome amnesty and Missed Win layered on top of it.
 ///
@@ -2104,7 +2106,7 @@ GameMoveClassification? _missedOrLoss({
   required int index,
   required ChessGame game,
   required List<GameReportPosition> positions,
-  required double moverChange,
+  required List<double> winPercentages,
   required double moverBefore,
   required double moverAfter,
   required GameMoveClassification? previousMoveClassification,
@@ -2126,18 +2128,23 @@ GameMoveClassification? _missedOrLoss({
   );
   if (judgement == null) return null;
 
-  // ── Missed Win ─────────────────────────────────────────────────────────
-  // Ours, not lichess's, and deliberately gated behind a judgment: it only ever
-  // *renames* an error lichess already found, so the set of moves carrying a
-  // negative symbol stays exactly lichess's set. A missed conversion after the
-  // opponent's blunder, then throwing a clear win outright.
-  if (previousMoveClassification == GameMoveClassification.blunder &&
-      moverChange < -5 &&
-      moverBefore >= 60) {
-    return GameMoveClassification.missedWin;
-  }
-  if (moverBefore >= 75 && moverAfter <= 55 && moverChange <= -15) {
-    return GameMoveClassification.missedWin;
+  // A missed chance returns to the position's balance before the opponent
+  // offered an advantage. A reply that creates a worse outcome keeps its
+  // ordinary error verdict.
+  if (index > 0 &&
+      previousMoveClassification?.isNegative == true &&
+      moverBefore >= _missedChanceAdvantagePp &&
+      moverAfter < _missedChanceAdvantagePp &&
+      moverAfter > 0) {
+    final earlierWin = winPercentages[index - 1];
+    final moverBaseline = game.mainline[index].turn == ChessColor.white
+        ? earlierWin
+        : 100 - earlierWin;
+    if (moverBaseline < _missedChanceAdvantagePp &&
+        moverBefore - moverBaseline >= 10 &&
+        (moverAfter - moverBaseline).abs() <= 5) {
+      return GameMoveClassification.missedWin;
+    }
   }
 
   return switch (judgement) {
