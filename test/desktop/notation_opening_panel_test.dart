@@ -9,6 +9,7 @@ import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/engine_panel.dart' show EnginePanel;
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -150,6 +151,69 @@ void main() {
       );
       expect(split.children.first.minSize, 120);
       expect(split.children.last.minSize, 120);
+    },
+  );
+
+  testWidgets(
+    'a rail too short for both minimums keeps the engine pane readable: '
+    'the notation yields first',
+    (tester) async {
+      final repository = _FakeExplorerRepository();
+      final engine = find.byKey(const ValueKey<String>('engine-panel'));
+      final splitFinder = find.byWidgetPredicate(
+        (widget) =>
+            widget is ResizableSplitView &&
+            widget.storageKey == desktopEngineRightRailSplitStorageKey,
+      );
+
+      Future<double> pumpTrack(double track) async {
+        await tester.pumpWidget(
+          _harness(
+            repository: repository,
+            enginePanel: const SizedBox(key: ValueKey<String>('engine-panel')),
+            height: 720,
+          ),
+        );
+        await tester.pump();
+        // Everything in the panel that is not the split: the strip under it.
+        final strip =
+            tester.getSize(find.byType(NotationOpeningPanel)).height -
+            tester.getSize(splitFinder).height;
+        await tester.pumpWidget(
+          _harness(
+            repository: repository,
+            enginePanel: const SizedBox(key: ValueKey<String>('engine-panel')),
+            height: strip + desktopEngineRightRailGutterThickness + track,
+          ),
+        );
+        await tester.pump();
+        expect(
+          tester.getSize(splitFinder).height -
+              desktopEngineRightRailGutterThickness,
+          moreOrLessEquals(track),
+        );
+        return tester.getSize(engine).height;
+      }
+
+      // Room for both minimums: each keeps 120.
+      expect(await pumpTrack(260), greaterThanOrEqualTo(120));
+      // 40 px short: the notation gives them up, the engine pane keeps 120.
+      expect(await pumpTrack(200), moreOrLessEquals(120));
+      var split = tester.widget<ResizableSplitView>(splitFinder);
+      expect(split.children.first.minSize, 120);
+      expect(split.children.last.minSize, 80);
+      // Shorter than the notation's floor allows: the engine pane goes down
+      // to the least it reads at, and no further.
+      final least = EnginePanel.leastHeight(
+        tester.element(find.byType(NotationOpeningPanel)),
+      );
+      expect(least, lessThan(120));
+      expect(
+        await pumpTrack(least + desktopNotationRailFloor - 20),
+        moreOrLessEquals(least),
+      );
+      split = tester.widget<ResizableSplitView>(splitFinder);
+      expect(split.children.first.minSize, moreOrLessEquals(least));
     },
   );
 

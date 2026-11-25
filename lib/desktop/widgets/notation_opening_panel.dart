@@ -28,8 +28,7 @@ import 'package:chessever/desktop/widgets/desktop_opening_explorer.dart';
 import 'package:chessever/desktop/widgets/desktop_position_games_table.dart';
 import 'package:chessever/desktop/widgets/deferred_pointer_state.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
-import 'package:chessever/desktop/widgets/engine_panel.dart'
-    show desktopEngineHeaderHeight;
+import 'package:chessever/desktop/widgets/engine_panel.dart' show EnginePanel;
 import 'package:chessever/desktop/widgets/explorer_filter_bar.dart';
 import 'package:chessever/desktop/widgets/explorer_filters_popover.dart';
 import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
@@ -62,8 +61,16 @@ const double desktopEngineRightRailInitialWeight = 0.1763;
 @visibleForTesting
 const double desktopEngineRightRailGutterThickness = 12;
 
-/// The least notation keeps under the engine pane.
-const double _notationMinimumHeight = 120;
+/// The least height of the engine pane and of the notation under it, where
+/// the right rail has room for both.
+@visibleForTesting
+const double desktopEngineRightRailPaneMinimum = 120;
+
+/// What the notation yields to first on a rail too short for both
+/// minimums (its event line and a line of moves), so the engine pane keeps
+/// its own.
+@visibleForTesting
+const double desktopNotationRailFloor = 72;
 
 final localOpeningTreeCatalogProvider =
     FutureProvider.autoDispose<List<LocalOpeningTreeCatalogEntry>>((ref) async {
@@ -147,7 +154,6 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.showReport = true,
     this.onToggleReport,
     this.enginePanel,
-    this.engineComfortableSize,
     this.showEngine = true,
     this.onRestoreEngine,
   });
@@ -233,14 +239,10 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// the notation content fills the pane directly.
   final Widget? enginePanel;
 
-  /// Height at which the engine pane shows its header, two Stockfish rows and
-  /// the Toby panel. While the engine is on, the split grows the pane toward
-  /// it with room notation can spare. It changes only when Toby expands or
-  /// collapses, so stepping through a game never moves the boundary.
-  final double? engineComfortableSize;
-
-  /// Whether engine analysis is on. Drives collapse/restore of the engine
-  /// pane so it reclaims space when both it and the report are off.
+  /// Whether the engine pane has a list to show: engine analysis is on, or
+  /// the reader chose the What Toby Thinks tab (which works with the engine
+  /// off). Drives collapse/restore of the engine pane so it reclaims space
+  /// when both it and the report are off.
   final bool showEngine;
 
   /// Invoked when the collapsed engine rail is restored (turns the engine on).
@@ -317,6 +319,13 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   final FocusNode _notationFocusNode = FocusNode(debugLabel: 'notation-page');
   final _explorerSourceController = _ExplorerSourceController();
 
+  /// The engine pane and the notation keep their state, and keyboard focus,
+  /// when the rail switches between the header-only column and the split:
+  /// the engine's power button does that, and so does choosing a tab in the
+  /// engine header while the engine is off.
+  final GlobalKey _enginePaneKey = GlobalKey(debugLabel: 'Engine pane');
+  final GlobalKey _notationContentKey = GlobalKey(debugLabel: 'Notation');
+
   /// Controller for the internal engine ↕ notation split (index 0 = engine).
   final ResizableSplitViewController _railController =
       ResizableSplitViewController();
@@ -378,6 +387,76 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   }
 
   void _resumeEngineFromRail() => widget.onRestoreEngine?.call();
+
+  /// The engine pane over the notation, in a rail [height] tall.
+  ///
+  /// Each keeps [desktopEngineRightRailPaneMinimum] where the rail has room
+  /// for both. A shorter rail (a short window with the live video above)
+  /// gives way in order: the notation first, down to
+  /// [desktopNotationRailFloor] (it scrolls); then the engine pane, down to
+  /// [EnginePanel.leastHeight], where it still shows its header, one whole
+  /// line and Toby's attribution; then the notation again. Only a rail
+  /// shorter than the engine pane's least height shrinks both.
+  ///
+  /// On the What Toby Thinks tab the engine pane, [width] wide, also grows
+  /// toward [EnginePanel.railComfortableHeight] (the header, Toby's reading
+  /// line, three whole rows and the attribution) with height the notation
+  /// can spare above its minimum. Choosing a tab can move the split; moving
+  /// through the game never does, because that height follows the tab
+  /// alone.
+  List<SplitChild> _railSplitChildren(
+    double height, {
+    required double width,
+    required Widget enginePane,
+    required Widget notationContent,
+  }) {
+    final track = height - desktopEngineRightRailGutterThickness;
+    var engineMinimum = desktopEngineRightRailPaneMinimum;
+    var notationMinimum = desktopEngineRightRailPaneMinimum;
+    if (track.isFinite && track < engineMinimum + notationMinimum) {
+      notationMinimum = math.max(
+        desktopNotationRailFloor,
+        track - engineMinimum,
+      );
+      if (track < engineMinimum + notationMinimum) {
+        engineMinimum = math.max(
+          math.min(EnginePanel.leastHeight(context), engineMinimum),
+          track - notationMinimum,
+        );
+        if (track < engineMinimum + notationMinimum) {
+          notationMinimum = math.max(0, track - engineMinimum);
+        }
+      }
+    }
+    return [
+      SplitChild(
+        minSize: engineMinimum,
+        initialWeight: desktopEngineRightRailInitialWeight,
+        label: 'Engine',
+        collapsedIcon: Icons.memory_rounded,
+        onRestore: _resumeEngineFromRail,
+        comfortableSize: switch (widget.enginePanel) {
+          final EnginePanel engine => engine.railComfortableHeight(
+            context,
+            width: width,
+          ),
+          _ => null,
+        },
+        // Stockfish repaints up to 12.5 Hz. Keep it from repainting the
+        // explorer and games tables below.
+        child: enginePane,
+      ),
+      SplitChild(
+        // Compact floor so the report and notation can both be resized
+        // meaningfully on short windows.
+        minSize: notationMinimum,
+        initialWeight: 1 - desktopEngineRightRailInitialWeight,
+        label: 'Notation',
+        collapsedIcon: Icons.format_list_numbered_rounded,
+        child: notationContent,
+      ),
+    ];
+  }
 
   void _rememberBuiltPage(int page) {
     if (page > 0) _buildExplorerPage = true;
@@ -670,7 +749,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               : const ColoredBox(color: kBlack2Color),
     );
     final buildTreeScoped = widget.explorerScope != null;
-    final Widget notationContent =
+    final Widget notationStack =
         explorerVisible
             ? ResizableSplitView(
               axis: Axis.vertical,
@@ -698,6 +777,15 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
               ],
             )
             : notationPane;
+    final Widget notationContent = KeyedSubtree(
+      key: _notationContentKey,
+      child: notationStack,
+    );
+    final enginePanel = widget.enginePanel;
+    final Widget? enginePane =
+        enginePanel == null
+            ? null
+            : RepaintBoundary(key: _enginePaneKey, child: enginePanel);
     return Focus(
       onKeyEvent: _handleRailKey,
       child: Container(
@@ -710,71 +798,39 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
             // toolbar pinned and visible.
             Expanded(
               child:
-                  widget.enginePanel == null
+                  enginePane == null
                       ? notationContent
                       : !widget.showEngine && !widget.reportSelected
-                      ? LayoutBuilder(
-                        builder:
-                            (context, constraints) => Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                // Keep only the compact Stockfish header (and
-                                // the Toby panel under it) in flow while
-                                // analysis/report content is off. The cap
-                                // keeps notation's floor; the engine panel
-                                // scrolls Toby inside it. The previous
-                                // collapsed split reserved a blank strip and
-                                // painted an engine chip in its center.
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    maxHeight: math.max(
-                                      desktopEngineHeaderHeight,
-                                      constraints.maxHeight -
-                                          _notationMinimumHeight,
-                                    ),
-                                  ),
-                                  child: RepaintBoundary(
-                                    child: widget.enginePanel!,
-                                  ),
-                                ),
-                                Expanded(child: notationContent),
-                              ],
-                            ),
-                      )
-                      : ResizableSplitView(
-                        axis: Axis.vertical,
-                        controller: _railController,
-                        storageKey: desktopEngineRightRailSplitStorageKey,
-                        // Use the standard divider treatment so resizing stays
-                        // discoverable without an accent line through content.
-                        gutterThickness: desktopEngineRightRailGutterThickness,
-                        gutterColor: kDividerColor,
+                      ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          SplitChild(
-                            minSize: 120,
-                            initialWeight: desktopEngineRightRailInitialWeight,
-                            comfortableSize:
-                                widget.showEngine
-                                    ? widget.engineComfortableSize
-                                    : null,
-                            label: 'Engine',
-                            collapsedIcon: Icons.memory_rounded,
-                            onRestore: _resumeEngineFromRail,
-                            // Stockfish repaints up to 12.5 Hz. Keep it from
-                            // repainting the explorer and games tables below.
-                            child: RepaintBoundary(child: widget.enginePanel!),
-                          ),
-                          SplitChild(
-                            // Compact floor so the report and notation can
-                            // both be resized meaningfully on short windows.
-                            minSize: _notationMinimumHeight,
-                            initialWeight:
-                                1 - desktopEngineRightRailInitialWeight,
-                            label: 'Notation',
-                            collapsedIcon: Icons.format_list_numbered_rounded,
-                            child: notationContent,
-                          ),
+                          // Keep only the compact Stockfish header in flow
+                          // while analysis/report content is off. The previous
+                          // collapsed split reserved a blank strip and painted
+                          // an engine chip in its center.
+                          enginePane,
+                          Expanded(child: notationContent),
                         ],
+                      )
+                      : LayoutBuilder(
+                        builder:
+                            (context, constraints) => ResizableSplitView(
+                              axis: Axis.vertical,
+                              controller: _railController,
+                              storageKey: desktopEngineRightRailSplitStorageKey,
+                              // Use the standard divider treatment so resizing
+                              // stays discoverable without an accent line
+                              // through content.
+                              gutterThickness:
+                                  desktopEngineRightRailGutterThickness,
+                              gutterColor: kDividerColor,
+                              children: _railSplitChildren(
+                                constraints.maxHeight,
+                                width: constraints.maxWidth,
+                                enginePane: enginePane,
+                                notationContent: notationContent,
+                              ),
+                            ),
                       ),
             ),
             _SegmentBar(

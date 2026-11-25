@@ -1130,12 +1130,13 @@ class _BoardPaneContent extends HookConsumerWidget {
     final explorerPreviewLineStep = useValueNotifier<int>(0);
     final explorerPreviewLineAutoplay = useState<bool>(true);
     // Toby's per-board state (what-if, hover, pin) and the one arrow it puts
-    // on the board. Owned here so the panel can move inside the engine pane
-    // without losing it, and so only the board listens to the arrow.
+    // on the board. Owned here so it outlives the Toby view (which mounts
+    // only while its tab is shown), and so only the board listens to the
+    // arrow.
     final tobyPanel = useMemoized(TobyPanelController.new, [activeTabId]);
     useEffect(() => tobyPanel.dispose, [tobyPanel]);
-    // Changes on expand and collapse only.
-    final tobyExpanded = ref.watch(tobyPanelExpandedProvider);
+    // Changes only when the reader switches the engine pane's tab.
+    final tobyTab = ref.watch(tobyTabSelectedProvider);
     final threatMode = useState<bool>(false);
     final explorerPreviewSoundKey = useRef<String?>(null);
     final loadedFrom = useState<String?>(restoredSession?.loadedFrom);
@@ -3079,6 +3080,12 @@ class _BoardPaneContent extends HookConsumerWidget {
         pointer.value.first == mainlineLen - 1;
     final isLiveGame =
         chessGame.value.metadata[ChessGame.metadataIsLiveKey] == true;
+    // The engine header's picture-in-picture control. A browser cannot float
+    // a second window over the desktop the way the desktop app does.
+    final offersPictureInPicture =
+        !kIsWeb &&
+        boardArgs != null &&
+        (isLiveGame || currentGameIsInPictureInPicture);
     final isLiveAtTip = isLiveGame && isAtMainlineTip;
     // A live broadcast is in nobody's collection yet; only staff attach there.
     // Resolved before the menu opens, so the entry never pops in late.
@@ -6230,7 +6237,17 @@ class _BoardPaneContent extends HookConsumerWidget {
               ),
               if (!pictureInPictureMode)
                 SplitChild(
-                  minSize: 280,
+                  // Wide enough for the engine header's controls and its
+                  // Stockfish / What Toby Thinks tabs, whole and at least
+                  // nearly full size.
+                  minSize: math.max(
+                    280,
+                    EnginePanel.headerMinWidth(
+                      context,
+                      trailing: true,
+                      pictureInPicture: offersPictureInPicture,
+                    ),
+                  ),
                   initialWeight:
                       boardFocusMode
                           ? _boardFocusRightPaneWeight
@@ -6451,28 +6468,18 @@ class _BoardPaneContent extends HookConsumerWidget {
                                 trailingActions: boardActionCluster,
                                 onFullToolbarWidthChanged:
                                     publishAnalysisToolbarWidth,
-                                engineComfortableSize:
-                                    desktopEnginePaneComfortableSize(
-                                      lines: ref.watch(
-                                        engineSettingsProviderNew.select(
-                                          (s) =>
-                                              (s.valueOrNull ??
-                                                      const EngineSettings())
-                                                  .multiPvForStockfish(),
-                                        ),
-                                      ),
-                                      tobyHeight: tobyPanelHeight(
-                                        expanded: tobyExpanded,
+                                // The Toby tab works with the engine off, so
+                                // it keeps the engine pane open too.
+                                showEngine:
+                                    tobyTab ||
+                                    ref.watch(
+                                      engineSettingsProviderNew.select(
+                                        (s) =>
+                                            s.valueOrNull?.showEngineAnalysis ??
+                                            const EngineSettings()
+                                                .showEngineAnalysis,
                                       ),
                                     ),
-                                showEngine: ref.watch(
-                                  engineSettingsProviderNew.select(
-                                    (s) =>
-                                        s.valueOrNull?.showEngineAnalysis ??
-                                        const EngineSettings()
-                                            .showEngineAnalysis,
-                                  ),
-                                ),
                                 onRestoreEngine:
                                     () => ref
                                         .read(
@@ -6538,24 +6545,19 @@ class _BoardPaneContent extends HookConsumerWidget {
                                   isForegroundTab: isForegroundSurface,
                                   autoAnalysisAllowed:
                                       allowGameAnalysis && isForegroundSurface,
-                                  // A browser cannot float a second window over the
-                                  // desktop the way the desktop app does.
                                   onPictureInPicture:
-                                      kIsWeb ||
-                                              boardArgs == null ||
-                                              (!isLiveGame &&
-                                                  !currentGameIsInPictureInPicture)
-                                          ? null
-                                          : () => unawaited(
+                                      offersPictureInPicture
+                                          ? () => unawaited(
                                             openPictureInPictureAction(),
-                                          ),
+                                          )
+                                          : null,
                                   pictureInPictureSelected:
                                       currentGameIsInPictureInPicture,
                                   headerTrailing: _BoardMoreActionsButton(
                                     onPressed: openBoardContextMenu,
                                   ),
                                   toby: toby,
-                                  tobyExpanded: tobyExpanded,
+                                  tobyTabSelected: tobyTab,
                                 ),
                               );
                             },
@@ -10322,6 +10324,7 @@ class _BoardArea extends ConsumerWidget {
               onWheelStep: onWheelStep,
               engineArrowFen: engineArrowFen,
               tobyArrow: tobyPanel.boardArrow,
+              tobyHoldsBoard: tobyPanel.holdsBoard,
             ),
           ),
         ],
@@ -10514,6 +10517,7 @@ class _BoardWithAnnotations extends ConsumerWidget {
     required this.onWheelStep,
     required this.engineArrowFen,
     required this.tobyArrow,
+    required this.tobyHoldsBoard,
   });
 
   final String tabId;
@@ -10544,6 +10548,10 @@ class _BoardWithAnnotations extends ConsumerWidget {
   /// Toby's hovered or pinned candidate. Listened to here alone, so a hover
   /// rebuilds the chessboard and nothing around it.
   final ValueListenable<TobyBoardArrow?> tobyArrow;
+
+  /// Whether the Toby tab stands in the engine pane in place of Stockfish's
+  /// lines: the engine's arrows leave the board while it does.
+  final ValueListenable<bool> tobyHoldsBoard;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -10593,12 +10601,13 @@ class _BoardWithAnnotations extends ConsumerWidget {
     // Merge user-drawn shapes (right-click overlay) with author-baked PGN
     // arrows/circles and live engine PV arrows. Toby's arrow joins below,
     // only while the board shows the position it was read for.
-    fic.ISet<cg.Shape> shapesWith(TobyBoardArrow? toby) {
+    fic.ISet<cg.Shape> shapesWith(TobyBoardArrow? toby, {required bool held}) {
       final mergedShapes = <cg.Shape>[
         if (toby == null || toby.positionKey != fen) ...[
           ...positionShapes,
           ...pgnShapes,
-          ...engineShapes,
+          // The Toby tab replaces the lines these arrows come from.
+          if (!held) ...engineShapes,
         ] else if (toby.exclusive)
           // A hovered candidate is the only shape on the board.
           toby.arrow
@@ -10734,10 +10743,10 @@ class _BoardWithAnnotations extends ConsumerWidget {
             positionKey: positionKey,
             persistentShapes: pgnShapes,
             onShapesChanged: onGraphicCommentaryChanged,
-            child: ValueListenableBuilder<TobyBoardArrow?>(
-              valueListenable: tobyArrow,
+            child: ListenableBuilder(
+              listenable: Listenable.merge([tobyArrow, tobyHoldsBoard]),
               builder:
-                  (context, toby, _) => DesktopChessBoard(
+                  (context, _) => DesktopChessBoard(
                     key: ValueKey<String>(boardRenderKey),
                     size: boardSize,
                     fen: fen,
@@ -10750,7 +10759,12 @@ class _BoardWithAnnotations extends ConsumerWidget {
                     onMove: onMove,
                     promotionMove: promotionMove,
                     onPromotionSelection: onPromotionSelection,
-                    shapes: shapesWith(toby),
+                    shapes: shapesWith(
+                      tobyArrow.value,
+                      // Threat mode is the reader's own request for the
+                      // engine's arrows: they stay.
+                      held: tobyHoldsBoard.value && !threatMode,
+                    ),
                     squareHighlights: highlights,
                     squareHighlightsUnderPieces: gameEnding?.isDraw ?? false,
                   ),

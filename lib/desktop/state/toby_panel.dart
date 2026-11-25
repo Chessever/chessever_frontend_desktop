@@ -1,6 +1,7 @@
-/// What the "What Toby Thinks" panel remembers: whether the reader keeps it
-/// open, and, for one board, the what-if choices, the hovered and pinned
-/// candidates, and the single arrow that puts on the board.
+/// What the "What Toby Thinks" tab remembers: whether the reader chose it
+/// over Stockfish in the engine pane's header, and, for one board, the
+/// what-if choices, the hovered and pinned candidates, and the single arrow
+/// that puts on the board.
 library;
 
 import 'dart:async';
@@ -12,52 +13,9 @@ import 'package:flutter/painting.dart' show Color;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:chessever/desktop/services/toby/toby_access.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 
-/// The collapsed row, which is also the expanded panel's header.
-const double kTobyPanelCollapsedHeight = 32;
-
-/// One candidate slot of the expanded panel.
-const double kTobyPanelSlotHeight = 26;
-
-/// Under the slots: the inputs row (22), the attribution (18) and the
-/// bottom padding (8).
-const double kTobyPanelFooterHeight = 48;
-
-/// Candidate slots when the engine pane has room for the full panel beside
-/// two Stockfish lines, and when it does not. Candidates past the last slot
-/// fold into the "+N moves" count.
-const int kTobyPanelSlots = 5;
-const int kTobyPanelCompactSlots = 3;
-
-/// The expanded panel with all [kTobyPanelSlots] slots.
-const double kTobyPanelExpandedHeight =
-    kTobyPanelCollapsedHeight +
-    kTobyPanelSlots * kTobyPanelSlotHeight +
-    kTobyPanelFooterHeight;
-
-/// The panel's height: collapsed, or expanded with [slots] candidate slots.
-///
-/// It follows the panel's state and the room it is given, never the reading,
-/// so it holds still while the reader steps through a game; it changes on
-/// expand and collapse, or when the pane is resized across
-/// [tobyPanelSlotsFor]'s threshold.
-double tobyPanelHeight({required bool expanded, int slots = kTobyPanelSlots}) =>
-    expanded
-        ? kTobyPanelCollapsedHeight +
-            slots * kTobyPanelSlotHeight +
-            kTobyPanelFooterHeight
-        : kTobyPanelCollapsedHeight;
-
-/// How many candidate slots the expanded panel shows in [available] height,
-/// once [reserved] is kept for what sits beside it (two Stockfish lines).
-int tobyPanelSlotsFor(double available, {double reserved = 0}) =>
-    available - reserved + 0.5 >= kTobyPanelExpandedHeight
-        ? kTobyPanelSlots
-        : kTobyPanelCompactSlots;
-
-/// The one tonal hue of Toby's bars in the panel.
+/// The one tonal hue of Toby's view: its chances and its rows' fills.
 const Color kTobyAccent = Color(0xFF83C7C4);
 
 /// Toby's arrow on the board: a deeper value of [kTobyAccent]'s hue, so it
@@ -65,13 +23,18 @@ const Color kTobyAccent = Color(0xFF83C7C4);
 /// whatever the site theme, so this holds on both.
 final Color kTobyArrowColor = const Color(0xFF1E7F79).withValues(alpha: 0.9);
 
+/// Where the chosen tab is kept. A new key, not the old open/closed panel's
+/// (`desktop.board.toby.open.v1`): a reader who left that panel open asked to
+/// see Toby beside Stockfish, not instead of it, so everyone starts on the
+/// Stockfish tab.
 @visibleForTesting
-const String tobyPanelOpenStorageKey = 'desktop.board.toby.open.v1';
+const String tobyTabStorageKey = 'desktop.engine.tobyTab.v1';
 
-/// Whether the reader left the panel open. Device-local, like the split
-/// sizes around it. Only a reader who may read Toby can open it, so a free
-/// reader never stores `true`.
-class TobyPanelOpenPreference extends Notifier<bool> {
+/// Whether the reader left the engine pane on the What Toby Thinks tab
+/// (rather than on Stockfish). Device-local, like the split sizes around it
+/// (`SharedPreferences`; localStorage in the browser, read once the page has
+/// hydrated).
+class TobyTabPreference extends Notifier<bool> {
   bool _chosen = false;
   bool _disposed = false;
   Future<void> _writes = Future<void>.value();
@@ -86,48 +49,47 @@ class TobyPanelOpenPreference extends Notifier<bool> {
   Future<void> _restore() async {
     try {
       final preferences = await SharedPreferences.getInstance();
-      final saved = preferences.getBool(tobyPanelOpenStorageKey);
+      final saved = preferences.getBool(tobyTabStorageKey);
       if (_disposed || _chosen || saved == null) return;
       state = saved;
     } catch (error) {
-      debugPrint('Toby panel preference restore failed: $error');
+      debugPrint('Toby tab preference restore failed: $error');
     }
   }
 
-  /// Records an explicit open or close. Writes are serialised so a slower
-  /// close cannot overwrite a later open.
-  void choose(bool open) {
+  /// Records an explicit choice of tab. Writes are serialised so a slower
+  /// write cannot overwrite a later choice.
+  void choose(bool toby) {
     _chosen = true;
-    if (state != open) state = open;
+    if (state != toby) state = toby;
     final write = _writes.then((_) async {
       final preferences = await SharedPreferences.getInstance();
-      await preferences.setBool(tobyPanelOpenStorageKey, open);
+      await preferences.setBool(tobyTabStorageKey, toby);
     });
     _writes = write.catchError((Object error) {
-      debugPrint('Toby panel preference write failed: $error');
+      debugPrint('Toby tab preference write failed: $error');
     });
   }
 }
 
-final tobyPanelOpenPreferenceProvider =
-    NotifierProvider<TobyPanelOpenPreference, bool>(
-      TobyPanelOpenPreference.new,
-    );
+final tobyTabPreferenceProvider = NotifierProvider<TobyTabPreference, bool>(
+  TobyTabPreference.new,
+);
 
-/// Whether the panel shows Toby's readings: the reader left it open AND may
-/// read Toby right now. While the membership is loading, lapsed or free the
-/// stored choice is ignored and the panel stays collapsed (and asks nothing).
-final tobyPanelExpandedProvider = Provider<bool>(
-  (ref) =>
-      ref.watch(tobyPanelOpenPreferenceProvider) &&
-      ref.watch(tobyPredictionAccessProvider.select((d) => d.isAllowed)),
+/// Whether the engine pane shows the What Toby Thinks tab. Everyone may
+/// choose it, guests included: Gamebase decides who may read Toby, and a
+/// refusal shows as a notice in the view, never as a gate on the tab.
+final tobyTabSelectedProvider = Provider<bool>(
+  (ref) => ref.watch(tobyTabPreferenceProvider),
 );
 
 /// The arrow Toby puts on the board, for one position.
 ///
 /// [exclusive] arrows (a hovered or keyboard-focused candidate) are the only
 /// shape on the board. A pinned arrow replaces the engine arrows only; the
-/// reader's own drawings and the game's arrows stay.
+/// reader's own drawings and the game's arrows stay. While the Toby tab is
+/// shown the engine arrows are off anyway ([TobyPanelController.holdsBoard]),
+/// so a pin adds Toby's arrow to the reader's shapes and the game's.
 typedef TobyBoardArrow = ({String positionKey, cg.Arrow arrow, bool exclusive});
 
 /// The reader's what-if choices: read the position as if both players were
@@ -148,22 +110,25 @@ cg.Arrow? tobyArrowFor(String uci) {
   );
 }
 
-/// Per-board state of the Toby panel, owned by the board pane so it outlives
-/// the panel widget (which moves when the report opens) and is shared with
-/// the board.
+/// Per-board state of the Toby view, owned by the board pane so it outlives
+/// the view (which mounts only while its tab is shown, and moves when the
+/// report opens) and is shared with the board.
 ///
-/// The panel writes hover and pin; the board only listens to [boardArrow].
+/// The view writes hover and pin; the board only listens to [boardArrow]
+/// and [holdsBoard].
 /// Everything here is keyed by UCI, never by row, so a reading that re-sorts
 /// under a still pointer keeps the same move highlighted.
 class TobyPanelController extends ChangeNotifier {
   TobyPanelController({String? session})
     : session = session ?? newTobySession();
 
-  /// The panel's id towards Gamebase, one per board for its lifetime.
+  /// The view's id towards Gamebase, one per board for its lifetime.
   final String session;
 
   final ValueNotifier<TobyBoardArrow?> _boardArrow =
       ValueNotifier<TobyBoardArrow?>(null);
+  final ValueNotifier<bool> _holdsBoard = ValueNotifier<bool>(false);
+  bool _wantsHold = false;
   _Mark? _hover;
   _Mark? _pin;
   TobyWhatIf _whatIf = (rating: null, cadence: null);
@@ -171,6 +136,21 @@ class TobyPanelController extends ChangeNotifier {
 
   /// The one arrow to draw, if any. Only the board listens to it.
   ValueListenable<TobyBoardArrow?> get boardArrow => _boardArrow;
+
+  /// Whether the Toby tab is on screen in place of Stockfish's lines. The
+  /// engine keeps analysing (its score stays in the header), but its arrows
+  /// leave the board: they would point at lines the reader cannot see.
+  ValueListenable<bool> get holdsBoard => _holdsBoard;
+
+  /// Set by the Toby view as it mounts and leaves. Notifies after the
+  /// current frame, because the view learns it while widgets are building.
+  void holdBoardSoon(bool hold) {
+    if (_disposed || _wantsHold == hold) return;
+    _wantsHold = hold;
+    scheduleMicrotask(() {
+      if (!_disposed) _holdsBoard.value = _wantsHold;
+    });
+  }
 
   TobyWhatIf get whatIf => _whatIf;
 
@@ -221,7 +201,7 @@ class TobyPanelController extends ChangeNotifier {
     return true;
   }
 
-  /// Clears hover and pin, after a position change or a collapse.
+  /// Clears hover and pin, after a position change or on leaving the tab.
   void clearMarks() {
     if (_disposed || (_hover == null && _pin == null)) return;
     _hover = null;
@@ -258,6 +238,7 @@ class TobyPanelController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _boardArrow.dispose();
+    _holdsBoard.dispose();
     super.dispose();
   }
 }

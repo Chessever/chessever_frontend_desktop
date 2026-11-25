@@ -767,9 +767,13 @@ final class TobyReplyPending extends TobyReplyOutcome {
   final Duration wait;
 }
 
-/// The service refused the reader (401/403).
+/// The service refused the reader (401/403): its access setting is stricter
+/// than the client's. [signIn] when it wants an account (401,
+/// `unauthorized`); otherwise it wants Premium (403, `premium_required`).
 final class TobyReplyDenied extends TobyReplyOutcome {
-  const TobyReplyDenied();
+  const TobyReplyDenied({required this.signIn});
+
+  final bool signIn;
 }
 
 /// The poll failed. [retryable] failures back off and try again within the
@@ -785,7 +789,10 @@ final class TobyReplyFailed extends TobyReplyOutcome {
 TobyReplyOutcome interpretTobyReply(GamebaseTobyReply reply) {
   final status = reply.statusCode;
   if (status == null) return const TobyReplyFailed(retryable: true);
-  if (status == 401 || status == 403) return const TobyReplyDenied();
+  if (status == 401 || status == 403) {
+    final signIn = status == 401 || reply.data?['error'] == 'unauthorized';
+    return TobyReplyDenied(signIn: signIn);
+  }
   if (status == 200) {
     final reading = TobyReading.fromJson(reply.data);
     return reading == null
@@ -829,9 +836,17 @@ enum TobyStatus {
   /// The service cannot read this position (or answered nonsense).
   unavailable,
 
-  /// The service did not confirm Premium, after one fresh re-check when the
-  /// app believes the reader has it. Never a paywall.
+  /// The service did not confirm Premium, after one fresh re-check, for a
+  /// reader the app believes has it. Never a paywall.
   premiumUnconfirmed,
+
+  /// The service wants Premium (its access setting) from a reader without
+  /// it. The view offers the upgrade; nothing is asked until then.
+  premiumRequired,
+
+  /// The service wants an account (its access setting). The view offers
+  /// sign-in; nothing is asked until then.
+  signInRequired,
 
   /// Toby cannot read this request (too long a game, an unusable FEN). No
   /// request is made.
@@ -922,12 +937,14 @@ final TobyReadingCache tobyReadingCache = TobyReadingCache(
   tobyReadingCacheCapacity,
 );
 
-/// Toby's reading for one panel and position.
+/// Toby's reading for one view and position.
 ///
-/// Watch it only while the panel is expanded and the reader has Premium:
-/// it is auto-disposed, and an unobserved instance sends nothing (or
-/// cancels what it sent). A new position is a new [TobyQuery], so the old
-/// instance's request is cancelled as the panel moves on.
+/// Watch it only while the What Toby Thinks tab is shown: it is
+/// auto-disposed, and an unobserved instance sends nothing (or cancels what
+/// it sent). A new position is a new [TobyQuery], so the old instance's
+/// request is cancelled as the view moves on. Who may read is Gamebase's
+/// call; a refusal ends in [TobyStatus.signInRequired] or
+/// [TobyStatus.premiumRequired] (or [TobyStatus.premiumUnconfirmed]).
 final tobyReadingProvider = NotifierProvider.autoDispose
     .family<TobyReadingNotifier, TobyReadingState, TobyQuery>(
       TobyReadingNotifier.new,
@@ -972,6 +989,8 @@ class TobyReadingNotifier
       case TobyStatus.busy:
       case TobyStatus.unavailable:
       case TobyStatus.premiumUnconfirmed:
+      case TobyStatus.premiumRequired:
+      case TobyStatus.signInRequired:
         _halt();
         final network = state.reading;
         state =
@@ -1030,17 +1049,28 @@ class TobyReadingNotifier
         case TobyReplyPending(:final wait):
           failures = 0;
           await _sleep(_withJitter(wait));
+        case TobyReplyDenied(signIn: true):
+          // The service wants an account: the view offers sign-in.
+          _finish(const TobyReadingState(TobyStatus.signInRequired));
+          return;
         case TobyReplyDenied():
-          // Membership can lag behind a purchase or a renewal on either
-          // side. A reader the app believes is Premium gets one fresh
-          // re-check, never a loop and never a paywall.
-          if (!recheckedAccess &&
-              ref.read(tobyPredictionAccessProvider).isAllowed) {
+          // The service wants Premium. Membership can lag behind a purchase
+          // or a renewal on either side, so a reader the app believes is
+          // Premium gets one fresh re-check, never a loop and never a
+          // paywall; anyone else is offered the upgrade by the view.
+          final premium = ref.read(tobyReaderHasPremiumProvider);
+          if (premium && !recheckedAccess) {
             recheckedAccess = true;
             recheckAccess = true;
             continue;
           }
-          _finish(const TobyReadingState(TobyStatus.premiumUnconfirmed));
+          _finish(
+            TobyReadingState(
+              premium
+                  ? TobyStatus.premiumUnconfirmed
+                  : TobyStatus.premiumRequired,
+            ),
+          );
           return;
         case TobyReplyFailed(retryable: false):
           _finish(const TobyReadingState(TobyStatus.unavailable));

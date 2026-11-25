@@ -5,6 +5,7 @@ import 'package:chessground/chessground.dart' as cg;
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -27,6 +28,7 @@ import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/toby_panel.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
+import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart';
@@ -37,8 +39,9 @@ import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 
-/// The whole board pane with the "What Toby Thinks" panel in its engine
-/// pane: what reaches the board, and what the rail reserves.
+/// The whole board pane with the What Toby Thinks tab in its engine pane:
+/// what reaches the board, what is asked, and how the header and the rail
+/// hold their sizes.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -74,10 +77,10 @@ void main() {
     _pvIndex = 0;
   });
 
-  testWidgets('the board keeps its full height: nothing is reserved under it, '
-      'and opening Toby does not resize it', (tester) async {
-    await _pumpBoard(tester, size: const Size(2400, 820), open: false);
-    final collapsed = _boardSize(tester);
+  testWidgets('the board keeps its full height, and switching tabs never '
+      'resizes it', (tester) async {
+    await _pumpBoard(tester, size: const Size(2400, 820), toby: false);
+    final before = _boardSize(tester);
 
     // Height-bound: the board takes every pixel the two player rows leave.
     final area = tester.getSize(_boardAreaFinder);
@@ -91,44 +94,69 @@ void main() {
         chrome.topRowHeight -
         chrome.bottomRowHeight -
         chrome.headerGapTotal;
-    expect(collapsed, moreOrLessEquals(available));
+    expect(before, moreOrLessEquals(available));
 
     _script.value = TobyReadingState.ready(_reading(final_: true));
-    await tester.tap(find.text(kTobyFeatureLabel));
-    await tester.pump();
-    await tester.pump();
-    expect(_boardSize(tester), collapsed);
-    // The split slides to Toby's new size; nothing under the board moves.
+    await _tapTab(tester, kTobyFeatureLabel);
     await tester.pump(const Duration(seconds: 1));
-    expect(tester.getSize(find.byType(WhatTobyThinks)).height, 210);
-    expect(_boardSize(tester), collapsed);
+    expect(find.byType(WhatTobyThinks), findsOneWidget);
+    expect(_boardSize(tester), before);
   });
 
-  testWidgets('hovering a candidate leaves only its arrow on the board', (
+  testWidgets('on the Stockfish tab the board pane asks Toby nothing', (
     tester,
   ) async {
-    final probe = await _pumpBoard(tester);
+    final probe = await _pumpBoard(tester, toby: false);
+    // Two positions back: White to move again, so the engine's Nc3 draws.
+    for (var step = 0; step < 2; step++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+    }
     probe.emitEngine(_engineLine);
-    _drawCircle(tester, Square.e4);
-    _script.value = TobyReadingState.ready(_reading(final_: true));
-    await tester.pump();
     await tester.pump();
 
+    expect(find.byType(WhatTobyThinks), findsNothing);
+    expect(_queries, isEmpty);
+    // Stockfish's arrows are on the board.
+    expect(_boardShapes(tester).whereType<cg.Arrow>(), isNotEmpty);
+  });
+
+  testWidgets('the Toby tab takes Stockfish\'s arrows off the board; '
+      'hovering a row leaves only its arrow', (tester) async {
+    final probe = await _pumpBoard(tester, toby: false);
+    probe.emitEngine(_engineLine);
+    _drawCircle(tester, Square.e4);
+    await tester.pump();
     final circle = _circleAt(tester, Square.e4);
     final engine = _engineArrow(tester);
     expect(_boardShapes(tester), containsAll(<cg.Shape>[circle, engine]));
 
-    final gesture = await _hover(tester, find.text('d4'));
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    await _tapTab(tester, kTobyFeatureLabel);
+    await tester.pump();
+    // The engine keeps analysing (its score stays in the header), but its
+    // arrows leave with its lines.
+    expect(_boardShapes(tester), {circle});
+
+    // The pane's default height shows one whole row (the list ends on it,
+    // over Toby's attribution): the most likely move.
+    final gesture = await _hover(tester, find.text('Nf3'));
     final hover = _boardShapes(tester);
     expect(hover, hasLength(1));
-    expect(_tobyArrow(hover.single), (Square.d2, Square.d4));
+    expect(_tobyArrow(hover.single), (Square.g1, Square.f3));
 
     await gesture.moveTo(const Offset(5, 5));
     await tester.pump();
+    expect(_boardShapes(tester), {circle});
+
+    // Back on Stockfish, its arrows return.
+    await _tapTab(tester, 'Stockfish');
+    await tester.pump();
     expect(_boardShapes(tester), containsAll(<cg.Shape>[circle, engine]));
   });
 
-  testWidgets('a pin hides the engine arrows but keeps the reader\'s shapes', (
+  testWidgets('a pin adds Toby\'s arrow beside the reader\'s shapes', (
     tester,
   ) async {
     final probe = await _pumpBoard(tester);
@@ -138,7 +166,6 @@ void main() {
     await tester.pump();
     await tester.pump();
     final circle = _circleAt(tester, Square.e4);
-    final engine = _engineArrow(tester);
 
     final gesture = await _hover(tester, find.text('Nf3'));
     await tester.tap(find.text('Nf3'));
@@ -148,11 +175,12 @@ void main() {
 
     final pinned = _boardShapes(tester);
     expect(pinned, contains(circle));
-    expect(pinned, isNot(contains(engine)));
+    expect(pinned.whereType<cg.Arrow>().where((a) => !_isToby(a)), isEmpty);
     expect(pinned.where(_isToby).map(_tobyArrow), [(Square.g1, Square.f3)]);
   });
 
-  testWidgets('a pin resets when the position changes', (tester) async {
+  testWidgets('a pin resets when the position changes; ←/→ still step the '
+      'game from the rows', (tester) async {
     await _pumpBoard(tester);
     await tester.sendKeyEvent(LogicalKeyboardKey.home);
     await tester.pump();
@@ -178,6 +206,23 @@ void main() {
     await tester.pump();
     expect(_boardFen(tester), start);
     expect(_boardShapes(tester).where(_isToby), isEmpty);
+  });
+
+  testWidgets('each position visited on the Toby tab is asked about once', (
+    tester,
+  ) async {
+    await _pumpBoard(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.home);
+    await tester.pump();
+    await tester.pump();
+    _queries.clear();
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    for (var step = 0; step < 3; step++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      await tester.pump();
+    }
+    expect(_queries.map((q) => q.request.moves.length).toList(), [1, 2, 3]);
   });
 
   testWidgets('Stockfish ticks and hovers rebuild neither Toby nor the board '
@@ -214,149 +259,440 @@ void main() {
     expect(rebuilt['DesktopChessBoard'], greaterThan(0));
   });
 
-  testWidgets('the engine pane\'s comfortable size holds through every stage '
-      'and every move', (tester) async {
-    await _pumpBoard(tester);
-    await tester.sendKeyEvent(LogicalKeyboardKey.home);
-    await tester.pump();
-    await tester.pump();
+  testWidgets('the Toby tab sizes the engine pane for three whole rows; '
+      'moving through the game never resizes it, and Stockfish keeps the '
+      'split as it was', (tester) async {
+    await _pumpBoard(tester, size: const Size(1440, 860), toby: false);
+    double engineHeight() => tester.getSize(find.byType(EnginePanel)).height;
+    final stockfish = engineHeight();
+    expect(_engineComfortableSize(tester), isNull);
 
-    final sizes = <double?>[];
-    final heights = <double>[];
-    void record() {
-      sizes.add(_engineComfortableSize(tester));
-      heights.add(tester.getSize(find.byType(WhatTobyThinks)).height);
-    }
-
-    _queries.clear();
-    record();
-    _script.value = TobyReadingState(
-      TobyStatus.network,
-      reading: _reading(final_: false),
-    );
-    await tester.pump();
-    record();
     _script.value = TobyReadingState.ready(_reading(final_: true));
-    await tester.pump();
-    record();
-    for (var step = 0; step < 3; step++) {
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await _tapTab(tester, kTobyFeatureLabel);
+    await tester.pump(const Duration(seconds: 1));
+    final comfortable = _engineComfortableSize(tester);
+    expect(comfortable, isNotNull);
+    expect(comfortable, greaterThan(stockfish));
+    // The rail has room: the pane takes it, and Toby's view gets exactly the
+    // height of its reading line, three whole rows and the attribution.
+    final toby = engineHeight();
+    expect(toby, moreOrLessEquals(comfortable!));
+    final view = tester.getSize(find.byType(WhatTobyThinks));
+    expect(
+      view.height,
+      moreOrLessEquals(
+        WhatTobyThinks.comfortableHeight(
+          tester.element(find.byType(WhatTobyThinks)),
+          width: view.width,
+        ),
+      ),
+    );
+
+    for (final key in [
+      LogicalKeyboardKey.arrowLeft,
+      LogicalKeyboardKey.arrowLeft,
+      LogicalKeyboardKey.arrowRight,
+      LogicalKeyboardKey.home,
+    ]) {
+      await tester.sendKeyEvent(key);
       await tester.pump();
-      await tester.pump();
-      record();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(engineHeight(), toby, reason: key.keyLabel);
+      expect(_engineComfortableSize(tester), comfortable, reason: key.keyLabel);
     }
 
-    expect(sizes.toSet(), {
-      desktopEnginePaneComfortableSize(
-        lines: 1,
-        tobyHeight: kTobyPanelExpandedHeight,
-      ),
-    });
-    expect(heights.toSet(), {kTobyPanelExpandedHeight});
-    // Each position visited is asked about once, with its own moves.
-    expect(_queries.map((q) => q.request.moves.length).toList(), [1, 2, 3]);
+    await _tapTab(tester, TobyViewTabs.stockfishLabel);
+    await tester.pump(const Duration(seconds: 1));
+    expect(_engineComfortableSize(tester), isNull);
+    expect(engineHeight(), stockfish);
   });
 
-  testWidgets('Toby sits directly under the last Stockfish line; room left '
-      'over goes below it', (tester) async {
-    await _pumpEnginePanel(tester, const Size(360, 560));
+  testWidgets('the tabs replace the engine\'s name in the same header row: '
+      'no extra height', (tester) async {
+    await _pumpEnginePanel(tester, const Size(640, 560), toby: false);
+    final withTabs = _pvLines(tester).first.top;
+    expect(find.byType(TobyViewTabs), findsOneWidget);
 
-    final lines = _pvLines(tester);
-    expect(lines, hasLength(3));
-    final toby = tester.getRect(find.byType(WhatTobyThinks));
-    // The list's own 12 px bottom padding, then Toby.
-    expect(toby.top, lines.last.bottom + 12);
-    expect(toby.height, kTobyPanelExpandedHeight);
-    expect(toby.bottom, lessThan(560));
-  });
-
-  testWidgets('a short engine pane gives Toby three slots before it takes a '
-      'Stockfish line out of view', (tester) async {
-    await _pumpEnginePanel(tester, const Size(360, 330));
-
-    final toby = tester.getRect(find.byType(WhatTobyThinks));
-    expect(toby.height, tobyPanelHeight(expanded: true, slots: 3));
-    // The lines keep room for two rows and end where Toby starts.
-    final lines = tester.getRect(_pvListFinder);
-    expect(lines.bottom, toby.top);
-    expect(lines.height, greaterThanOrEqualTo(desktopEngineLinesHeight(2)));
-
-    // With room for two lines and the full panel, all five slots come back.
     await tester.pumpWidget(const SizedBox.shrink());
     await _pumpEnginePanel(
       tester,
-      Size(
-        360,
-        desktopEngineHeaderHeight +
-            desktopEngineLinesHeight(2) +
-            kTobyPanelExpandedHeight,
-      ),
+      const Size(640, 560),
+      toby: false,
+      withToby: false,
     );
+    expect(find.byType(TobyViewTabs), findsNothing);
+    expect(find.text('Stockfish'), findsOneWidget);
+    expect(_pvLines(tester).first.top, withTabs);
+  });
+
+  testWidgets('a pane shorter than the rail\'s least engine pane closes its '
+      'header up; a Stockfish line the edge cuts dissolves, one barely on '
+      'screen is covered', (tester) async {
+    await _pumpEnginePanel(tester, const Size(640, 560), toby: false);
+    final roomy = _pvLines(tester);
+    expect(roomy, hasLength(3));
+    final cutFade = find.byWidgetPredicate(
+      (widget) => widget.runtimeType.toString() == '_CutItemFade',
+    );
+    List<(Rect, Paint)> fades() {
+      final painted = <(Rect, Paint)>[];
+      expect(
+        tester.renderObject(cutFade),
+        paints..everything((method, arguments) {
+          if (method == #drawRect) {
+            painted.add((arguments[0] as Rect, arguments[1] as Paint));
+          }
+          return true;
+        }),
+      );
+      return painted;
+    }
+
+    expect(fades(), isEmpty);
+    final gap = roomy[1].top - roomy[0].bottom;
+
+    // The second line mostly on screen: it dissolves into the pane.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpEnginePanel(
+      tester,
+      Size(640, roomy[1].top + roomy[1].height * 0.85),
+      toby: false,
+    );
+    expect(_pvLines(tester).first.top, roomy.first.top);
+    expect(fades().single.$2.shader, isNotNull);
+
+    // Under the rail's least engine pane (which only a rail too short for
+    // every pane hands out), the header gives up 12 px of padding so the
+    // first line stays whole; the second, with under three quarters of it
+    // on screen, is covered whole: no glyph tops along the edge.
+    const short = 110.0;
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpEnginePanel(tester, const Size(640, short), toby: false);
+    final lines = _pvLines(tester);
+    expect(lines.first.top, moreOrLessEquals(roomy.first.top - 12));
+    expect(lines.first.bottom, lessThanOrEqualTo(short));
+    final cover = fades().single;
+    expect(cover.$2.shader, isNull);
     expect(
-      tester.getSize(find.byType(WhatTobyThinks)).height,
-      kTobyPanelExpandedHeight,
+      cover.$1.height,
+      moreOrLessEquals(short - (lines.first.bottom + gap)),
     );
   });
 
-  testWidgets('Toby lines up with the Stockfish rows', (tester) async {
-    await _pumpEnginePanel(tester, const Size(360, 560));
+  testWidgets('Toby\'s rows line up with Stockfish\'s', (tester) async {
+    // Scores of four figures, which fit the 56 px column on one line in the
+    // test font (every glyph as wide as its size), as "+0.24" does in the
+    // app's font.
+    await _pumpEnginePanel(
+      tester,
+      const Size(640, 560),
+      toby: false,
+      lines: [
+        for (final line in _threeLines)
+          BoardPv(evaluation: 0, mate: null, moves: line.moves),
+      ],
+    );
+    final pvRow = _pvLines(tester)[1];
+    final score = tester.getTopLeft(
+      find.descendant(of: _pvLineFinder.at(1), matching: find.text('0.00')),
+    );
+    final moves = tester.getTopLeft(
+      find.descendant(
+        of: _pvLineFinder.first,
+        matching: find.textContaining('3.Bb5'),
+      ),
+    );
 
-    final row = _pvLineFinder.at(1);
-    final score = find.descendant(of: row, matching: find.text('+0.24'));
+    await _tapTab(tester, kTobyFeatureLabel);
+    await tester.pump();
+    final rows = _tobyRows(tester);
+    expect(rows, hasLength(2));
+    for (final row in rows) {
+      expect(row.height, pvRow.height);
+      expect((row.left, row.right), (pvRow.left, pvRow.right));
+    }
+    expect(rows[1].top - rows[0].bottom, 6);
+    expect(tester.getTopLeft(find.text('60.0%')).dx, score.dx);
+    expect(tester.getTopLeft(find.text('Nf3')).dx, moves.dx);
+    // Stockfish keeps analysing: its score stays in the header.
     expect(
-      tester.getTopLeft(find.text(kTobyFeatureLabel)).dx,
-      tester.getTopLeft(score).dx,
-    );
-    expect(tester.getTopLeft(find.text('Nf3')).dx, tester.getTopLeft(score).dx);
-    final moves = find.descendant(
-      of: _pvLineFinder.first,
-      matching: find.textContaining('3.Bb5'),
-    );
-    final bar = find.byWidgetPredicate(
-      (widget) =>
-          widget is CustomPaint &&
-          widget.painter.runtimeType.toString() == '_ProbabilityPainter',
-    );
-    // The moves open with a move number whose figure sits 1 px inside the
-    // text's box; the bars start at the figure, not 1 px ahead of it.
-    expect(tester.getTopLeft(bar.first).dx, tester.getTopLeft(moves).dx + 1);
-    final pvChevron = tester.getRect(
-      find.descendant(
-        of: row,
-        matching: find.byIcon(Icons.chevron_right_rounded),
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            widget.data == '0.00' &&
+            widget.style?.fontSize == 22,
       ),
-    );
-    final tobyChevron = tester.getRect(
-      find.descendant(
-        of: find.byType(WhatTobyThinks),
-        matching: find.byIcon(Icons.keyboard_arrow_down_rounded),
-      ),
-    );
-    expect(
-      (tobyChevron.left, tobyChevron.right),
-      (pvChevron.left, pvChevron.right),
+      findsOneWidget,
     );
   });
 
-  testWidgets('the rail grows the engine pane for up to three Stockfish lines '
-      'above the full panel', (tester) async {
-    _pvIndex = 2;
-    await _pumpBoard(tester, size: const Size(1440, 860));
+  testWidgets('a narrow header keeps the tabs whole: the depth goes first, '
+      'then the labels close up to keep the score, then the score goes; the '
+      'lines under the header never move', (tester) async {
+    await _pumpEnginePanel(tester, const Size(1000, 400), toby: false);
+    final tabs = tester.getSize(find.byType(TobyViewTabs)).width;
+    final compact = TobyViewTabs.widthOf(
+      tester.element(find.byType(TobyViewTabs)),
+      compact: true,
+    );
+    expect(compact, lessThan(tabs));
+    final score = tester.getSize(_headerScore()).width;
+    final depth = tester.getSize(find.text('d24')).width;
+    final firstLine = _pvLines(tester).first.top;
+    // What the header keeps around the middle: its padding, the gear and
+    // the gap after it, and the power control with its gaps.
+    final middle =
+        tester
+            .getRect(
+              find
+                  .ancestor(
+                    of: find.byType(TobyViewTabs),
+                    matching: find.byType(LayoutBuilder),
+                  )
+                  .first,
+            )
+            .width;
+    final chrome = 1000 - middle;
+
+    Future<void> at(double width) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _pumpEnginePanel(tester, Size(width, 400), toby: false);
+    }
+
+    void tabsWhole(double width) {
+      // On screen, after any scaling.
+      expect(tester.getRect(find.byType(TobyViewTabs)).width, width);
+      for (final label in ['Stockfish', kTobyFeatureLabel]) {
+        final paragraph = tester.renderObject<RenderParagraph>(_tab(label));
+        expect(paragraph.didExceedMaxLines, isFalse);
+        expect(tester.getRect(_tab(label)).width, paragraph.size.width);
+      }
+      expect(_pvLines(tester).first.top, firstLine);
+    }
+
+    // Room for the tabs and the score, not the depth (whose chip is wider
+    // than its label).
+    await at(chrome + tabs + 8 + score + 8 + depth - 1);
+    expect(find.text('d24'), findsNothing);
+    expect(_headerScore(), findsOneWidget);
+    tabsWhole(tabs);
+    // Not for the tabs and the score: the labels close up, and the score
+    // stays.
+    await at(chrome + tabs + 8 + score - 1);
+    expect(_headerScore(), findsOneWidget);
+    tabsWhole(compact);
+    // Not even for that: the score goes, the header keeps its height.
+    await at(chrome + compact + 8 + score - 1);
+    expect(find.text('d24'), findsNothing);
+    expect(_headerScore(), findsNothing);
+    tabsWhole(compact);
+    // The controls stay.
+    expect(find.byType(EngineSettingsPopover), findsOneWidget);
+    expect(find.byIcon(Icons.power_settings_new_rounded), findsOneWidget);
+  });
+
+  testWidgets('with every control in the header, the labels keep 90% of '
+      'their size or more down to the header\'s least width, and the board\'s '
+      'right rail never goes narrower than that', (tester) async {
+    await _pumpEnginePanel(
+      tester,
+      const Size(1000, 400),
+      toby: false,
+      chrome: true,
+    );
+    final least = EnginePanel.headerMinWidth(
+      tester.element(find.byType(EnginePanel)),
+      trailing: true,
+      pictureInPicture: true,
+    );
+
+    double scaleOf(String label) {
+      final paragraph = tester.renderObject<RenderParagraph>(_tab(label));
+      expect(paragraph.didExceedMaxLines, isFalse);
+      // On screen, after any scaling.
+      return tester.getRect(_tab(label)).width / paragraph.size.width;
+    }
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpEnginePanel(
+      tester,
+      Size(least.ceilToDouble(), 400),
+      toby: false,
+      chrome: true,
+    );
+    for (final label in ['Stockfish', kTobyFeatureLabel]) {
+      expect(scaleOf(label), greaterThanOrEqualTo(kEngineHeaderTabsMinScale));
+      expect(scaleOf(label), lessThan(1));
+    }
+    expect(find.byIcon(Icons.more_vert_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.picture_in_picture_alt_rounded), findsOneWidget);
+
+    // The board holds its right rail to that width, for the controls its
+    // engine header has.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpBoard(tester, toby: false);
+    final panel = tester.widget<EnginePanel>(find.byType(EnginePanel));
+    expect(panel.headerTrailing, isNotNull);
+    final rail = tester
+        .widget<ResizableSplitView>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is ResizableSplitView &&
+                widget.children.any((child) => child.label == 'Analysis'),
+          ),
+        )
+        .children
+        .singleWhere((child) => child.label == 'Analysis');
+    expect(
+      rail.minSize,
+      EnginePanel.headerMinWidth(
+        tester.element(find.byType(EnginePanel)),
+        trailing: true,
+        pictureInPicture: panel.onPictureInPicture != null,
+      ),
+    );
+    expect(rail.minSize, greaterThanOrEqualTo(280));
+  });
+
+  testWidgets('with the engine off, choosing a tab by keyboard keeps the '
+      'engine pane, the notation and the focus on the tab', (tester) async {
+    _engineOn = false;
+    addTearDown(() => _engineOn = true);
+    FocusManager.instance.highlightStrategy =
+        FocusHighlightStrategy.alwaysTraditional;
+    addTearDown(
+      () =>
+          FocusManager.instance.highlightStrategy =
+              FocusHighlightStrategy.automatic,
+    );
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    await _pumpBoard(tester, toby: false);
+    final engine = tester.state(find.byType(EnginePanel));
+    final notation = tester.state(find.byType(NotationOpeningPanel));
+    final notationContent = tester.element(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is KeyedSubtree &&
+            widget.key is GlobalKey &&
+            (widget.key! as GlobalKey).toString().contains('Notation'),
+      ),
+    );
+
+    Future<void> press(String label, LogicalKeyboardKey key) async {
+      final tab = Focus.of(tester.element(_tab(label)));
+      tab.requestFocus();
+      await tester.pump();
+      expect(tab.hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(key);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      expect(tester.state(find.byType(EnginePanel)), same(engine));
+      expect(tester.state(find.byType(NotationOpeningPanel)), same(notation));
+      expect(
+        find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is KeyedSubtree &&
+                  widget.key is GlobalKey &&
+                  (widget.key! as GlobalKey).toString().contains('Notation'),
+            )
+            .evaluate()
+            .single,
+        same(notationContent),
+      );
+      expect(tab.hasPrimaryFocus, isTrue);
+    }
+
+    await press(kTobyFeatureLabel, LogicalKeyboardKey.enter);
+    expect(find.byType(WhatTobyThinks), findsOneWidget);
+    expect(_notationPanel(tester).showEngine, isTrue);
+    await press('Stockfish', LogicalKeyboardKey.space);
+    expect(find.byType(WhatTobyThinks), findsNothing);
+    expect(_notationPanel(tester).showEngine, isFalse);
+  });
+
+  testWidgets('with the engine off the tabs stay, and the Toby tab works and '
+      'keeps the engine pane open', (tester) async {
+    _engineOn = false;
+    addTearDown(() => _engineOn = true);
+    await _pumpBoard(tester, toby: false);
+    expect(find.byType(TobyViewTabs), findsOneWidget);
+    expect(_queries, isEmpty);
+    final notation = _notationPanel(tester);
+    expect(notation.showEngine, isFalse);
+
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    await _tapTab(tester, kTobyFeatureLabel);
     await tester.pump(const Duration(seconds: 1));
+    expect(_notationPanel(tester).showEngine, isTrue);
+    expect(find.text('Nf3'), findsOneWidget);
+    expect(_queries, isNotEmpty);
+  });
 
+  testWidgets('with the report open, Toby takes the live-engine half of the '
+      'split', (tester) async {
+    await _pumpEnginePanel(
+      tester,
+      const Size(640, 700),
+      toby: true,
+      reportVisible: true,
+    );
+    final split = find.byWidgetPredicate(
+      (widget) =>
+          widget is ResizableSplitView &&
+          widget.storageKey == desktopEngineReportSplitStorageKey,
+    );
+    expect(split, findsOneWidget);
+    final view = tester.widget<ResizableSplitView>(split);
+    expect(view.children.first.label, kTobyFeatureLabel);
     expect(
-      _engineComfortableSize(tester),
-      desktopEngineHeaderHeight +
-          desktopEngineLinesHeight(3) +
-          kTobyPanelExpandedHeight,
+      find.descendant(of: split, matching: find.byType(WhatTobyThinks)),
+      findsOneWidget,
     );
     expect(
-      tester.getSize(find.byType(EnginePanel)).height,
-      _engineComfortableSize(tester),
+      tester.getRect(find.byType(WhatTobyThinks)).bottom,
+      lessThanOrEqualTo(tester.getRect(find.byType(GameReportView)).top),
+    );
+  });
+
+  testWidgets('with the report open, Toby\'s half grows toward its three '
+      'whole rows from the report\'s share, down to the report\'s least', (
+    tester,
+  ) async {
+    await _pumpEnginePanel(
+      tester,
+      const Size(640, 420),
+      toby: true,
+      reportVisible: true,
+    );
+    final split = find.byWidgetPredicate(
+      (widget) =>
+          widget is ResizableSplitView &&
+          widget.storageKey == desktopEngineReportSplitStorageKey,
+    );
+    final view = tester.getSize(find.byType(WhatTobyThinks));
+    final comfortable = WhatTobyThinks.comfortableHeight(
+      tester.element(find.byType(WhatTobyThinks)),
+      width: view.width,
     );
     expect(
-      tester.getSize(find.byType(WhatTobyThinks)).height,
-      kTobyPanelExpandedHeight,
+      tester.widget<ResizableSplitView>(split).children.first.comfortableSize,
+      moreOrLessEquals(comfortable),
+    );
+    // 40% of this split is short of the three rows: the report lends the
+    // rest and keeps its 140 px least.
+    expect(view.height, moreOrLessEquals(comfortable));
+    expect(
+      tester.getSize(find.byType(GameReportView)).height,
+      greaterThanOrEqualTo(140),
+    );
+
+    // Stockfish's half keeps the split's own share.
+    await _tapTab(tester, TobyViewTabs.stockfishLabel);
+    expect(
+      tester.widget<ResizableSplitView>(split).children.first.comfortableSize,
+      isNull,
     );
   });
 }
@@ -448,6 +784,37 @@ void _drawCircle(WidgetTester tester, Square square) {
       .toggleCircle(square, AnnotationColor.green, positionKey: fen);
 }
 
+Finder _tab(String label) =>
+    find.descendant(of: find.byType(TobyViewTabs), matching: find.text(label));
+
+Future<void> _tapTab(WidgetTester tester, String label) async {
+  await tester.tap(_tab(label));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
+}
+
+/// The header's score readout (not a Stockfish line's score).
+Finder _headerScore() => find.byWidgetPredicate(
+  (widget) =>
+      widget is Text && widget.data == '+0.31' && widget.style?.fontSize == 22,
+);
+
+NotationOpeningPanel _notationPanel(WidgetTester tester) =>
+    tester.widget<NotationOpeningPanel>(find.byType(NotationOpeningPanel));
+
+/// Toby's rows, by their painted surface.
+List<Rect> _tobyRows(WidgetTester tester) => [
+  for (final element
+      in find
+          .byWidgetPredicate(
+            (widget) =>
+                widget is CustomPaint &&
+                widget.painter.runtimeType.toString() == '_TobyRowPainter',
+          )
+          .evaluate())
+    tester.getRect(find.byElementPredicate((e) => e == element)),
+];
+
 double? _engineComfortableSize(WidgetTester tester) {
   final split = tester.widget<ResizableSplitView>(
     find.byWidgetPredicate(
@@ -509,9 +876,9 @@ class _BoardProbe {
 Future<_BoardProbe> _pumpBoard(
   WidgetTester tester, {
   Size size = const Size(1800, 1000),
-  bool open = true,
+  bool toby = true,
 }) async {
-  SharedPreferences.setMockInitialValues({tobyPanelOpenStorageKey: open});
+  SharedPreferences.setMockInitialValues({tobyTabStorageKey: toby});
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -569,11 +936,8 @@ Future<_BoardProbe> _pumpBoard(
   await tester.pump();
 
   expect(find.byType(DesktopChessBoard), findsOneWidget);
-  expect(find.byType(WhatTobyThinks), findsOneWidget);
-  expect(
-    tester.getSize(find.byType(WhatTobyThinks)).height,
-    open ? kTobyPanelExpandedHeight : kTobyPanelCollapsedHeight,
-  );
+  expect(find.byType(TobyViewTabs), findsOneWidget);
+  expect(find.byType(WhatTobyThinks), toby ? findsOneWidget : findsNothing);
   return _BoardProbe(evalNotifiers);
 }
 
@@ -601,7 +965,7 @@ class _TestBoardSettingsNotifier extends BoardSettingsNotifierNew {
 class _EngineWithArrowsOnNotifier extends EngineSettingsNotifierNew {
   EngineSettings get _settings => EngineSettings(
     showEngineGauge: false,
-    showEngineAnalysis: true,
+    showEngineAnalysis: _engineOn,
     showPvArrows: true,
     principalVariationIndex: _pvIndex,
     maxArrowsOnBoard: 0,
@@ -624,6 +988,7 @@ class _TestKeyboardShortcutsNotifier extends KeyboardShortcutsNotifier {
 }
 
 int _pvIndex = 0;
+bool _engineOn = true;
 
 const List<BoardPv> _threeLines = <BoardPv>[
   BoardPv(evaluation: 0.31, mate: null, moves: 'f1b5 a7a6 b5a4 g8f6 e1g1'),
@@ -635,20 +1000,24 @@ final _pvLineFinder = find.byWidgetPredicate(
   (widget) => widget.runtimeType.toString() == '_PvLine',
 );
 
-final _pvListFinder = find.descendant(
-  of: find.byType(EnginePanel),
-  matching: find.byType(ListView),
-);
-
 List<Rect> _pvLines(WidgetTester tester) => [
   for (final element in _pvLineFinder.evaluate())
     tester.getRect(find.byElementPredicate((e) => e == element)),
 ];
 
-/// The engine pane alone, [size] tall, with three Stockfish lines and Toby
-/// expanded under them.
-Future<void> _pumpEnginePanel(WidgetTester tester, Size size) async {
-  SharedPreferences.setMockInitialValues({tobyPanelOpenStorageKey: true});
+/// The engine pane alone, [size] logical pixels, with three Stockfish lines;
+/// on the Toby tab when [toby], and with the header's tabs unless
+/// [withToby] is false.
+Future<void> _pumpEnginePanel(
+  WidgetTester tester,
+  Size size, {
+  required bool toby,
+  bool withToby = true,
+  bool reportVisible = false,
+  bool chrome = false,
+  List<BoardPv> lines = _threeLines,
+}) async {
+  SharedPreferences.setMockInitialValues({tobyTabStorageKey: toby});
   _pvIndex = 2;
   _script.value = TobyReadingState.ready(_reading(final_: true));
   tester.view.devicePixelRatio = 1;
@@ -692,16 +1061,27 @@ Future<void> _pumpEnginePanel(WidgetTester tester, Size size) async {
                   reportController: report,
                   onPlayUci: (_) {},
                   pvSanFormatter: (input) async => formatEnginePvSanLine(input),
-                  toby: WhatTobyThinks(
-                    target: TobyTarget.read(
-                      TobyRequest(
-                        moves: const ['e2e4', 'e7e5', 'g1f3', 'b8c6'],
-                      ),
-                      positionKey: fen,
-                    ),
-                    controller: controller,
-                  ),
-                  tobyExpanded: ref.watch(tobyPanelExpandedProvider),
+                  reportVisible: reportVisible,
+                  // The board's more-actions button and a live game's
+                  // picture-in-picture control.
+                  headerTrailing:
+                      chrome
+                          ? const Icon(Icons.more_vert_rounded, size: 16)
+                          : null,
+                  onPictureInPicture: chrome ? () {} : null,
+                  toby:
+                      withToby
+                          ? WhatTobyThinks(
+                            target: TobyTarget.read(
+                              TobyRequest(
+                                moves: const ['e2e4', 'e7e5', 'g1f3', 'b8c6'],
+                              ),
+                              positionKey: fen,
+                            ),
+                            controller: controller,
+                          )
+                          : null,
+                  tobyTabSelected: ref.watch(tobyTabSelectedProvider),
                 ),
           ),
         ),
@@ -712,7 +1092,7 @@ Future<void> _pumpEnginePanel(WidgetTester tester, Size size) async {
   await tester.pump(const Duration(milliseconds: 300));
   await tester.pump();
   notifiers[fen]!.emit(
-    const BoardEvalState(pvs: _threeLines, isEvaluating: true, depth: 24),
+    BoardEvalState(pvs: lines, isEvaluating: true, depth: 24),
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 121));

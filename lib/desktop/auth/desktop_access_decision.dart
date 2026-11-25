@@ -319,13 +319,13 @@ _Requirement _requirementFor(
   if (context.feature == DesktopFeature.boardSplit) {
     return const _Requirement.premium(DesktopAccessReason.premiumBoardSplit);
   }
-  // Toby's prediction is Premium on every edition, on any board. Its
-  // provenance is irrelevant: the reading is computed for the reader, not
-  // read out of the game.
+  // Toby's prediction is free on every edition, for guests too: Gamebase
+  // decides who may read it (its next-move access setting), so the service
+  // can re-gate it without a client release. A refusal it sends is presented
+  // with [DesktopAccessReason.premiumTobyPrediction] (see
+  // `presentTobyServerGate`).
   if (context.feature == DesktopFeature.tobyPrediction) {
-    return const _Requirement.premium(
-      DesktopAccessReason.premiumTobyPrediction,
-    );
+    return _free;
   }
   // The current phone gates every report, including the first and cached
   // reports. Native desktop retains its existing lifetime allowance.

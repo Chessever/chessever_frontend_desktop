@@ -1,15 +1,21 @@
-/// "What Toby Thinks": Toby's prediction of the move a human plays next,
-/// directly under the Stockfish lines.
+/// "What Toby Thinks": Toby's prediction of the move a human plays next, as
+/// the engine pane's second tab beside Stockfish.
 ///
-/// Collapsed it is one 32 px row and asks nothing. Expanded (Premium) it is a
-/// fixed-height block: a header with the position's verdict, five candidate
-/// slots (three when the engine pane is short, see [TobyPanelSlots]), the
-/// inputs Toby used (which open the what-if menu) and Toby's attribution.
-/// Its height never follows the reading: it changes on expand and collapse,
-/// or when the pane is resized.
+/// The pane's header carries two text tabs ([TobyViewTabs]), "Stockfish" and
+/// "What Toby Thinks", where the engine's name used to stand. Choosing Toby
+/// puts [WhatTobyThinks] in the list area in place of Stockfish's lines,
+/// drawn as Stockfish rows: the chance where the score sits, the move
+/// where the line starts, and each row's own surface filled to the move's
+/// chance, so the list reads as Toby's whole distribution at a glance. Over
+/// the rows sit the inputs Toby read with (they open the what-if menu) and
+/// the position's verdict; under them, every other move and Toby's
+/// attribution. The view mounts only while its tab is shown, so Toby asks
+/// nothing while Stockfish is. Everyone may read it, guests too: Gamebase
+/// decides, and a refusal is one quiet notice in the view.
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -19,114 +25,205 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_providers.dart';
+import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
 import 'package:chessever/desktop/services/toby/toby_access.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 import 'package:chessever/desktop/state/toby_panel.dart';
+import 'package:chessever/desktop/widgets/cut_item_fade.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
+import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
+import 'package:chessever/desktop/utils/text_line_metrics.dart';
 import 'package:chessever/theme/app_theme.dart';
 
-const double _kHeaderHeight = kTobyPanelCollapsedHeight;
-const double _kRowHeight = kTobyPanelSlotHeight;
-const double _kMetaHeight = 22;
-const double _kAttributionHeight = 18;
-const double _kBottomPadding =
-    kTobyPanelFooterHeight - _kMetaHeight - _kAttributionHeight;
+// A Stockfish row's geometry, so Toby's list reads as the same list.
 
-/// Narrower than this, the per-move outcome bars step aside (their numbers
-/// stay in the row's semantics).
-const double _kWdlMinPanelWidth = 320;
-
-/// Lines up with the Stockfish rows: their list inset, then their 1 px
-/// border and 8 px padding, so Toby's text starts where their scores do and
-/// its chevron sits over theirs.
+/// The Stockfish list's inset from the pane's sides.
 const double _kListInset = 16;
-const double _kRowPadding = 1 + 8;
-const double _kContentInset = _kListInset + _kRowPadding;
 
-/// Stockfish's score column, so SANs sit under the scores.
-const double _kSanWidth = 56;
+/// A Stockfish row's 1 px border and the padding inside it.
+const double _kRowPaddingX = 1 + 8;
+const double _kRowPaddingY = 1 + 6;
 
-/// A Stockfish line's moves open with a move number, and its figure sits
-/// about 1 px inside the text's box (12 px tabular figures, measured in SF
-/// Pro and Inter). The bars start where those figures do, not 1 px ahead.
-const double _kPvFigureInset = 1;
+/// Where a row's text starts, and every line over and under the rows.
+const double _kContentInset = _kListInset + _kRowPaddingX;
 
-const double _kPercentWidth = 40;
-const double _kWdlWidth = 40;
+/// Between rows, and under the list, as between Stockfish rows.
+const double _kRowGap = 6;
+const double _kListBottomPadding = 12;
 
+/// Stockfish's score column (the chance stands in it) and the gap after it.
+const double _kScoreWidth = 56;
+const double _kScoreGap = 8;
+
+/// Between the move and its first-instinct detail, and before the outcome
+/// bar.
+const double _kDetailGap = 8;
+
+/// A Stockfish row's corner.
+const double _kRowRadius = 4;
+
+/// The reading line over the rows, and the space under it.
+const double _kLeadHeight = 20;
+const double _kLeadGap = 8;
+
+/// Above the other-moves line, and between it and the attribution.
+const double _kFooterGap = 10;
+const double _kFooterLineGap = 4;
+
+/// Between the list and the attribution while the rows scroll: more air
+/// from the row the list's edge dissolves.
+const double _kAttributionScrolledGap = 6;
+
+/// The attribution's spacing in a pane with room for one row and nothing
+/// more: it closes up under the row.
+const double _kAttributionTightGap = 2;
+const double _kAttributionTightBottom = 4;
+
+/// Toby's attribution, under the list.
+const TextStyle _kAttributionStyle = TextStyle(
+  color: kSecondaryTextColor,
+  fontSize: 11,
+  height: 1.2,
+);
+
+/// The outcome bar after each move, and the taller box it is painted in.
+const double _kWdlBarWidth = 40;
+const double _kWdlBarHeight = 6;
+const double _kWdlBarBoxHeight = 18;
+
+/// Narrower than this, the outcome bars step aside (their numbers stay in
+/// each row's semantics).
+@visibleForTesting
+const double kTobyWdlMinPanelWidth = 320;
+
+/// Candidates listed: up to [_kMaxRows] moves of at least [_kMinRowChance],
+/// and never fewer than [_kMinRows] (when the reading has that many). The
+/// rest join the other-moves line.
+const int _kMaxRows = 6;
+const int _kMinRows = 3;
+const double _kMinRowChance = 0.005;
+
+/// Whole rows the view is sized for wherever the board's right rail can
+/// spare the height ([WhatTobyThinks.comfortableHeight]).
+const int _kComfortableRows = 3;
+
+/// A row's surface fills to its chance in Toby's hue: a low tonal step off
+/// the pane, never a bright bar. Lower still for the quick network stage.
+const double _kFillAlpha = 0.13;
+const double _kNetworkFillAlpha = 0.07;
+
+/// White, draw and Black in the outcome bar.
 const Color _kWdlWhite = Color(0xFFE8E6E1);
 const Color _kWdlDraw = Color(0xFF8E8E93);
 const Color _kWdlBlack = Color(0xFF3A3A3C);
-
-/// Muted bars for the quick network stage.
-const double _kNetworkAlpha = 0.45;
 
 const String _kThinking = 'Toby is thinking…';
 const String _kBusy = 'Toby is busy right now';
 const String _kTryAgain = 'Try again';
 
-/// Space between the pieces of the inputs row.
+/// Where the view's prompts say they came from.
+const String _kGateSurface = 'engine_toby_tab';
+
+/// Space between the pieces of the reading line, and the least space between
+/// its left side and the verdict.
 const double _kMetaGap = 8;
+const double _kVerdictGap = 12;
 
-/// Space between the label and the position verdict in the header.
-const double _kVerdictGap = 10;
-
-const TextStyle _kLabelStyle = TextStyle(
+const TextStyle _kChanceStyle = TextStyle(
+  fontSize: 13,
+  fontWeight: FontWeight.w700,
+  fontFeatures: [FontFeature.tabularFigures()],
+);
+const TextStyle _kSanStyle = TextStyle(
   fontSize: 13,
   fontWeight: FontWeight.w600,
+);
+const TextStyle _kDetailStyle = TextStyle(
+  color: kSecondaryTextColor,
+  fontSize: 12,
+  fontFeatures: [FontFeature.tabularFigures()],
 );
 const TextStyle _kVerdictStyle = TextStyle(
   color: kWhiteColor70,
   fontSize: 12,
+  fontWeight: FontWeight.w500,
   fontFeatures: [FontFeature.tabularFigures()],
 );
 const TextStyle _kMetaStyle = TextStyle(
   color: kSecondaryTextColor,
-  fontSize: 11,
+  fontSize: 12,
   fontFeatures: [FontFeature.tabularFigures()],
+);
+const TextStyle _kMessageStyle = TextStyle(
+  color: kWhiteColor70,
+  fontSize: 12,
+  height: 1.4,
 );
 
 /// The width [text] takes on one line in [style], laid out as a [Text]
 /// here would lay it out.
-double _textWidth(BuildContext context, String text, TextStyle style) {
-  var effective = DefaultTextStyle.of(context).style.merge(style);
-  if (MediaQuery.boldTextOf(context)) {
-    effective = effective.merge(const TextStyle(fontWeight: FontWeight.bold));
+double _textWidth(BuildContext context, String text, TextStyle style) =>
+    desktopTextLineWidth(context, text, style);
+
+/// A candidate row's height, as [_TobyRow] lays it out.
+double _tobyRowExtent(BuildContext context, {required bool showBars}) {
+  final line = math.max(
+    desktopTextLineSize(context, '00.0%', _kChanceStyle).height,
+    desktopTextLineSize(context, 'Bb5', _kSanStyle).height,
+  );
+  return 2 * _kRowPaddingY + math.max(line, showBars ? _kWdlBarBoxHeight : 0);
+}
+
+/// The attribution's line height.
+double _tobyCreditLineHeight(BuildContext context) =>
+    desktopTextLineSize(context, kTobyAttribution, _kAttributionStyle).height;
+
+/// The candidates the view lists: up to six, each at least 0.5%, and never
+/// fewer than the top three. Readings arrive most likely first.
+@visibleForTesting
+List<TobyCandidate> tobyListedCandidates(TobyReading reading) {
+  final listed = <TobyCandidate>[];
+  for (final candidate in reading.candidates) {
+    if (listed.length >= _kMaxRows) break;
+    if (listed.length >= _kMinRows &&
+        candidate.probability < _kMinRowChance - 1e-9) {
+      break;
+    }
+    listed.add(candidate);
   }
-  final painter = TextPainter(
-    text: TextSpan(text: text, style: effective),
-    textDirection: Directionality.of(context),
-    textScaler: MediaQuery.textScalerOf(context),
-    maxLines: 1,
-  )..layout();
-  final width = painter.width;
-  painter.dispose();
-  return width;
+  return listed;
 }
 
-/// How many candidate slots the expanded panel below shows. The engine pane
-/// chooses it from the room it has ([tobyPanelSlotsFor]), so two Stockfish
-/// lines always stay in view; the panel never chooses it from the reading.
-/// Without one the panel shows [kTobyPanelSlots].
-class TobyPanelSlots extends InheritedWidget {
-  const TobyPanelSlots({super.key, required this.slots, required super.child});
-
-  final int slots;
-
-  static int of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<TobyPanelSlots>()?.slots ??
-      kTobyPanelSlots;
-
-  @override
-  bool updateShouldNotify(TobyPanelSlots oldWidget) => oldWidget.slots != slots;
+/// "24 other moves · 8.1%": every move [listed] leaves out, with their chance
+/// together. Null when there is none.
+@visibleForTesting
+String? tobyOtherMovesLabel(TobyReading reading, int listed) {
+  final hidden = reading.candidates.skip(listed);
+  final count = hidden.length + reading.otherMoveCount;
+  if (count <= 0) return null;
+  final chance = hidden.fold<double>(
+    reading.otherProbability,
+    (sum, candidate) => sum + candidate.probability,
+  );
+  return '$count other ${count == 1 ? 'move' : 'moves'} · '
+      '${tobyPercentage(chance)}';
 }
 
-/// Why the panel reads nothing for the board's position.
+/// "W 32 · D 48 · B 20", whole percentages that add up to 100.
+@visibleForTesting
+String tobyVerdictLabel(TobyWdl wdl) {
+  final whole = wdl.percentages;
+  return 'W ${whole.white} · D ${whole.draw} · B ${whole.black}';
+}
+
+/// Why the view reads nothing for the board's position.
 enum TobyIdleReason {
   /// The game is not standard chess.
   variant('Toby reads standard chess positions'),
@@ -145,7 +242,7 @@ enum TobyIdleReason {
   final String message;
 }
 
-/// What the board asks the panel to read: a request for the position on the
+/// What the board asks the view to read: a request for the position on the
 /// board, or why there is none.
 @immutable
 class TobyTarget {
@@ -166,7 +263,7 @@ class TobyTarget {
   final TobyIdleReason? idle;
 }
 
-/// Decides what the panel of one board reads. [request] is only built when
+/// Decides what the view of one board reads. [request] is only built when
 /// the position can be read.
 TobyTarget resolveTobyTarget({
   required bool foreground,
@@ -185,10 +282,12 @@ TobyTarget resolveTobyTarget({
   return TobyTarget.read(request(), positionKey: positionKey);
 }
 
-/// The panel. The board pane builds it with an immutable [target] and its
-/// own [controller]; the panel alone watches Toby's reading, so nothing is
-/// asked while it is collapsed, the reader is not Premium, or it is not
-/// mounted.
+/// The What Toby Thinks tab's list area. The board pane builds it with an
+/// immutable [target] and its own [controller]; the engine pane mounts it in
+/// place of Stockfish's lines only while the tab is shown. It alone watches
+/// Toby's reading, so nothing is asked while Stockfish is shown. While it is
+/// mounted, the engine's arrows leave the board
+/// ([TobyPanelController.holdsBoard]).
 class WhatTobyThinks extends ConsumerStatefulWidget {
   const WhatTobyThinks({
     super.key,
@@ -199,6 +298,37 @@ class WhatTobyThinks extends ConsumerStatefulWidget {
 
   final TobyTarget target;
   final TobyPanelController controller;
+
+  /// The least height at which the view still shows one whole row and the
+  /// attribution under it: its tightest step.
+  static double leastHeight(BuildContext context) =>
+      _tobyRowExtent(context, showBars: true) +
+      _kAttributionTightGap +
+      _tobyCreditLineHeight(context) +
+      _kAttributionTightBottom;
+
+  /// The height at which the view, [width] wide, shows its whole first
+  /// step: the reading line, three whole rows and the attribution, with the
+  /// rows ending on a whole row when more follow. It depends on the text
+  /// metrics and the width alone, never on the reading, so the board's right
+  /// rail can size the pane for it once per tab and keep that size while
+  /// the reader moves through the game.
+  static double comfortableHeight(
+    BuildContext context, {
+    required double width,
+  }) {
+    final rowExtent = _tobyRowExtent(
+      context,
+      showBars: width >= kTobyWdlMinPanelWidth,
+    );
+    return _kLeadHeight +
+        _kLeadGap +
+        _kComfortableRows * rowExtent +
+        (_kComfortableRows - 1) * _kRowGap +
+        _kAttributionScrolledGap +
+        _tobyCreditLineHeight(context) +
+        _kListBottomPadding;
+  }
 
   /// Plays a candidate on the board, through the same path as a Stockfish
   /// row. Null hides "Play" from the row menu.
@@ -230,17 +360,17 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   bool _focusByPointer = false;
 
   /// The candidates on screen, for focus that arrives between builds.
-  List<TobyCandidate> _visibleRows = const <TobyCandidate>[];
+  List<TobyCandidate> _listed = const <TobyCandidate>[];
 
   /// An Esc that cleared the pin also owns its key repeats, so holding it
   /// cannot go on to close the tab.
   bool _escapeConsumed = false;
 
-  /// The reader just opened the panel: its first request goes out at once,
-  /// with no navigation to settle.
-  bool _openedByReader = false;
+  /// The reader just chose the tab (the view mounts with it): the first
+  /// request goes out at once, with no navigation to settle.
+  bool _askNow = true;
 
-  /// The what-if menu keeps its state while the inputs row rearranges
+  /// The what-if menu keeps its state while the reading line rearranges
   /// around it (a reading arriving, a busy notice).
   final GlobalKey _whatIfKey = GlobalKey(debugLabel: 'Toby what-if');
 
@@ -257,7 +387,10 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   void didUpdateWidget(covariant WhatTobyThinks oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.controller, widget.controller)) {
-      oldWidget.controller.removeListener(_onControllerChanged);
+      oldWidget.controller
+        ..removeListener(_onControllerChanged)
+        ..holdBoardSoon(false)
+        ..clearMarksSoon();
       widget.controller.addListener(_onControllerChanged);
     }
     if (oldWidget.target.positionKey != widget.target.positionKey) {
@@ -271,9 +404,12 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   @override
   void dispose() {
     _controller.removeListener(_onControllerChanged);
-    // No arrow outlives the panel that drew it (picture-in-picture, a
-    // collapsed engine pane, the panel moving when the report opens).
-    _controller.clearMarksSoon();
+    // Leaving the tab (or the pane: picture-in-picture, a closed board)
+    // gives the board back its engine arrows, and no Toby arrow outlives
+    // the view that drew it.
+    _controller
+      ..holdBoardSoon(false)
+      ..clearMarksSoon();
     _rowsFocus
       ..removeListener(_onRowsFocusChanged)
       ..dispose();
@@ -306,23 +442,14 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
 
   void _focusRowByKeyboard() {
     final positionKey = widget.target.positionKey;
-    final visible = _visibleRows;
-    if (!mounted || positionKey == null || visible.isEmpty) return;
-    final row = _focusedRow.clamp(0, visible.length - 1);
+    final listed = _listed;
+    if (!mounted || positionKey == null || listed.isEmpty) return;
+    final row = _focusedRow.clamp(0, listed.length - 1);
     setState(() {
       _keyboard = true;
       _focusedRow = row;
     });
-    _controller.hover(positionKey, visible[row].uci);
-  }
-
-  /// A collapse the header did not cause (sign-out, a lapsed membership)
-  /// unmounts the rows without a pointer exit: clear what they put on the
-  /// board.
-  void _onExpandedChanged(bool? _, bool expanded) {
-    if (expanded) return;
-    _keyboard = false;
-    _controller.clearMarksSoon();
+    _controller.hover(positionKey, listed[row].uci);
   }
 
   void _toggleWhatIf(FPopoverController popover) {
@@ -341,28 +468,24 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     });
   }
 
-  void _open() {
-    if (!mounted) return;
-    final admitted = admitTobyPrediction(
-      _windowContainer(context),
-      surface: 'toby_panel_expand',
-      resume: DesktopAccessResume(run: _open, stillMatches: () => mounted),
-    );
-    if (!admitted) return;
-    _openedByReader = true;
-    ref.read(tobyPanelOpenPreferenceProvider.notifier).choose(true);
-  }
-
-  void _collapse() {
-    _keyboard = false;
-    _controller.clearMarks();
-    ref.read(tobyPanelOpenPreferenceProvider.notifier).choose(false);
-  }
-
   void _togglePin(String uci) {
     final positionKey = widget.target.positionKey;
     if (positionKey == null) return;
     _controller.togglePin(positionKey, uci);
+  }
+
+  void _hoverRow(String positionKey, String uci) {
+    if (_keyboard) setState(() => _keyboard = false);
+    _controller.hover(positionKey, uci);
+  }
+
+  void _pressRow(int index, String uci) {
+    _focusedRow = index;
+    if (!_rowsFocus.hasFocus) {
+      _focusByPointer = true;
+      _rowsFocus.requestFocus();
+    }
+    _togglePin(uci);
   }
 
   Future<void> _showRowMenu(TobyCandidate candidate, Offset position) async {
@@ -386,10 +509,10 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     widget.onPlayUci?.call(candidate.uci);
   }
 
-  /// Esc anywhere inside the panel (rows, header, what-if menu). It closes
-  /// the board tab elsewhere, so it means "unpin" here only while there is a
-  /// pin to clear; otherwise it passes on.
-  KeyEventResult _onPanelKey(KeyEvent event) {
+  /// Esc anywhere inside the view (rows, reading line, what-if menu). It
+  /// closes the board tab elsewhere, so it means "unpin" here only while
+  /// there is a pin to clear; otherwise it passes on.
+  KeyEventResult _onViewKey(KeyEvent event) {
     if (event.logicalKey != LogicalKeyboardKey.escape) {
       return KeyEventResult.ignored;
     }
@@ -405,33 +528,33 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     return _escapeConsumed ? KeyEventResult.handled : KeyEventResult.ignored;
   }
 
-  /// Up/Down walk the candidates, Enter pins one. Everything else (Space
-  /// plays Stockfish's move, ←/→ step the game) passes on to the rail.
-  KeyEventResult _onRowsKey(KeyEvent event, List<TobyCandidate> visible) {
+  /// Up/Down walk the candidates, Enter pins one. Everything else (←/→ step
+  /// the game, Space, Esc without a pin) passes on to the rail.
+  KeyEventResult _onRowsKey(KeyEvent event, List<TobyCandidate> listed) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     // Chords belong to the shell (Cmd/Ctrl+Shift+F global search, tab
     // switching): never answer one.
     if (_modifierPressed()) return KeyEventResult.ignored;
     final key = event.logicalKey;
     final positionKey = widget.target.positionKey;
-    if (positionKey == null || visible.isEmpty) return KeyEventResult.ignored;
+    if (positionKey == null || listed.isEmpty) return KeyEventResult.ignored;
     if (key == LogicalKeyboardKey.arrowDown ||
         key == LogicalKeyboardKey.arrowUp) {
       final step = key == LogicalKeyboardKey.arrowDown ? 1 : -1;
       final start = _keyboard ? _focusedRow + step : _focusedRow;
-      final next = start.clamp(0, visible.length - 1);
+      final next = start.clamp(0, listed.length - 1);
       setState(() {
         _keyboard = true;
         _focusedRow = next;
       });
-      _controller.hover(positionKey, visible[next].uci);
+      _controller.hover(positionKey, listed[next].uci);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
       if (event is KeyDownEvent) {
-        final row = _focusedRow.clamp(0, visible.length - 1);
-        _togglePin(visible[row].uci);
+        final row = _focusedRow.clamp(0, listed.length - 1);
+        _togglePin(listed[row].uci);
       }
       return KeyEventResult.handled;
     }
@@ -448,13 +571,13 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<bool>(tobyPanelExpandedProvider, _onExpandedChanged);
-    final expanded = ref.watch(tobyPanelExpandedProvider);
-    final slots = TobyPanelSlots.of(context);
+    // While the view is on screen in place of Stockfish's lines, the
+    // engine's arrows leave the board; leaving gives them back (dispose).
+    _controller.holdBoardSoon(true);
     final request = widget.target.request;
     TobyQuery? query;
     TobyReadingState? state;
-    if (expanded && request != null) {
+    if (request != null) {
       final whatIf = _controller.whatIf;
       query = TobyQuery(
         request: request.copyWith(
@@ -465,93 +588,202 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
       );
       final provider = tobyReadingProvider(query);
       state = ref.watch(provider);
-      // The first position after the reader opens the panel is asked at
+      // The first position after the reader chooses the tab is asked at
       // once; only position changes wait out the settle delay.
-      if (_openedByReader) ref.read(provider.notifier).askNow();
+      if (_askNow) ref.read(provider.notifier).askNow();
     }
-    if (expanded) _openedByReader = false;
-    final reading = state?.reading;
-    final visible =
-        _visibleRows =
-            expanded ? _visible(state, slots) : const <TobyCandidate>[];
+    _askNow = false;
+    final reading = widget.target.positionKey == null ? null : state?.reading;
+    final listed =
+        _listed =
+            reading == null || reading.candidates.isEmpty
+                ? const <TobyCandidate>[]
+                : tobyListedCandidates(reading);
     return Focus(
       canRequestFocus: false,
       skipTraversal: true,
-      onKeyEvent: (_, event) => _onPanelKey(event),
-      child: SizedBox(
-        height: tobyPanelHeight(expanded: expanded, slots: slots),
-        child: LayoutBuilder(
-          builder:
-              (context, constraints) => Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // One header in both states, so a keyboard toggle keeps
-                  // its focus.
-                  _TobyHeader(
-                    expanded: expanded,
-                    verdict: reading?.positionWdl,
-                    onToggle: expanded ? _collapse : _open,
-                  ),
-                  if (expanded) ...[
-                    SizedBox(
-                      height: slots * _kRowHeight,
-                      child: Focus(
-                        focusNode: _rowsFocus,
-                        // Tab passes over a slot area showing a message; a
-                        // row that has focus keeps it while the next
-                        // position loads.
-                        skipTraversal: visible.isEmpty,
-                        onKeyEvent: (_, event) => _onRowsKey(event, visible),
-                        child: _slots(
-                          state,
-                          query,
-                          slots: slots,
-                          showWdl: constraints.maxWidth >= _kWdlMinPanelWidth,
-                        ),
+      onKeyEvent: (_, event) => _onViewKey(event),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final height = constraints.maxHeight;
+          final showBars = width >= kTobyWdlMinPanelWidth;
+          final rowExtent = _tobyRowExtent(context, showBars: showBars);
+          final creditLine = _tobyCreditLineHeight(context);
+          final scrolledCredit =
+              _kAttributionScrolledGap + creditLine + _kListBottomPadding;
+          const leadExtent = _kLeadHeight + _kLeadGap;
+          final roomForLead = height >= leadExtent + rowExtent + scrolledCredit;
+          final busy =
+              state?.status == TobyStatus.busy &&
+              reading != null &&
+              query != null;
+          // A busy notice over a kept network stage needs its line (it
+          // carries Try again). A pane too short for that line, a whole row
+          // and the attribution shows the notice alone, as it does with no
+          // stage kept.
+          if (listed.isEmpty || (busy && !roomForLead)) {
+            final lead = _lead(
+              context,
+              state,
+              query,
+              listed.isEmpty ? reading : null,
+              width: width,
+            );
+            return DesktopScrollHost(
+              child: CustomScrollView(
+                physics: const DesktopScrollPhysics(),
+                slivers: [
+                  if (lead != null) SliverToBoxAdapter(child: lead),
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        _kContentInset,
+                        0,
+                        _kContentInset,
+                        _kListBottomPadding,
                       ),
+                      child: Center(child: _message(state, query)),
                     ),
-                    SizedBox(
-                      height: _kMetaHeight,
-                      child: _meta(state, query, slots: slots),
-                    ),
-                    const SizedBox(
-                      height: _kAttributionHeight,
-                      child: _TobyAttribution(),
-                    ),
-                    const SizedBox(height: _kBottomPadding),
-                  ],
+                  ),
                 ],
               ),
-        ),
+            );
+          }
+          // The attribution stays on screen under the rows at any height:
+          // the rows scroll above it. A short pane gives way in fixed steps,
+          // so one whole row and the attribution always fit together:
+          //  1. everything (the reading line, the rows, the attribution);
+          //  2. the reading line steps aside;
+          //  3. the attribution closes up under the one row.
+          final tight = height < rowExtent + scrolledCredit;
+          final lead =
+              roomForLead
+                  ? _lead(context, state, query, reading, width: width)
+                  : null;
+          final others = tobyOtherMovesLabel(reading!, listed.length);
+          // Where each item of the list starts and ends (the rows, then the
+          // other-moves line), under the reading line.
+          final items = <(double, double)>[];
+          var y = lead == null ? 0.0 : leadExtent;
+          for (var i = 0; i < listed.length; i++) {
+            items.add((y, y + rowExtent));
+            y += rowExtent + _kRowGap;
+          }
+          if (others != null) {
+            final top = items.last.$2 + _kFooterGap;
+            items.add((
+              top,
+              top + desktopTextLineSize(context, others, _kMetaStyle).height,
+            ));
+          }
+          // Whether the rows outrun the pane and scroll. The list then ends
+          // on a whole row when the next one would barely show (it is the
+          // row under the edge that dissolves into the pane only when most
+          // of it is on screen), and the attribution keeps more air from it.
+          var room = height - scrolledCredit;
+          final scrolls = items.last.$2 > room + 0.5;
+          if (scrolls) {
+            for (var i = 1; i < items.length; i++) {
+              final (top, bottom) = items[i];
+              if (bottom <= room + 0.5) continue;
+              if (room - top < (bottom - top) * CutItemFade.minVisibleShare) {
+                room = items[i - 1].$2;
+              }
+              break;
+            }
+          }
+          final Widget list = CutItemFade(
+            child: DesktopScrollHost(
+              child: CustomScrollView(
+                shrinkWrap: true,
+                physics: const DesktopScrollPhysics(),
+                slivers: [
+                  if (lead != null) SliverToBoxAdapter(child: lead),
+                  SliverToBoxAdapter(
+                    child: _rows(reading, listed, showBars: showBars),
+                  ),
+                  if (others != null)
+                    SliverToBoxAdapter(child: _otherMoves(others)),
+                ],
+              ),
+            ),
+          );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // As tall as the rows need, up to the room the attribution
+              // leaves; then the rows scroll, and the row the edge cuts
+              // dissolves into the pane.
+              if (height.isFinite)
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: scrolls && !tight ? room : double.infinity,
+                    ),
+                    child: list,
+                  ),
+                )
+              else
+                list,
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  _kContentInset,
+                  tight
+                      ? _kAttributionTightGap
+                      : scrolls
+                      ? _kAttributionScrolledGap
+                      : _kFooterLineGap,
+                  _kContentInset,
+                  tight ? _kAttributionTightBottom : _kListBottomPadding,
+                ),
+                child: const _TobyAttribution(),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  List<TobyCandidate> _visible(TobyReadingState? state, int slots) {
-    final reading = state?.reading;
-    if (widget.target.positionKey == null || reading == null) {
-      return const <TobyCandidate>[];
-    }
-    return reading.candidates.take(slots).toList(growable: false);
-  }
-
-  Widget _slots(
-    TobyReadingState? state,
-    TobyQuery? query, {
-    required int slots,
-    required bool showWdl,
-  }) {
+  /// One centred line for every state without rows.
+  Widget _message(TobyReadingState? state, TobyQuery? query) {
     final idle = widget.target.idle;
     if (idle != null) return _TobyMessage(idle.message);
     if (state == null) return const _TobyMessage(_kThinking);
-    final reading = state.reading;
-    if (reading != null && reading.candidates.isNotEmpty) {
-      return _rows(reading, slots: slots, showWdl: showWdl);
-    }
     void retry() {
-      if (query == null) return;
+      if (query == null || !mounted) return;
       ref.read(tobyReadingProvider(query).notifier).retry();
     }
+
+    // Gamebase refused the reading: its access setting is stricter than the
+    // client's (which lets everyone in). The window's prompts carry the
+    // action; a reader who completes one is asked about again.
+    void upgrade() => unawaited(
+      presentTobyServerGate(
+        _windowContainer(context),
+        surface: _kGateSurface,
+        resume: DesktopAccessResume(run: retry, stillMatches: () => mounted),
+      ),
+    );
+    Future<void> signIn() async {
+      final signedIn = await showDesktopAccountSignIn(
+        context,
+        surface: _kGateSurface,
+        title: 'Sign in to see $kTobyFeatureLabel',
+        message: 'Toby reads positions for signed-in accounts right now.',
+      );
+      if (signedIn) retry();
+    }
+
+    // Gamebase did not accept a signed-in reader's session (an expired
+    // token, say): signing in again is not the answer, asking again is.
+    final hasAccount = ref.watch(
+      desktopEntitlementProvider.select(
+        (snapshot) => snapshot.hasPermanentAccount,
+      ),
+    );
 
     return switch (state.status) {
       TobyStatus.thinking ||
@@ -566,6 +798,19 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
         "Premium couldn't be confirmed",
         onRetry: retry,
       ),
+      TobyStatus.premiumRequired => _TobyMessage(
+        '$kTobyFeatureLabel is Premium right now',
+        action: 'Upgrade',
+        onRetry: upgrade,
+      ),
+      TobyStatus.signInRequired =>
+        hasAccount
+            ? _TobyMessage("Couldn't confirm your account", onRetry: retry)
+            : _TobyMessage(
+              'An account is needed right now',
+              action: 'Sign in',
+              onRetry: () => unawaited(signIn()),
+            ),
       TobyStatus.notApplicable => const _TobyMessage(
         "Toby can't read this position",
       ),
@@ -573,73 +818,92 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   }
 
   Widget _rows(
-    TobyReading reading, {
-    required int slots,
-    required bool showWdl,
+    TobyReading reading,
+    List<TobyCandidate> listed, {
+    required bool showBars,
   }) {
     final positionKey = widget.target.positionKey!;
-    final visible = reading.candidates.take(slots).toList(growable: false);
     final hovered = _controller.hoveredUci(positionKey);
     final pinned = _controller.pinnedUci(positionKey);
     final focused =
-        _keyboard && _rowsFocus.hasFocus && _focusedRow < visible.length
-            ? visible[_focusedRow].uci
+        _keyboard && _rowsFocus.hasFocus && _focusedRow < listed.length
+            ? listed[_focusedRow].uci
             : null;
-    int? rowAt(Offset local) {
-      final index = (local.dy / _kRowHeight).floor();
-      return index >= 0 && index < visible.length ? index : null;
-    }
-
-    return MouseRegion(
-      cursor: hovered != null ? SystemMouseCursors.click : MouseCursor.defer,
-      onHover: (event) {
-        final index = rowAt(event.localPosition);
-        if (_keyboard) setState(() => _keyboard = false);
-        _controller.hover(
-          positionKey,
-          index == null ? null : visible[index].uci,
-        );
-      },
-      onExit: (_) => _controller.hover(positionKey, null),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapUp: (details) {
-          final index = rowAt(details.localPosition);
-          if (index == null) return;
-          _focusedRow = index;
-          if (!_rowsFocus.hasFocus) {
-            _focusByPointer = true;
-            _rowsFocus.requestFocus();
-          }
-          _togglePin(visible[index].uci);
-        },
-        onSecondaryTapUp: (details) {
-          final index = rowAt(details.localPosition);
-          if (index == null) return;
-          unawaited(_showRowMenu(visible[index], details.globalPosition));
-        },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (var i = 0; i < slots; i++)
-              SizedBox(
-                height: _kRowHeight,
-                child:
-                    i < visible.length
-                        ? _TobyRow(
-                          key: ValueKey<String>(visible[i].uci),
-                          candidate: visible[i],
+    return Focus(
+      focusNode: _rowsFocus,
+      onKeyEvent: (_, event) => _onRowsKey(event, listed),
+      child: MouseRegion(
+        // Off the rows, the board shows the pin (or the engine's view)
+        // again.
+        onExit: (_) => _controller.hover(positionKey, null),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: _kListInset),
+          child: CutFadeItems(
+            gap: _kRowGap,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < listed.length; i++)
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    onEnter: (_) => _hoverRow(positionKey, listed[i].uci),
+                    onHover: (_) => _hoverRow(positionKey, listed[i].uci),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _pressRow(i, listed[i].uci),
+                      onSecondaryTapUp:
+                          (details) => unawaited(
+                            _showRowMenu(listed[i], details.globalPosition),
+                          ),
+                      // A gap belongs to the row above it, so the pointer never
+                      // falls between two rows and the board never flickers
+                      // back to the engine's view.
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          bottom: i == listed.length - 1 ? 0 : _kRowGap,
+                        ),
+                        child: _TobyRow(
+                          key: ValueKey<String>(listed[i].uci),
+                          candidate: listed[i],
                           muted: !reading.isFinal,
-                          showWdl: showWdl,
-                          lastSlot: i == slots - 1,
+                          showBar: showBars,
                           highlighted:
-                              visible[i].uci == hovered ||
-                              visible[i].uci == focused,
-                          pinned: visible[i].uci == pinned,
-                          onActivate: () => _togglePin(visible[i].uci),
-                        )
-                        : null,
-              ),
+                              listed[i].uci == hovered ||
+                              listed[i].uci == focused,
+                          pinned: listed[i].uci == pinned,
+                          onActivate: () => _togglePin(listed[i].uci),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Under the rows: every move they leave out ("24 other moves · 8.1%").
+  Widget _otherMoves(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _kContentInset,
+        _kFooterGap,
+        _kContentInset,
+        0,
+      ),
+      child: CutFadeItems(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.fade,
+              style: _kMetaStyle,
+            ),
           ],
         ),
       ),
@@ -647,142 +911,129 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   }
 
   /// Whether the what-if menu can change anything: there is a position to
-  /// read, Toby can read it, and the membership is confirmed.
+  /// read, Toby can read it, and Gamebase has not refused the reader.
   bool _whatIfApplies(TobyReadingState? state) =>
       widget.target.request != null &&
-      state?.status != TobyStatus.notApplicable &&
-      state?.status != TobyStatus.premiumUnconfirmed;
+      switch (state?.status) {
+        TobyStatus.notApplicable ||
+        TobyStatus.premiumUnconfirmed ||
+        TobyStatus.premiumRequired ||
+        TobyStatus.signInRequired => false,
+        _ => true,
+      };
 
-  /// The inputs row: how many moves the slots leave out (or a busy notice
-  /// with Try again) on the left, the inputs Toby reads with on the right.
-  /// Nothing in it is cut short: when both do not fit, the left side gives
-  /// way to the inputs, and the inputs give way to a busy notice.
-  Widget _meta(
+  /// The reading line over the rows: the inputs Toby reads with (they open
+  /// the what-if menu), or a busy notice with Try again over a network stage
+  /// it kept, on the left; the position's verdict on the right. Nothing in
+  /// it is cut short: when both do not fit, the verdict steps aside. Null
+  /// when there is nothing to say.
+  Widget? _lead(
+    BuildContext context,
     TobyReadingState? state,
-    TobyQuery? query, {
-    required int slots,
+    TobyQuery? query,
+    TobyReading? reading, {
+    required double width,
   }) {
-    final reading = state?.reading;
     final busy =
         state?.status == TobyStatus.busy && reading != null && query != null;
-    String? others;
-    if (!busy && reading != null && widget.target.positionKey != null) {
-      final hidden = reading.candidates.skip(slots);
-      final count = hidden.length + reading.otherMoveCount;
-      final chance = hidden.fold<double>(
-        reading.otherProbability,
-        (sum, candidate) => sum + candidate.probability,
-      );
-      if (count > 0) {
-        others =
-            '+$count ${count == 1 ? 'move' : 'moves'} · '
-            '${tobyPercentage(chance)}';
-      }
-    }
     // Before the first reading, the inputs Gamebase will derive from the
     // request; never a placeholder.
     final inputs =
-        query == null || !_whatIfApplies(state)
+        busy || query == null || !_whatIfApplies(state)
             ? null
             : (reading?.inputs ?? TobyInputs.expectedFor(query.request)).label;
+    final wdl = reading?.positionWdl;
+    final verdict = wdl == null ? null : tobyVerdictLabel(wdl);
+    if (!busy && inputs == null && verdict == null) return null;
 
-    Widget busyNotice({required bool bounded}) {
-      const notice = Text(
-        _kBusy,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: _kMetaStyle,
-      );
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (bounded) const Flexible(child: notice) else notice,
-          const SizedBox(width: _kMetaGap),
-          _TobyTextAction(
-            label: _kTryAgain,
-            fontSize: 11,
-            onPress:
-                () => ref.read(tobyReadingProvider(query!).notifier).retry(),
-          ),
-        ],
-      );
-    }
-
-    Widget? left({required bool bounded}) =>
+    final room = width - 2 * _kContentInset;
+    final leftWidth =
         busy
-            ? busyNotice(bounded: bounded)
-            : others == null
-            ? null
-            : Text(
-              others,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: _kMetaStyle,
-            );
+            ? _textWidth(context, _kBusy, _kMetaStyle) +
+                _kMetaGap +
+                _textWidth(context, _kTryAgain, _TobyTextAction.strongStyle)
+            : inputs == null
+            ? 0.0
+            : _textWidth(context, inputs, _TobyTextAction.style);
+    // A pixel of slack for rounding between measuring and layout.
+    final showVerdict =
+        verdict != null &&
+        (leftWidth == 0 ? 0 : leftWidth + _kVerdictGap) +
+                _textWidth(context, verdict, _kVerdictStyle) +
+                1 <=
+            room;
 
-    Widget? right() =>
-        inputs == null
-            ? null
-            // The popover owns its controller, so a menu left open when the
-            // panel collapses goes with it.
-            : FPopover(
-              key: _whatIfKey,
-              popoverAnchor: Alignment.bottomRight,
-              childAnchor: Alignment.topRight,
-              focusNode: _whatIfFocus,
-              popoverBuilder:
-                  (context, _) => _TobyWhatIfMenu(controller: _controller),
-              builder:
-                  (context, popover, _) => DesktopTooltip(
-                    message: 'Read as other ratings or time controls',
-                    child: _TobyTextAction(
-                      label: inputs,
-                      fontSize: 11,
-                      emphasized: _controller.hasWhatIf,
-                      onPress: () => _toggleWhatIf(popover),
-                    ),
-                  ),
-            );
+    Widget busyNotice() => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Flexible(
+          child: Text(
+            _kBusy,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: _kMetaStyle,
+          ),
+        ),
+        const SizedBox(width: _kMetaGap),
+        _TobyTextAction(
+          label: _kTryAgain,
+          strong: true,
+          onPress: () => ref.read(tobyReadingProvider(query!).notifier).retry(),
+        ),
+      ],
+    );
+
+    Widget whatIf(String label) => FPopover(
+      key: _whatIfKey,
+      popoverAnchor: Alignment.topLeft,
+      childAnchor: Alignment.bottomLeft,
+      focusNode: _whatIfFocus,
+      popoverBuilder: (context, _) => _TobyWhatIfMenu(controller: _controller),
+      builder:
+          (context, popover, _) => DesktopTooltip(
+            message: 'Read as other ratings or time controls',
+            child: _TobyTextAction(
+              label: label,
+              emphasized: _controller.hasWhatIf,
+              onPress: () => _toggleWhatIf(popover),
+            ),
+          ),
+    );
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: _kContentInset),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final actionStyle = _TobyTextAction.styleFor(11);
-          final leftWidth =
-              busy
-                  ? _textWidth(context, _kBusy, _kMetaStyle) +
-                      _kMetaGap +
-                      _textWidth(context, _kTryAgain, actionStyle)
-                  : others == null
-                  ? null
-                  : _textWidth(context, others, _kMetaStyle);
-          final rightWidth =
-              inputs == null ? null : _textWidth(context, inputs, actionStyle);
-          // A pixel of slack for rounding between measuring and layout.
-          final both =
-              leftWidth != null &&
-              rightWidth != null &&
-              leftWidth + _kMetaGap + rightWidth + 1 <= constraints.maxWidth;
-          final showLeft =
-              leftWidth != null && (busy || rightWidth == null || both);
-          final showRight = rightWidth != null && (!busy || both);
-          if (showLeft && showRight) {
-            return Row(
-              children: [left(bounded: false)!, const Spacer(), right()!],
-            );
-          }
-          if (showLeft) {
-            return Align(
-              alignment: Alignment.centerLeft,
-              child: left(bounded: true),
-            );
-          }
-          if (showRight) {
-            return Align(alignment: Alignment.centerRight, child: right());
-          }
-          return const SizedBox.shrink();
-        },
+      padding: const EdgeInsets.fromLTRB(
+        _kContentInset,
+        0,
+        _kContentInset,
+        _kLeadGap,
+      ),
+      child: SizedBox(
+        height: _kLeadHeight,
+        child: Row(
+          children: [
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child:
+                    busy
+                        ? busyNotice()
+                        : inputs == null
+                        ? const SizedBox.shrink()
+                        : whatIf(inputs),
+              ),
+            ),
+            if (showVerdict)
+              DesktopTooltip(
+                message: 'How games tend to end from here',
+                child: Text(
+                  verdict,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: _kVerdictStyle,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -800,286 +1051,24 @@ ProviderContainer _windowContainer(BuildContext context) {
   return container;
 }
 
-/// The panel's top row, alone when collapsed. The sidebar's button look
-/// (rounded 8, kWhiteColor70 to white, a kBlack3Color fill on hover) with
-/// no nudge: nothing in the engine pane moves.
-class _TobyHeader extends StatelessWidget {
-  const _TobyHeader({
-    required this.expanded,
-    required this.onToggle,
-    this.verdict,
-  });
-
-  final bool expanded;
-  final VoidCallback onToggle;
-
-  /// The position's outcome chances, shown after the label when expanded.
-  final TobyWdl? verdict;
-
-  @override
-  Widget build(BuildContext context) {
-    final verdict = this.verdict?.percentages;
-    return SizedBox(
-      height: _kHeaderHeight,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: _kListInset,
-          vertical: 2,
-        ),
-        child: Semantics(
-          expanded: expanded,
-          child: FTappable.static(
-            semanticsLabel: kTobyFeatureLabel,
-            onPress: onToggle,
-            style:
-                (style) => style.copyWith(
-                  cursor: const FWidgetStateMap({
-                    WidgetState.any: SystemMouseCursors.click,
-                  }),
-                ),
-            builder:
-                (context, states, _) => SingleMotionBuilder(
-                  value: states.contains(WidgetState.hovered) ? 1.0 : 0.0,
-                  motion: DesktopMotion.hover,
-                  builder: (context, value, _) {
-                    final t = value.clamp(0.0, 1.0);
-                    // The label is white while expanded; the chevron
-                    // brightens with the hover either way.
-                    final hover = Color.lerp(kWhiteColor70, kWhiteColor, t)!;
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: _kRowPadding,
-                      ),
-                      decoration: BoxDecoration(
-                        color: kBlack3Color.withValues(
-                          alpha: kBlack3Color.a * t,
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: _HeaderTitle(
-                              labelColor: expanded ? kWhiteColor : hover,
-                              verdict:
-                                  expanded && verdict != null
-                                      ? 'W ${verdict.white} · '
-                                          'D ${verdict.draw} · '
-                                          'B ${verdict.black}'
-                                      : null,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Icon(
-                            expanded
-                                ? Icons.keyboard_arrow_down_rounded
-                                : Icons.chevron_right_rounded,
-                            size: 16,
-                            color: hover,
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The feature's name, then the position verdict when it fits whole. The
-/// name never gives way: a verdict without room is left out, not cut.
-class _HeaderTitle extends StatelessWidget {
-  const _HeaderTitle({required this.labelColor, required this.verdict});
-
-  final Color labelColor;
-  final String? verdict;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final verdict = this.verdict;
-        final showVerdict =
-            verdict != null &&
-            _textWidth(context, kTobyFeatureLabel, _kLabelStyle) +
-                    _kVerdictGap +
-                    _textWidth(context, verdict, _kVerdictStyle) +
-                    1 <=
-                constraints.maxWidth;
-        return Row(
-          children: [
-            Flexible(
-              child: Text(
-                kTobyFeatureLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: _kLabelStyle.copyWith(color: labelColor),
-              ),
-            ),
-            if (showVerdict) ...[
-              const SizedBox(width: _kVerdictGap),
-              Text(
-                verdict,
-                maxLines: 1,
-                softWrap: false,
-                style: _kVerdictStyle,
-              ),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// One candidate: SAN under Stockfish's score column, the chance as a bar
-/// (with Toby's first instinct marked when it differs), the percentage, and
-/// how games tend to end after the move.
-class _TobyRow extends StatelessWidget {
-  const _TobyRow({
-    super.key,
-    required this.candidate,
-    required this.muted,
-    required this.showWdl,
-    required this.lastSlot,
-    required this.highlighted,
-    required this.pinned,
-    required this.onActivate,
-  });
-
-  final TobyCandidate candidate;
-
-  /// The quick network stage: bars and text are muted until the final
-  /// reading arrives.
-  final bool muted;
-  final bool showWdl;
-
-  /// The inputs row, not another slot, lies below this one.
-  final bool lastSlot;
-  final bool highlighted;
-  final bool pinned;
-  final VoidCallback onActivate;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder:
-          (context, constraints) => _build((
-            width: constraints.maxWidth - 2 * _kListInset,
-            height: lastSlot ? _kMetaHeight : _kRowHeight,
-          )),
-    );
-  }
-
-  /// [below] is the box of the row below, which the bars' tooltips take:
-  /// as wide as this row's hover fill, as tall as that row.
-  Widget _build(_RowBox below) {
-    final textColor = muted ? kWhiteColor70 : kWhiteColor;
-    final wdl = candidate.wdl;
-    final row = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: _kListInset),
-      child: SingleMotionBuilder(
-        value: highlighted || pinned ? 1.0 : 0.0,
-        motion: DesktopMotion.hover,
-        builder: (context, value, child) {
-          final t = value.clamp(0.0, 1.0);
-          // The pin outline is painted over the row, so it takes no room
-          // and the SAN starts at the panel's content inset.
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: _kRowPadding),
-            decoration: BoxDecoration(
-              color: kBlack3Color.withValues(alpha: kBlack3Color.a * t),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            foregroundDecoration:
-                pinned
-                    ? BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: kTobyAccent.withValues(alpha: 0.45),
-                      ),
-                    )
-                    : null,
-            child: child,
-          );
-        },
-        child: Row(
-          children: [
-            SizedBox(
-              width: _kSanWidth,
-              // A long promotion ("exd8=Q+") shrinks to the column rather
-              // than losing its end.
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  candidate.san,
-                  maxLines: 1,
-                  style: TextStyle(
-                    color: textColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8 + _kPvFigureInset),
-            Expanded(
-              child: _ProbabilityBar(
-                probability: candidate.probability,
-                prior: candidate.priorDiffers ? candidate.prior : null,
-                muted: muted,
-                below: below,
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: _kPercentWidth,
-              child: Text(
-                candidate.percentage,
-                maxLines: 1,
-                textAlign: TextAlign.end,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 12,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ),
-            if (showWdl) ...[
-              const SizedBox(width: 8),
-              _WdlBar(wdl: wdl, below: below),
-            ],
-          ],
-        ),
-      ),
-    );
-    return Semantics(
-      button: true,
-      selected: pinned,
-      label: tobyCandidateSemanticsLabel(candidate),
-      excludeSemantics: true,
-      onTap: onActivate,
-      child: row,
-    );
-  }
-}
-
-/// "Nb3, 71 percent. After it: White 30, draw 55, Black 15".
+/// "Nb3, 71 percent, first instinct 64 percent. After it: White 30, draw 55,
+/// Black 15". The first instinct is spoken when the row shows it.
 @visibleForTesting
 String tobyCandidateSemanticsLabel(TobyCandidate candidate) {
-  final chance =
-      candidate.probability > 0 && candidate.probability < .001
+  String spoken(double probability) =>
+      probability > 0 && probability < .001
           ? 'under 0.1 percent'
-          : '${_spokenPercent(candidate.probability)} percent';
+          : '${_spokenPercent(probability)} percent';
+  final prior = candidate.prior;
+  final instinct =
+      prior != null && candidate.priorDiffers
+          ? ', first instinct ${spoken(prior)}'
+          : '';
   final wdl = candidate.wdl?.percentages;
   return wdl == null
-      ? '${candidate.san}, $chance'
-      : '${candidate.san}, $chance. After it: White ${wdl.white}, '
-          'draw ${wdl.draw}, Black ${wdl.black}';
+      ? '${candidate.san}, ${spoken(candidate.probability)}$instinct'
+      : '${candidate.san}, ${spoken(candidate.probability)}$instinct. '
+          'After it: White ${wdl.white}, draw ${wdl.draw}, Black ${wdl.black}';
 }
 
 String _spokenPercent(double probability) {
@@ -1094,210 +1083,202 @@ String _wholePercent(double probability) =>
         ? '<1%'
         : '${(probability * 100).round()}%';
 
-/// The size of the row under a candidate.
-typedef _RowBox = ({double width, double height});
-
-/// A bar's tooltip, laid exactly over the row below (under the last slot,
-/// the inputs row): it never covers the header or the row it explains, and
-/// its edges fall between lines of text rather than through them. The text
-/// sits at the row's inset, on the side of the bar it explains.
-class _RowTip extends StatelessWidget {
-  const _RowTip({
-    required this.message,
-    required this.below,
-    required this.childStart,
-    required this.child,
-    this.alignEnd = false,
-  });
-
-  final String message;
-
-  /// The row below, which the tip takes in full.
-  final _RowBox below;
-
-  /// Where [child] starts inside the row's box.
-  final double childStart;
-  final bool alignEnd;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return DesktopTooltip(
-      message: message,
-      tipAnchor: alignEnd ? Alignment.topRight : Alignment.topLeft,
-      childAnchor: alignEnd ? Alignment.bottomRight : Alignment.bottomLeft,
-      shift: (_, child, _) => Offset(-childStart, child.size.height),
-      style:
-          (style) => style.copyWith(
-            padding: const EdgeInsets.symmetric(horizontal: _kRowPadding),
-            // The rows' corner at any height: forui's eases off below 24 px,
-            // which squares the 22 px tip over the inputs row.
-            decoration: style.decoration.copyWith(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-      tipBuilder:
-          (context) => SizedBox(
-            width: below.width - 2 * _kRowPadding,
-            height: below.height,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment:
-                  alignEnd ? Alignment.centerRight : Alignment.centerLeft,
-              child: Text(
-                message,
-                maxLines: 1,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-            ),
-          ),
-      child: child,
-    );
-  }
-}
-
-class _ProbabilityBar extends StatelessWidget {
-  const _ProbabilityBar({
-    required this.probability,
-    required this.prior,
+/// One candidate, as a Stockfish row: the chance in the score column, then
+/// the move with Toby's first instinct when it differs by five points or
+/// more, and the outcome bar at the end. The row's own surface fills to its
+/// chance; the hover fill and the pin's edge compose over it.
+class _TobyRow extends StatelessWidget {
+  const _TobyRow({
+    super.key,
+    required this.candidate,
     required this.muted,
-    required this.below,
+    required this.showBar,
+    required this.highlighted,
+    required this.pinned,
+    required this.onActivate,
   });
 
-  final double probability;
+  final TobyCandidate candidate;
 
-  /// Toby's first instinct, when it differs enough to mark.
-  final double? prior;
+  /// The quick network stage: fills and text are muted until the final
+  /// reading replaces them in place.
   final bool muted;
-  final _RowBox below;
+
+  /// Whether the pane is wide enough for the outcome bar.
+  final bool showBar;
+  final bool highlighted;
+  final bool pinned;
+  final VoidCallback onActivate;
 
   @override
   Widget build(BuildContext context) {
-    // A size of its own, the row's height across the whole column: inside a
-    // tooltip the bar sits in a loose stack and would otherwise collapse to
-    // nothing. The full height also makes the tooltip easy to reach.
-    final bar = SizedBox(
-      width: double.infinity,
-      height: _kRowHeight,
-      child: CustomPaint(
-        painter: _ProbabilityPainter(
-          probability: probability,
-          prior: prior,
-          fill: kTobyAccent.withValues(alpha: muted ? _kNetworkAlpha : 1),
+    final prior = candidate.prior;
+    final content = Row(
+      children: [
+        _Chance(
+          candidate.percentage,
+          color: muted ? kTobyAccent.withValues(alpha: 0.6) : kTobyAccent,
+        ),
+        const SizedBox(width: _kScoreGap),
+        Expanded(
+          child: _RowLine(
+            san: candidate.san,
+            sanColor: muted ? kWhiteColor70 : kWhiteColor,
+            instinct:
+                !muted && prior != null && candidate.priorDiffers
+                    ? 'first instinct ${_wholePercent(prior)}'
+                    : null,
+          ),
+        ),
+        if (showBar) ...[
+          const SizedBox(width: _kDetailGap),
+          _WdlBar(wdl: muted ? null : candidate.wdl),
+        ],
+      ],
+    );
+    return Semantics(
+      button: true,
+      selected: pinned,
+      label: tobyCandidateSemanticsLabel(candidate),
+      excludeSemantics: true,
+      onTap: onActivate,
+      child: SingleMotionBuilder(
+        value: highlighted ? 1.0 : 0.0,
+        motion: DesktopMotion.hover,
+        builder:
+            (context, value, child) => CustomPaint(
+              painter: _TobyRowPainter(
+                chance: candidate.probability,
+                fill: kTobyAccent.withValues(
+                  alpha: muted ? _kNetworkFillAlpha : _kFillAlpha,
+                ),
+                hover: value.clamp(0.0, 1.0),
+                pinned: pinned,
+              ),
+              child: child,
+            ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: _kRowPaddingX,
+            vertical: _kRowPaddingY,
+          ),
+          child: content,
         ),
       ),
     );
-    final instinct = prior;
-    if (instinct == null) return bar;
-    return _RowTip(
-      message:
-          'First instinct ${_wholePercent(instinct)} · after checking '
-          '${_wholePercent(probability)}',
-      below: below,
-      // The bar starts after the row's padding, the SAN and its gap.
-      childStart: _kRowPadding + _kSanWidth + 8 + _kPvFigureInset,
-      child: bar,
-    );
   }
 }
 
-class _ProbabilityPainter extends CustomPainter {
-  const _ProbabilityPainter({
-    required this.probability,
-    required this.prior,
-    required this.fill,
-  });
+/// A chance in the score column. Chances end on one edge, the width of
+/// "00.0%" from the column's start, so their decimal points stand in a
+/// column and a two-figure chance starts where a Stockfish score does.
+class _Chance extends StatelessWidget {
+  const _Chance(this.text, {required this.color});
 
-  final double probability;
-  final double? prior;
-  final Color fill;
-
-  static const double _barHeight = 6;
-  static const double _markerHeight = 10;
+  final String text;
+  final Color color;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final top = (size.height - _barHeight) / 2;
-    const radius = Radius.circular(_barHeight / 2);
-    final track = Rect.fromLTWH(0, top, size.width, _barHeight);
-    // kDividerColor, so an empty track still reads against the panel.
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(track, radius),
-      Paint()..color = kDividerColor,
-    );
-    final width = size.width * probability.clamp(0.0, 1.0);
-    if (width > 0) {
-      // A capsule of the fill's own width; a sliver narrower than the cap
-      // is cut from a cap-wide capsule so it never reads past its value.
-      canvas
-        ..save()
-        ..clipRect(Rect.fromLTWH(0, top, width, _barHeight))
-        ..drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(
-              0,
-              top,
-              width.clamp(_barHeight, size.width),
-              _barHeight,
-            ),
-            radius,
+  Widget build(BuildContext context) {
+    final edge = _textWidth(
+      context,
+      '00.0%',
+      _kChanceStyle,
+    ).ceilToDouble().clamp(0.0, _kScoreWidth);
+    return SizedBox(
+      width: _kScoreWidth,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: edge,
+          child: Text(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.visible,
+            textAlign: TextAlign.end,
+            style: _kChanceStyle.copyWith(color: color),
           ),
-          Paint()..color = fill,
-        )
-        ..restore();
-    }
-    final prior = this.prior;
-    if (prior != null && size.width > 2) {
-      final x = (size.width * prior.clamp(0.0, 1.0) - 1).clamp(
-        0.0,
-        size.width - 2,
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, (size.height - _markerHeight) / 2, 2, _markerHeight),
-          const Radius.circular(1),
         ),
-        Paint()..color = kWhiteColor70,
-      );
-    }
+      ),
+    );
   }
-
-  @override
-  bool shouldRepaint(_ProbabilityPainter old) =>
-      old.probability != probability || old.prior != prior || old.fill != fill;
 }
 
-/// White, draw and Black chances after one move, left to right. Until the
-/// final reading they are unknown, and the column shows the empty track of
-/// the probability bars.
+/// A row's line: the move, then Toby's first instinct when it differs.
+/// Nothing in it is cut: a long promotion shrinks into the room it has, and
+/// an instinct without room steps aside (it stays in the row's semantics).
+class _RowLine extends StatelessWidget {
+  const _RowLine({required this.san, required this.sanColor, this.instinct});
+
+  final String san;
+  final Color sanColor;
+  final String? instinct;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final instinct = this.instinct;
+        final showInstinct =
+            instinct != null &&
+            _textWidth(context, san, _kSanStyle) +
+                    _kDetailGap +
+                    _textWidth(context, instinct, _kDetailStyle) +
+                    1 <=
+                constraints.maxWidth;
+        return Row(
+          children: [
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  san,
+                  maxLines: 1,
+                  style: _kSanStyle.copyWith(color: sanColor),
+                ),
+              ),
+            ),
+            if (showInstinct) ...[
+              const SizedBox(width: _kDetailGap),
+              Text(
+                instinct,
+                maxLines: 1,
+                softWrap: false,
+                style: _kDetailStyle,
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// How games tend to end after a move: White, draw and Black, left to right,
+/// in a 40 x 6 bar, with the figures in its tooltip. Until the final reading
+/// the outcome is unknown and the bar is an empty track.
 class _WdlBar extends StatelessWidget {
-  const _WdlBar({required this.wdl, required this.below});
+  const _WdlBar({required this.wdl});
 
   final TobyWdl? wdl;
-  final _RowBox below;
 
   @override
   Widget build(BuildContext context) {
     final wdl = this.wdl;
-    // Its own size, as for the probability bar: the tooltip's loose stack
-    // would collapse a childless paint.
+    // Taller than the bar, so the tooltip is easy to reach; the bar is
+    // painted at its centre.
     final bar = SizedBox(
-      width: _kWdlWidth,
-      height: _kRowHeight,
+      width: _kWdlBarWidth,
+      height: _kWdlBarBoxHeight,
       child: CustomPaint(painter: _WdlPainter(wdl)),
     );
     if (wdl == null) return bar;
     final whole = wdl.percentages;
-    return _RowTip(
+    return DesktopTooltip(
       message:
           'White ${whole.white} · draw ${whole.draw} · Black ${whole.black}',
-      below: below,
-      // The outcome bar ends at the row's padding.
-      childStart: below.width - _kRowPadding - _kWdlWidth,
-      alignEnd: true,
       child: bar,
     );
   }
@@ -1308,112 +1289,180 @@ class _WdlPainter extends CustomPainter {
 
   final TobyWdl? wdl;
 
-  static const double _barHeight = 6;
-
   @override
   void paint(Canvas canvas, Size size) {
-    final top = (size.height - _barHeight) / 2;
-    final bar = Rect.fromLTWH(0, top, size.width, _barHeight);
-    const radius = Radius.circular(_barHeight / 2);
+    final top = ((size.height - _kWdlBarHeight) / 2).roundToDouble();
+    final capsule = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, top, size.width, _kWdlBarHeight),
+      const Radius.circular(_kWdlBarHeight / 2),
+    );
     final wdl = this.wdl;
     if (wdl == null) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(bar, radius),
-        Paint()..color = kDividerColor,
-      );
-      return;
-    }
-    canvas
-      ..save()
-      ..clipRRect(RRect.fromRectAndRadius(bar, radius));
-    var x = 0.0;
-    for (final (fraction, color) in [
-      (wdl.white, _kWdlWhite),
-      (wdl.draw, _kWdlDraw),
-      (wdl.black, _kWdlBlack),
-    ]) {
-      final width = size.width * fraction;
-      if (width <= 0) continue;
-      final segment = Rect.fromLTWH(x, top, width, _barHeight);
-      canvas.drawRect(segment, Paint()..color = color);
-      if (width >= 2) {
-        // A 1 px edge in the segment's own colour, lifted, so the dark
-        // Black side still reads against the panel.
+      canvas.drawRRect(capsule, Paint()..color = kDividerColor);
+    } else {
+      canvas
+        ..save()
+        ..clipRRect(capsule);
+      var x = 0.0;
+      for (final (fraction, color) in [
+        (wdl.white, _kWdlWhite),
+        (wdl.draw, _kWdlDraw),
+        (wdl.black, _kWdlBlack),
+      ]) {
+        final width = size.width * fraction;
+        if (width <= 0) continue;
         canvas.drawRect(
-          segment.deflate(0.5),
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1
-            ..color = Color.lerp(color, kWhiteColor, 0.18)!,
+          Rect.fromLTWH(x, top, width, _kWdlBarHeight),
+          Paint()..color = color,
         );
+        x += width;
       }
-      x += width;
+      canvas.restore();
     }
-    canvas.restore();
+    // A hairline lip in white, so the dark Black end (and the empty track)
+    // still reads against the pane and the hover fill.
+    canvas.drawRRect(
+      capsule.deflate(0.25),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5
+        ..color = kWhiteColor.withValues(alpha: 0.16),
+    );
   }
 
   @override
   bool shouldRepaint(_WdlPainter old) => old.wdl != wdl;
 }
 
-/// A non-data state, centred in the slot area and aligned with the rows.
-/// A retry is its own control after the message, on the same line when it
-/// fits; neither is ever cut short.
+/// A Toby row's surface: a Stockfish row's hover fill (hovered or pinned),
+/// the row's chance as a tonal fill from its left edge over it (the row
+/// itself is the bar), and a Stockfish row's 1 px edge while hovered, or
+/// Toby's while pinned.
+class _TobyRowPainter extends CustomPainter {
+  const _TobyRowPainter({
+    required this.chance,
+    required this.fill,
+    this.hover = 0,
+    this.pinned = false,
+  });
+
+  final double chance;
+  final Color fill;
+  final double hover;
+  final bool pinned;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final box = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(_kRowRadius),
+    );
+    // A Stockfish row's hover fill, also under a pinned row.
+    final lift = pinned ? 1.0 : hover;
+    if (lift > 0) {
+      canvas.drawRRect(
+        box,
+        Paint()..color = kBlack3Color.withValues(alpha: kBlack3Color.a * lift),
+      );
+    }
+    final width = (size.width * chance.clamp(0.0, 1.0)).roundToDouble();
+    if (width > 0) {
+      canvas
+        ..save()
+        ..clipRRect(box)
+        ..drawRect(
+          Rect.fromLTWH(0, 0, width, size.height),
+          Paint()..color = fill,
+        )
+        ..restore();
+    }
+    final edge =
+        pinned
+            ? Color.lerp(
+              kTobyAccent.withValues(alpha: 0.5),
+              kPrimaryColor.withValues(alpha: 0.4),
+              hover,
+            )!
+            : kPrimaryColor.withValues(alpha: 0.4 * hover);
+    if (edge.a > 0) {
+      canvas.drawRRect(
+        box.deflate(0.5),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = edge,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TobyRowPainter old) =>
+      old.chance != chance ||
+      old.fill != fill ||
+      old.hover != hover ||
+      old.pinned != pinned;
+}
+
+/// A state without rows, as one line centred in the list area. A retry is
+/// its own control after the message, on the same line when it fits;
+/// neither is ever cut short.
 class _TobyMessage extends StatelessWidget {
-  const _TobyMessage(this.message, {this.onRetry});
+  const _TobyMessage(this.message, {this.onRetry, this.action = _kTryAgain});
 
   final String message;
+
+  /// The control after the message ("Try again", "Upgrade", "Sign in").
   final VoidCallback? onRetry;
+  final String action;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: _kContentInset),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Wrap(
-          spacing: 12,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(
-              message,
-              style: const TextStyle(
-                color: kWhiteColor70,
-                fontSize: 12,
-                height: 1.4,
-              ),
-            ),
-            if (onRetry != null)
-              _TobyTextAction(label: _kTryAgain, onPress: onRetry!),
-          ],
-        ),
-      ),
+    return Wrap(
+      alignment: WrapAlignment.center,
+      runAlignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 12,
+      runSpacing: 4,
+      children: [
+        Text(message, textAlign: TextAlign.center, style: _kMessageStyle),
+        if (onRetry != null)
+          _TobyTextAction(label: action, strong: true, onPress: onRetry!),
+      ],
     );
   }
 }
 
-/// A quiet text control: secondary text that turns white on hover.
+/// A text control. Quiet ones (the inputs that open the what-if menu) are
+/// secondary text that turns white under the pointer. [strong] ones (the one
+/// action of a notice: Try again, Upgrade, Sign in) are the brightest text on
+/// their line, at full weight, and take Toby's teal under the pointer.
 class _TobyTextAction extends StatelessWidget {
   const _TobyTextAction({
     required this.label,
     required this.onPress,
-    this.fontSize = 12,
     this.emphasized = false,
+    this.strong = false,
   });
 
   final String label;
   final VoidCallback onPress;
-  final double fontSize;
 
   /// Brighter at rest, for a what-if choice in effect.
   final bool emphasized;
 
-  /// The label's style without its colour, for measuring.
-  static TextStyle styleFor(double fontSize) => TextStyle(
-    fontSize: fontSize,
+  /// A notice's action.
+  final bool strong;
+
+  /// The labels' styles without their colour, for measuring.
+  static const TextStyle style = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+  static const TextStyle strongStyle = TextStyle(
+    fontSize: 12,
     fontWeight: FontWeight.w600,
-    fontFeatures: const [FontFeature.tabularFigures()],
+    fontFeatures: [FontFeature.tabularFigures()],
   );
 
   @override
@@ -1426,20 +1475,24 @@ class _TobyTextAction extends StatelessWidget {
               WidgetState.any: SystemMouseCursors.click,
             }),
           ),
-      builder:
-          (context, states, _) => Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: styleFor(fontSize).copyWith(
-              color:
-                  states.contains(WidgetState.hovered)
-                      ? kWhiteColor
-                      : emphasized
-                      ? kWhiteColor70
-                      : kSecondaryTextColor,
-            ),
+      builder: (context, states, _) {
+        final hovered = states.contains(WidgetState.hovered);
+        return Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: (strong ? strongStyle : style).copyWith(
+            color:
+                strong
+                    ? (hovered ? kTobyAccent : kWhiteColor)
+                    : hovered
+                    ? kWhiteColor
+                    : emphasized
+                    ? kWhiteColor70
+                    : kSecondaryTextColor,
           ),
+        );
+      },
     );
   }
 }
@@ -1472,34 +1525,30 @@ class _TobyAttributionState extends State<_TobyAttribution> {
       0,
       kTobyAttribution.length - kTobyAttributionLinkText.length,
     );
-    const style = TextStyle(color: kSecondaryTextColor, fontSize: 11);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: _kContentInset),
-      // A narrow rail shrinks the line instead of cutting the link off.
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        alignment: Alignment.centerLeft,
-        child: Text.rich(
-          TextSpan(
-            style: style,
-            children: [
-              TextSpan(text: prefix),
-              TextSpan(
-                text: kTobyAttributionLinkText,
-                recognizer: _open,
-                mouseCursor: SystemMouseCursors.click,
-                onEnter: (_) => setState(() => _hovered = true),
-                onExit: (_) => setState(() => _hovered = false),
-                style: TextStyle(
-                  color: _hovered ? kWhiteColor : kSecondaryTextColor,
-                  decoration: TextDecoration.underline,
-                  decorationColor: kSecondaryTextColor,
-                ),
+    // A narrow rail shrinks the line instead of cutting the link off.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Text.rich(
+        TextSpan(
+          style: _kAttributionStyle,
+          children: [
+            TextSpan(text: prefix),
+            TextSpan(
+              text: kTobyAttributionLinkText,
+              recognizer: _open,
+              mouseCursor: SystemMouseCursors.click,
+              onEnter: (_) => setState(() => _hovered = true),
+              onExit: (_) => setState(() => _hovered = false),
+              style: TextStyle(
+                color: _hovered ? kWhiteColor : kSecondaryTextColor,
+                decoration: TextDecoration.underline,
+                decorationColor: kSecondaryTextColor,
               ),
-            ],
-          ),
-          maxLines: 1,
+            ),
+          ],
         ),
+        maxLines: 1,
       ),
     );
   }
@@ -1593,4 +1642,224 @@ class _WhatIfLabel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The engine pane's two tabs, in its header where the engine's name stood:
+/// "Stockfish" and "What Toby Thinks". The chosen tab is set in white at full
+/// weight; the other in 70% white until the pointer reaches it. A static
+/// 2 px rule under the chosen label, as wide as the label, marks it too.
+/// Nothing moves on hover or on a switch: each tab keeps the width of its
+/// full-weight label, and the two hit areas meet between the labels.
+///
+/// Both tabs are open to everyone, with no lock and no prompt: Gamebase
+/// decides who may read Toby. Tabs take focus with Tab and switch with Enter
+/// or Space; arrows, Esc and modifier chords pass on to the board.
+class TobyViewTabs extends ConsumerStatefulWidget {
+  const TobyViewTabs({super.key, this.compact = false});
+
+  /// A narrow header's tabs: the labels 10 px apart instead of 16, and no
+  /// room after the last one. The labels keep their size.
+  final bool compact;
+
+  /// The engine's tab.
+  static const String stockfishLabel = 'Stockfish';
+
+  /// The room before the first label, part of its hit area. The header
+  /// subtracts it from the gap before the tabs, so the first label sits
+  /// where the engine's name did.
+  static const double labelInset = _kTabEdge;
+
+  /// The tabs' width on one line, so the header can tell what fits beside
+  /// them.
+  static double widthOf(BuildContext context, {bool compact = false}) {
+    final gap = compact ? _kCompactTabGap : _kTabGap;
+    return _TobyTab.labelWidth(context, stockfishLabel) +
+        _TobyTab.labelWidth(context, kTobyFeatureLabel) +
+        _kTabEdge +
+        gap +
+        (compact ? 0 : _kTabEdge);
+  }
+
+  @override
+  ConsumerState<TobyViewTabs> createState() => _TobyViewTabsState();
+}
+
+/// Room before the first label and after the last.
+const double _kTabEdge = 6;
+
+/// Between the two labels, split between the two hit areas.
+const double _kTabGap = 16;
+const double _kCompactTabGap = 10;
+
+class _TobyViewTabsState extends ConsumerState<TobyViewTabs> {
+  /// Open to everyone, guests included: Gamebase decides who may read, and
+  /// a refusal is a notice in the view, never a gate here.
+  void _chooseToby() {
+    if (!mounted || ref.read(tobyTabSelectedProvider)) return;
+    ref.read(tobyTabPreferenceProvider.notifier).choose(true);
+  }
+
+  void _chooseStockfish() {
+    if (!ref.read(tobyTabSelectedProvider)) return;
+    ref.read(tobyTabPreferenceProvider.notifier).choose(false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final toby = ref.watch(tobyTabSelectedProvider);
+    final half = (widget.compact ? _kCompactTabGap : _kTabGap) / 2;
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _TobyTab(
+            label: TobyViewTabs.stockfishLabel,
+            selected: !toby,
+            onPress: _chooseStockfish,
+            padding: EdgeInsets.only(left: _kTabEdge, right: half),
+          ),
+          _TobyTab(
+            label: kTobyFeatureLabel,
+            selected: toby,
+            onPress: _chooseToby,
+            padding: EdgeInsets.only(
+              left: half,
+              right: widget.compact ? 0 : _kTabEdge,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One tab of [TobyViewTabs]: a text label, white at full weight when
+/// chosen, 70% white (white under the pointer) when not.
+class _TobyTab extends StatelessWidget {
+  const _TobyTab({
+    required this.label,
+    required this.selected,
+    required this.onPress,
+    required this.padding,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPress;
+
+  /// The hit area around the label.
+  final EdgeInsets padding;
+
+  /// The header's control height.
+  static const double _height = 28;
+
+  /// The rule under the chosen label, and its distance from the hit area's
+  /// bottom edge.
+  static const double _ruleHeight = 2;
+  static const double _ruleInset = 1;
+
+  static const TextStyle _style = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w600,
+  );
+
+  /// The label's width at full weight, which the tab keeps in both states.
+  static double labelWidth(BuildContext context, String label) =>
+      _textWidth(context, label, _style).ceilToDouble();
+
+  @override
+  Widget build(BuildContext context) {
+    final width = labelWidth(context, label);
+    return FTappable.static(
+      semanticsLabel: label,
+      excludeSemantics: true,
+      selected: selected,
+      behavior: HitTestBehavior.opaque,
+      onPress: onPress,
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+      },
+      // Keyboard focus only: a click never moves focus to a tab.
+      focusedOutlineStyle:
+          (_) => FFocusedOutlineStyle(
+            color: kPrimaryColor.withValues(alpha: 0.8),
+            borderRadius: BorderRadius.circular(6),
+            width: 1.5,
+            spacing: 0,
+          ),
+      style:
+          (style) => style.copyWith(
+            cursor: const FWidgetStateMap({
+              WidgetState.any: SystemMouseCursors.click,
+            }),
+          ),
+      builder:
+          (context, states, _) => SingleMotionBuilder(
+            value:
+                !selected && states.contains(WidgetState.hovered) ? 1.0 : 0.0,
+            motion: DesktopMotion.hover,
+            builder: (context, value, _) {
+              final t = value.clamp(0.0, 1.0);
+              return SizedBox(
+                width: padding.horizontal + width,
+                height: _height,
+                child: CustomPaint(
+                  painter:
+                      selected
+                          ? _TabRulePainter(left: padding.left, width: width)
+                          : null,
+                  child: Padding(
+                    padding: padding,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: _style.copyWith(
+                          fontWeight:
+                              selected ? FontWeight.w600 : FontWeight.w500,
+                          color:
+                              selected
+                                  ? kWhiteColor
+                                  : Color.lerp(kWhiteColor70, kWhiteColor, t),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+    );
+  }
+}
+
+/// The chosen tab's rule: as wide as its label, 2 px tall with round caps,
+/// under the label. Static: it never grows, slides or fades.
+class _TabRulePainter extends CustomPainter {
+  const _TabRulePainter({required this.left, required this.width});
+
+  final double left;
+  final double width;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final top = size.height - _TobyTab._ruleInset - _TobyTab._ruleHeight;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(left, top, width, _TobyTab._ruleHeight),
+        const Radius.circular(_TobyTab._ruleHeight / 2),
+      ),
+      Paint()..color = kWhiteColor,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TabRulePainter old) =>
+      old.left != left || old.width != width;
 }
