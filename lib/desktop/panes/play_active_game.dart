@@ -33,6 +33,8 @@ import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/services/lichess_move_annotations_service.dart';
+import 'package:chessever/desktop/services/chessconnect/chessconnect_bridge.dart';
+import 'package:chessever/desktop/services/chessconnect/chessconnect_sources.dart';
 import 'package:chessever/desktop/services/play/engine_installer.dart';
 import 'package:chessever/desktop/services/play/play_achievements.dart';
 import 'package:chessever/desktop/services/play/play_elo.dart';
@@ -50,6 +52,7 @@ import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
 import 'package:chessever/desktop/widgets/board_annotation_layer.dart';
 import 'package:chessever/desktop/widgets/board_resize_handle.dart';
+import 'package:chessever/desktop/widgets/chessconnect_slot.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
@@ -158,15 +161,83 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
   /// The reader turned the board round. The board starts from their own
   /// side, as the game does.
   bool _flipped = false;
+  /// This view's handle on the Chessconnect bridge (electronic boards in
+  /// the web build). Attached only while this Play tab is the focused one.
+  final Object _chessconnectOwner = Object();
+  PlayChessconnectSource? _chessconnectSource;
+  PlaySessionNotifier? _chessconnectNotifier;
+  static int _chessconnectGames = 0;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadBoardSizePreference());
+    ref.listenManual<bool>(
+      desktopTabsProvider.select((s) => s.activeId == widget.tabId),
+      (_, isActive) => _syncChessconnect(isActive),
+      fireImmediately: true,
+    );
+    ref.listenManual<PlaySessionState>(playSessionProviderFor(widget.tabId), (
+      previous,
+      next,
+    ) {
+      if (previous == null ||
+          playChessconnectSignature(previous) !=
+              playChessconnectSignature(next)) {
+        _syncChessconnect(
+          ref.read(desktopTabsProvider).activeId == widget.tabId,
+        );
+        ChessconnectBridge.instance.markChanged();
+      }
+    });
+  }
+
+
+  PlaySessionState? _readPlayStateForChessconnect() {
+    if (!mounted) return null;
+    if (ref.read(playSessionArgsByTabIdProvider)[widget.tabId] == null) {
+      return null;
+    }
+    return ref.read(playSessionProviderFor(widget.tabId));
+  }
+
+  /// Attaches the live game while this tab is focused. A new notifier (the
+  /// next game, a rematch) gets a new source, so Chessconnect sees a new
+  /// game id.
+  void _syncChessconnect(bool isActive) {
+    final bridge = ChessconnectBridge.instance;
+    if (!isActive) {
+      bridge.detach(_chessconnectOwner);
+      return;
+    }
+    final notifier = ref.read(playSessionProviderFor(widget.tabId).notifier);
+    var source = _chessconnectSource;
+    if (source == null || !identical(_chessconnectNotifier, notifier)) {
+      _chessconnectNotifier = notifier;
+      final gameKey = 'play:${++_chessconnectGames}';
+      source = PlayChessconnectSource(
+        readState: _readPlayStateForChessconnect,
+        playHumanMove:
+            (uci) =>
+                mounted &&
+                ref
+                    .read(playSessionProviderFor(widget.tabId).notifier)
+                    .playHumanMove(uci),
+        gameKey: gameKey,
+        readOrientation: () {
+          final state = _readPlayStateForChessconnect();
+          if (state == null) return null;
+          return _flipped ? state.humanSide.opposite : state.humanSide;
+        },
+      );
+      _chessconnectSource = source;
+    }
+    bridge.attach(_chessconnectOwner, source);
   }
 
   @override
   void dispose() {
+    ChessconnectBridge.instance.detach(_chessconnectOwner);
     _tobyPanel.dispose();
     super.dispose();
   }
@@ -270,7 +341,12 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     }
 
     final orientation = _flipped ? state.humanSide.opposite : state.humanSide;
-    void flipBoard() => setState(() => _flipped = !_flipped);
+    void flipBoard() {
+      setState(() => _flipped = !_flipped);
+      if (ChessconnectBridge.instance.isOwner(_chessconnectOwner)) {
+        ChessconnectBridge.instance.markChanged();
+      }
+    }
     final liveHelp = ref.watch(
       boardSettingsProviderNew.select((s) => _playLiveHelp(s.valueOrNull)),
     );
@@ -300,6 +376,7 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
                 tabId: widget.tabId,
                 orientation: orientation,
                 tobyPanel: _tobyPanel,
+                chessconnectOwner: _chessconnectOwner,
                 reviewPly: reviewPly,
                 onReviewPlyChanged: goToPly,
                 onFlipBoard: flipBoard,
@@ -801,6 +878,7 @@ class _PlayBoardColumn extends ConsumerWidget {
     required this.tabId,
     required this.orientation,
     required this.tobyPanel,
+    required this.chessconnectOwner,
     required this.reviewPly,
     required this.onReviewPlyChanged,
     required this.onFlipBoard,
@@ -816,6 +894,7 @@ class _PlayBoardColumn extends ConsumerWidget {
   /// The side at the bottom of the board.
   final Side orientation;
   final TobyPanelController tobyPanel;
+  final Object chessconnectOwner;
   final int? reviewPly;
   final ValueChanged<int> onReviewPlyChanged;
   final VoidCallback onFlipBoard;
@@ -987,6 +1066,7 @@ class _PlayBoardColumn extends ConsumerWidget {
             onFlipBoard: onFlipBoard,
             moveLabel: _playMoveLabel(_playNotationGame(state), currentPly),
           ),
+        ChessconnectSlot(owner: chessconnectOwner),
       ],
     );
   }

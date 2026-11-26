@@ -75,6 +75,9 @@ import 'package:chessever/desktop/state/board_explorer_scope.dart';
 import 'package:chessever/desktop/state/board_focus_mode.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
+import 'package:chessever/desktop/services/chessconnect/chessconnect_bridge.dart';
+import 'package:chessever/desktop/services/chessconnect/chessconnect_sources.dart';
+import 'package:chessever/desktop/widgets/chessconnect_slot.dart';
 import 'package:chessever/desktop/services/board_analysis_recovery.dart';
 import 'package:chessever/desktop/state/board_picture_in_picture_mode.dart';
 import 'package:chessever/desktop/state/board_split_view.dart';
@@ -4896,6 +4899,39 @@ class _BoardPaneContent extends HookConsumerWidget {
     final boardPlayerSide =
         showBoardMoveDecorations ? playerSide : cg.PlayerSide.none;
 
+    // Chessconnect (electronic boards, web build): this board reports the
+    // position it shows and takes a physical-board move like a mouse move,
+    // as a new line or variation (adapter spec 4.8). Only the focused board
+    // is attached; previews, the promotion picker and finished positions
+    // refuse moves.
+    final chessconnectOwner = useMemoized(Object.new);
+    final chessconnectApply = useRef<void Function(NormalMove move)?>(null);
+    chessconnectApply.value =
+        (move) => applyMove(move, requestPaneFocus: false);
+    final chessconnectSource = useMemoized(
+      () => BoardChessconnectSource(
+        applyMove: (move) => chessconnectApply.value?.call(move),
+      ),
+    );
+    final chessconnectChanged = chessconnectSource.update(
+      gameKey:
+          'board:${activeTabId ?? ''}:$videoRightGameId:'
+          '${chessGame.value.startingFen}',
+      position: position,
+      orientation: flipped.value ? Side.black : Side.white,
+      acceptsMoves:
+          boardPlayerSide != cg.PlayerSide.none && promotionMove.value == null,
+    );
+    useEffect(() {
+      if (!isForegroundTab) return null;
+      final bridge = ChessconnectBridge.instance;
+      bridge.attach(chessconnectOwner, chessconnectSource);
+      return () => bridge.detach(chessconnectOwner);
+    }, [isForegroundTab]);
+    if (chessconnectChanged && isForegroundTab) {
+      ChessconnectBridge.instance.markChanged();
+    }
+
     // Clears a line preview that can no longer be shown from this position.
     // Deferred because effects reach it while the pane is building.
     void dropLinePreviewSoon(List<String> line) {
@@ -6399,6 +6435,7 @@ class _BoardPaneContent extends HookConsumerWidget {
                           BoardActionKey.nextGame,
                         ),
                       ),
+                    ChessconnectSlot(owner: chessconnectOwner),
                   ],
                 ),
               ),
