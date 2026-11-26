@@ -6649,6 +6649,21 @@ class _BoardPaneContent extends HookConsumerWidget {
                                   pvPlayOwner: (activeTabId, chessGame.value),
                                   game: chessGame.value,
                                   headers: pgnHeaders.value,
+                                  // The same facts the board's Toby reading
+                                  // sends, so the Game Report's Toby rating
+                                  // reads the game as the Toby bar does.
+                                  tobyFacts: (
+                                    whiteRating: _tobyRating(
+                                      boardArgs?.sourceGame?.whitePlayer.rating,
+                                      pgnHeaders.value['WhiteElo'],
+                                    ),
+                                    blackRating: _tobyRating(
+                                      boardArgs?.sourceGame?.blackPlayer.rating,
+                                      pgnHeaders.value['BlackElo'],
+                                    ),
+                                    category:
+                                        boardArgs?.sourceGame?.timeControl,
+                                  ),
                                   activePly:
                                       pointer.value.length == 1
                                           ? pointer.value.first + 1

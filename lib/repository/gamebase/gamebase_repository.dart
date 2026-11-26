@@ -986,10 +986,38 @@ class GamebaseRepository {
     Map<String, Object?> body,
     CancelToken cancelToken, {
     bool recheckAccess = false,
+  }) => _postToby(
+    '/api/next-move',
+    body,
+    cancelToken,
+    recheckAccess: recheckAccess,
+  );
+
+  /// One poll for Toby's estimate of the level each side played at
+  /// (`POST /api/toby-performance`, version 1). [body] is the whole request,
+  /// built by the caller. The answer comes back unjudged, exactly as
+  /// [getTobyReading]'s does: 200 with the estimate, 202 with progress and
+  /// `Retry-After` while Gamebase is still reading the game.
+  Future<GamebaseTobyReply> getTobyPerformance(
+    Map<String, Object?> body,
+    CancelToken cancelToken, {
+    bool recheckAccess = false,
+  }) => _postToby(
+    '/api/toby-performance',
+    body,
+    cancelToken,
+    recheckAccess: recheckAccess,
+  );
+
+  Future<GamebaseTobyReply> _postToby(
+    String path,
+    Map<String, Object?> body,
+    CancelToken cancelToken, {
+    required bool recheckAccess,
   }) async {
     try {
       final response = await _dio.post<Object?>(
-        '$_baseUrl/api/next-move',
+        '$_baseUrl$path',
         data: body,
         cancelToken: cancelToken,
         options: Options(

@@ -27,7 +27,10 @@ import 'package:chessever/desktop/services/engine/server_game_report.dart';
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart'
-    show kTobyFeatureLabel;
+    show kTobyAttribution, kTobyFeatureLabel;
+import 'package:chessever/desktop/services/toby/toby_performance.dart';
+import 'package:chessever/desktop/services/toby/toby_prediction.dart'
+    show tobyReadsVariant;
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/game_review/evaluation_graph_markers.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
@@ -94,6 +97,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.pictureInPictureSelected = false,
     this.headerTrailing,
     this.toby,
+    this.tobyFacts,
     this.tobyTabSelected = false,
     this.unifiedAnalysis = false,
     this.tobyArrowsOnly,
@@ -167,6 +171,11 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// Built outside this panel's engine-tick builder, so a Stockfish update
   /// never rebuilds it.
   final Widget? toby;
+
+  /// The game facts the board's own Toby reading takes from its source game
+  /// (ratings and speed category). The Game Report's Toby rating sends the
+  /// same; without them it reads the PGN headers alone.
+  final TobyGameFacts? tobyFacts;
 
   /// Whether the reader chose the Toby Predicts tab. Its view then takes
   /// the list area in place of Stockfish's lines, with
@@ -324,6 +333,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   GameReportRequestResult? _requestNotice;
   bool _requesting = false;
   bool Function()? _reportOwnerIsCurrent;
+
+  /// The Toby rating query of the report on screen, rebuilt only when the
+  /// report, the game, its rating and source headers or the account change.
+  TobyPerformanceQuery? _tobyQuery;
+  Object? _tobyQueryInputs;
 
   @override
   void initState() {
@@ -510,6 +524,68 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     setState(() => _requestNotice = notice.isBlocked ? notice : null);
   }
 
+  /// Toby's estimate for the completed report on screen, or null when there
+  /// is none to show (no report, or a variant Toby does not read). Watching
+  /// it only while the report is visible means leaving the report cancels the
+  /// request.
+  TobyPerformanceState? _watchTobyPerformance(
+    GameReportState reportState, {
+    required bool visible,
+  }) {
+    final report = reportState.report;
+    final game = widget.game;
+    if (!visible ||
+        reportState.status != GameReportStatus.completed ||
+        report == null ||
+        game == null ||
+        game.mainline.isEmpty ||
+        // A report still on screen for the previous game reads nothing.
+        report.fingerprint != _gameFingerprint ||
+        !tobyReadsVariant(widget.headers['Variant'])) {
+      return null;
+    }
+    final accountId = ref.watch(desktopAccountIdentityProvider).userId;
+    final headers = widget.headers;
+    final facts = widget.tobyFacts;
+    // Report and game compare by identity; the header facts and the board's
+    // facts by value, so a parent rebuilding its header map does not rebuild
+    // the request.
+    final inputs = (
+      report,
+      game,
+      accountId,
+      facts,
+      headers['WhiteElo'],
+      headers['BlackElo'],
+      headers['TimeControl'],
+      headers['Site'],
+      headers['Event'],
+    );
+    var query = _tobyQuery;
+    if (query == null || _tobyQueryInputs != inputs) {
+      query = TobyPerformanceQuery(
+        fingerprint: report.fingerprint,
+        accountId: accountId,
+        request: TobyPerformanceRequest.forReport(
+          report,
+          startFen: game.startingFen,
+          moves: [for (final move in game.mainline) move.uci],
+          whiteRating:
+              facts == null ? _headerRating('WhiteElo') : facts.whiteRating,
+          blackRating:
+              facts == null ? _headerRating('BlackElo') : facts.blackRating,
+          timeControl: headers['TimeControl'],
+          category: facts?.category,
+          site: headers['Site'],
+          event: headers['Event'],
+        ),
+      );
+      _tobyQuery = query;
+      _tobyQueryInputs = inputs;
+    }
+    return ref.watch(tobyPerformanceProvider(query));
+  }
+
   int? _headerRating(String key) {
     final raw = widget.headers[key]?.replaceAll(RegExp(r'[^0-9]'), '');
     return raw == null ? null : int.tryParse(raw);
@@ -583,6 +659,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
     final reportContent = GameReportView(
       state: reportState,
+      tobyPerformance: _watchTobyPerformance(reportState, visible: reportOn),
       progressController: _reportController,
       game: widget.game,
       headers: widget.headers,
@@ -1194,9 +1271,14 @@ class GameReportView extends StatefulWidget {
     required this.onJumpToPly,
     this.progressController,
     this.requestNotice,
+    this.tobyPerformance,
   });
 
   final GameReportState state;
+
+  /// Toby's estimate for the completed report. Null hides the Toby rating
+  /// row, as does an unavailable estimate; loading shows a placeholder.
+  final TobyPerformanceState? tobyPerformance;
 
   /// Optional live source for the running progress bar. When provided, only the
   /// bar re-renders on each engine tick (via a scoped ListenableBuilder) so the
@@ -1376,7 +1458,12 @@ class _GameReportViewState extends State<GameReportView> {
             ),
           ],
           const SizedBox(height: 10),
-          _ReportMetrics(white: white, black: black, report: report),
+          _ReportMetrics(
+            white: white,
+            black: black,
+            report: report,
+            toby: widget.tobyPerformance,
+          ),
           const SizedBox(height: 12),
           _ReportEvaluationGraph(
             report: report,
@@ -1628,11 +1715,13 @@ class _ReportMetrics extends StatelessWidget {
     required this.white,
     required this.black,
     required this.report,
+    this.toby,
   });
 
   final String white;
   final String black;
   final GameAnalysisReport report;
+  final TobyPerformanceState? toby;
 
   @override
   Widget build(BuildContext context) {
@@ -1668,6 +1757,23 @@ class _ReportMetrics extends StatelessWidget {
               '${report.blackEstimatedRating}',
             ),
           ],
+          if (tobyRatingCells(toby) case final cells?) ...[
+            const SizedBox(height: 5),
+            Semantics(
+              container: true,
+              label: tobyRatingSemanticsLabel(toby, white: white, black: black),
+              child: ExcludeSemantics(
+                child: _metric(
+                  cells.white,
+                  kTobyPerformanceLabel,
+                  cells.black,
+                  muted: cells.loading,
+                  labelTooltip:
+                      '$kTobyPerformanceDescription\n$kTobyAttribution',
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1690,12 +1796,19 @@ class _ReportMetrics extends StatelessWidget {
     String label,
     String right, {
     String suffix = '',
+    bool muted = false,
+    String? labelTooltip,
   }) {
-    const valueStyle = TextStyle(
-      color: kWhiteColor,
+    final valueStyle = TextStyle(
+      color: muted ? kWhiteColor70 : kWhiteColor,
       fontSize: 13,
       fontWeight: FontWeight.w700,
-      fontFeatures: [FontFeature.tabularFigures()],
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    final labelText = Text(
+      label,
+      textAlign: TextAlign.center,
+      style: const TextStyle(color: kWhiteColor70, fontSize: 9),
     );
     return Row(
       children: [
@@ -1708,11 +1821,10 @@ class _ReportMetrics extends StatelessWidget {
         ),
         SizedBox(
           width: 76,
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: kWhiteColor70, fontSize: 9),
-          ),
+          child:
+              labelTooltip == null
+                  ? labelText
+                  : _MetricHint(message: labelTooltip, child: labelText),
         ),
         Expanded(
           child: Text(
@@ -1724,6 +1836,135 @@ class _ReportMetrics extends StatelessWidget {
       ],
     );
   }
+}
+
+/// A metric label whose explanation opens on hover, on keyboard focus, and
+/// on a tap (touch screens on app.chessever.com have no hover).
+class _MetricHint extends StatefulWidget {
+  const _MetricHint({required this.message, required this.child});
+
+  final String message;
+  final Widget child;
+
+  @override
+  State<_MetricHint> createState() => _MetricHintState();
+}
+
+class _MetricHintState extends State<_MetricHint>
+    with SingleTickerProviderStateMixin {
+  late final FTooltipController _tip = FTooltipController(vsync: this);
+  bool _focused = false;
+
+  void _onFocus(bool focused) {
+    setState(() => _focused = focused);
+    if (focused) {
+      _tip.show();
+    } else {
+      _tip.hide();
+    }
+  }
+
+  @override
+  void dispose() {
+    _tip.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      onFocusChange: _onFocus,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        // FTooltip hides its tip on every pointer down, after a zero delay;
+        // toggling after that same delay lets a tap open a closed tip and
+        // close an open one.
+        onTap:
+            () => unawaited(
+              Future<void>.delayed(Duration.zero, () {
+                if (mounted && !_tip.disposed) return _tip.toggle();
+              }),
+            ),
+        child: DesktopTooltip(
+          controller: _tip,
+          message: widget.message,
+          child: Container(
+            // Keyboard focus: a solid ring in the label's own soft white,
+            // drawn over the label so the row never moves.
+            foregroundDecoration:
+                _focused
+                    ? BoxDecoration(
+                      border: Border.all(color: kWhiteColor70),
+                      borderRadius: BorderRadius.circular(3),
+                    )
+                    : null,
+            padding: const EdgeInsets.symmetric(vertical: 1),
+            child: widget.child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const String _tobyRatingPlaceholder = '\u2014';
+
+/// What the Toby rating row shows, or null when it is hidden: nothing asked
+/// yet, or known up front to have no estimate. While Gamebase is still
+/// reading the game both cells hold the placeholder. A request that then
+/// ends without an estimate keeps the placeholder rather than removing the
+/// row, so the summary never shrinks under the reader; a side with too few
+/// moves to estimate holds it for good.
+@visibleForTesting
+({String white, String black, bool loading})? tobyRatingCells(
+  TobyPerformanceState? state,
+) {
+  const placeholder = _tobyRatingPlaceholder;
+  if (state == null) return null;
+  switch (state.status) {
+    case TobyPerformanceStatus.loading:
+      return (white: placeholder, black: placeholder, loading: true);
+    case TobyPerformanceStatus.unavailable:
+      return null;
+    case TobyPerformanceStatus.failed:
+      return (white: placeholder, black: placeholder, loading: false);
+    case TobyPerformanceStatus.ready:
+      final performance = state.performance;
+      if (performance == null || !performance.hasEstimate) return null;
+      return (
+        white: performance.white?.display ?? placeholder,
+        black: performance.black?.display ?? placeholder,
+        loading: false,
+      );
+  }
+}
+
+/// The row as a screen reader hears it: the state in words, never the
+/// placeholder glyph.
+@visibleForTesting
+String tobyRatingSemanticsLabel(
+  TobyPerformanceState? state, {
+  required String white,
+  required String black,
+}) {
+  const unavailable = 'not available';
+  final String whiteValue;
+  final String blackValue;
+  switch (state?.status) {
+    case TobyPerformanceStatus.loading:
+      whiteValue = 'loading';
+      blackValue = 'loading';
+    case TobyPerformanceStatus.ready:
+      whiteValue = state?.performance?.white?.display ?? unavailable;
+      blackValue = state?.performance?.black?.display ?? unavailable;
+    case TobyPerformanceStatus.unavailable:
+    case TobyPerformanceStatus.failed:
+    case null:
+      whiteValue = unavailable;
+      blackValue = unavailable;
+  }
+  return '$kTobyPerformanceLabel: $white $whiteValue, $black $blackValue. '
+      '$kTobyPerformanceDescription $kTobyAttribution';
 }
 
 class _ReportEvaluationGraph extends StatefulWidget {

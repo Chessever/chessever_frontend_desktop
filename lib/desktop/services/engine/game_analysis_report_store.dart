@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
+import 'package:chessever/desktop/services/toby/toby_performance.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 
 /// Completed whole-game reports, cached per account.
@@ -23,6 +24,14 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 ///
 /// A cached report is served only after account-scoped admission; see
 /// `GameReportRequestCoordinator`.
+///
+/// Toby's estimate of each side's level ([TobyPerformance]) is kept in the
+/// same row, beside the report rather than inside it: the report model is
+/// shared with the analysis Worker, and the estimate usually arrives after
+/// the report is saved. It is kept with the [TobyPerformanceRequest.basis]
+/// it was computed for (game facts and values included) and is only served
+/// to a request with the same basis and the current [kTobyPerformanceModel],
+/// so a re-analysed report or edited headers are read again.
 class GameAnalysisReportStore {
   /// Production store on the already-open shared app database.
   GameAnalysisReportStore.sqlite([AppDatabase? database])
@@ -50,6 +59,11 @@ class GameAnalysisReportStore {
 
   final LinkedHashMap<String, GameAnalysisReport> _hot =
       LinkedHashMap<String, GameAnalysisReport>();
+
+  /// Toby estimates of the session tier, by the same scoped key as [_hot],
+  /// evicted with it and capped at [hotEntries] like it.
+  final LinkedHashMap<String, StoredTobyPerformance> _hotToby =
+      LinkedHashMap<String, StoredTobyPerformance>();
   Future<void>? _writeChain;
 
   static const String keyPrefix = 'desktop_game_report:';
@@ -85,11 +99,14 @@ class GameAnalysisReportStore {
       if (raw == null) return null;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
-      final report = desktopGameReportFromJson(
-        Map<String, dynamic>.from(decoded),
-      );
+      final json = Map<String, dynamic>.from(decoded);
+      final report = desktopGameReportFromJson(json);
       if (report == null || report.fingerprint != fingerprint) return null;
       _remember(accountId, report);
+      final toby = desktopGameReportTobyPerformanceFromJson(json);
+      if (toby != null) {
+        _rememberToby(_scopedKey(accountId, fingerprint), toby);
+      }
       return report;
     } catch (error, stackTrace) {
       debugPrint('GameAnalysisReportStore.load failed: $error\n$stackTrace');
@@ -109,6 +126,67 @@ class GameAnalysisReportStore {
     return done;
   }
 
+  /// Toby's estimate saved beside the report for [fingerprint] for a request
+  /// with [basis], or null. Never throws.
+  Future<TobyPerformance?> loadTobyPerformance(
+    String accountId,
+    String fingerprint, {
+    required String basis,
+  }) async {
+    if (accountId.isEmpty) return null;
+    final scoped = _scopedKey(accountId, fingerprint);
+    final hot = _hotToby[scoped];
+    if (hot != null) return hot.basis == basis ? hot.performance : null;
+    try {
+      final json = await _readJson(accountId, fingerprint);
+      if (json == null || json['fingerprint'] != fingerprint) return null;
+      final toby = desktopGameReportTobyPerformanceFromJson(json);
+      if (toby != null) _rememberToby(scoped, toby);
+      return toby != null && toby.basis == basis ? toby.performance : null;
+    } catch (error) {
+      debugPrint('GameAnalysisReportStore.loadTobyPerformance failed: $error');
+      return null;
+    }
+  }
+
+  /// Keeps Toby's estimate beside the report for [fingerprint], computed for
+  /// a request with [basis]. When the report is not saved yet, the estimate
+  /// joins it when it is saved in this session.
+  Future<void> saveTobyPerformance(
+    String accountId,
+    String fingerprint,
+    TobyPerformance performance, {
+    required String basis,
+  }) {
+    if (accountId.isEmpty) return Future<void>.value();
+    final scoped = _scopedKey(accountId, fingerprint);
+    final previous = _hotToby[scoped];
+    if (previous != null &&
+        previous.basis == basis &&
+        previous.performance == performance) {
+      return Future<void>.value();
+    }
+    final stored = (basis: basis, performance: performance);
+    _rememberToby(scoped, stored);
+    return _chain(() async {
+      final json = await _readJson(accountId, fingerprint);
+      if (json == null || json['fingerprint'] != fingerprint) return;
+      _writeTobyJson(json, stored);
+      await _writeRaw(
+        accountId,
+        cacheKeyForFingerprint(fingerprint),
+        jsonEncode(json),
+      );
+    });
+  }
+
+  Future<void> _chain(Future<void> Function() write) {
+    final previous = _writeChain ?? Future<void>.value();
+    final done = previous.catchError((_) {}).then((_) => write());
+    _writeChain = done;
+    return done;
+  }
+
   /// Awaits pending durable writes.
   Future<void> flush() async {
     final pending = _writeChain;
@@ -120,14 +198,26 @@ class GameAnalysisReportStore {
 
   /// Simulates a cold start: drops the session tier, keeps durable rows.
   @visibleForTesting
-  void clearHotCacheForTest() => _hot.clear();
+  void clearHotCacheForTest() {
+    _hot.clear();
+    _hotToby.clear();
+  }
 
   void _remember(String accountId, GameAnalysisReport report) {
     final key = _scopedKey(accountId, report.fingerprint);
     _hot.remove(key);
     _hot[key] = report;
     while (_hot.length > hotEntries) {
+      _hotToby.remove(_hot.keys.first);
       _hot.remove(_hot.keys.first);
+    }
+  }
+
+  void _rememberToby(String key, StoredTobyPerformance toby) {
+    _hotToby.remove(key);
+    _hotToby[key] = toby;
+    while (_hotToby.length > hotEntries) {
+      _hotToby.remove(_hotToby.keys.first);
     }
   }
 
@@ -136,7 +226,12 @@ class GameAnalysisReportStore {
     GameAnalysisReport report,
   ) async {
     final key = cacheKeyForFingerprint(report.fingerprint);
-    final payload = jsonEncode(desktopGameReportToJson(report));
+    // The same game keeps its Toby estimate, with the basis it was computed
+    // for, when its report is saved again in this session. A re-analysis with
+    // other values no longer matches that basis, so the estimate is then read
+    // again rather than served.
+    final toby = _hotToby[_scopedKey(accountId, report.fingerprint)];
+    final payload = jsonEncode(desktopGameReportToJson(report, toby: toby));
     final memory = _durableMemory;
     if (memory != null) {
       memory[_scopedKey(accountId, key)] = _MemoryEntry(
@@ -160,6 +255,32 @@ class GameAnalysisReportStore {
     for (var i = 0; i < ordered.length - maxEntries; i++) {
       await db.removeCache(key: ordered[i].key, userId: accountId);
     }
+  }
+
+  Future<Map<String, dynamic>?> _readJson(
+    String accountId,
+    String fingerprint,
+  ) async {
+    final raw = await _readRaw(accountId, cacheKeyForFingerprint(fingerprint));
+    if (raw == null) return null;
+    final decoded = jsonDecode(raw);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+  }
+
+  /// Rewrites an existing row in place (eviction is unchanged: the row
+  /// already counts).
+  Future<void> _writeRaw(String accountId, String key, String value) async {
+    final memory = _durableMemory;
+    if (memory != null) {
+      memory[_scopedKey(accountId, key)] = _MemoryEntry(
+        accountId: accountId,
+        value: value,
+        cachedAt: DateTime.now().microsecondsSinceEpoch,
+      );
+      return;
+    }
+    final db = _database ?? AppDatabase.instance;
+    await db.setCache(key: key, value: value, userId: accountId);
   }
 
   Future<String?> _readRaw(String accountId, String key) async {
@@ -196,18 +317,52 @@ class _MemoryEntry {
 /// misses instead of being replayed.
 const int desktopGameReportCacheSchemaVersion = 3;
 
-Map<String, dynamic> desktopGameReportToJson(GameAnalysisReport report) =>
-    <String, dynamic>{
-      'v': desktopGameReportCacheSchemaVersion,
-      'fingerprint': report.fingerprint,
-      'whiteAccuracy': report.whiteAccuracy,
-      'blackAccuracy': report.blackAccuracy,
-      'whiteEstimatedRating': report.whiteEstimatedRating,
-      'blackEstimatedRating': report.blackEstimatedRating,
-      'generatedAt': report.generatedAt.toUtc().toIso8601String(),
-      'positions': report.positions.map(_positionToJson).toList(),
-      'moves': report.moves.map(_moveToJson).toList(),
-    };
+/// Toby's estimate kept beside a report, with the
+/// [TobyPerformanceRequest.basis] of the request it was computed for.
+typedef StoredTobyPerformance = ({String basis, TobyPerformance performance});
+
+/// [toby] is written beside the report when known.
+Map<String, dynamic> desktopGameReportToJson(
+  GameAnalysisReport report, {
+  StoredTobyPerformance? toby,
+}) {
+  final json = <String, dynamic>{
+    'v': desktopGameReportCacheSchemaVersion,
+    'fingerprint': report.fingerprint,
+    'whiteAccuracy': report.whiteAccuracy,
+    'blackAccuracy': report.blackAccuracy,
+    'whiteEstimatedRating': report.whiteEstimatedRating,
+    'blackEstimatedRating': report.blackEstimatedRating,
+    'generatedAt': report.generatedAt.toUtc().toIso8601String(),
+    'positions': report.positions.map(_positionToJson).toList(),
+    'moves': report.moves.map(_moveToJson).toList(),
+  };
+  if (toby != null) _writeTobyJson(json, toby);
+  return json;
+}
+
+void _writeTobyJson(Map<String, dynamic> json, StoredTobyPerformance toby) {
+  json['tobyPerformance'] = toby.performance.toJson();
+  json['tobyPerformanceBasis'] = toby.basis;
+}
+
+/// Toby's estimate saved beside a report, or null when there is none, it
+/// has no basis, or it is from a model other than [kTobyPerformanceModel].
+/// Independent of the report's schema version: the estimate depends on the
+/// game, not on how the report classified it.
+StoredTobyPerformance? desktopGameReportTobyPerformanceFromJson(
+  Map<String, dynamic> json,
+) {
+  final basis = json['tobyPerformanceBasis'];
+  final performance = TobyPerformance.fromJson(json['tobyPerformance']);
+  if (basis is! String ||
+      basis.isEmpty ||
+      performance == null ||
+      performance.model != kTobyPerformanceModel) {
+    return null;
+  }
+  return (basis: basis, performance: performance);
+}
 
 GameAnalysisReport? desktopGameReportFromJson(Map<String, dynamic> json) {
   try {
