@@ -8,24 +8,26 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:chessground/chessground.dart' as cg;
-import 'package:dartchess/dartchess.dart' show Move, NormalMove;
+import 'package:dartchess/dartchess.dart' show Move, NormalMove, Square;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:chessever/desktop/services/engine/game_analysis_report.dart'
+    show GameMoveClassification;
+import 'package:chessever/desktop/services/toby/toby_classes.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
-import 'package:chessever/desktop/services/toby/toby_quality.dart';
 
 /// The one tonal hue of Toby's view: its chances and its rows' fills, for a
-/// move without an outcome to judge it by.
+/// move without a class.
 const Color kTobyAccent = Color(0xFF83C7C4);
 
-/// Toby's arrow on the board for a move without an outcome (the network
-/// stage), at full weight: a deeper value of [kTobyAccent]'s hue, so it
-/// reads on light and dark squares alike. The board keeps its own colours
-/// whatever the site theme, so this holds on both. Judged moves take their
-/// quality's hue ([tobyArrowHue]).
+/// Toby's arrow on the board for a move without a class, at full weight: a
+/// deeper value of [kTobyAccent]'s hue, so it reads on light and dark
+/// squares alike. The board keeps its own colours whatever the site theme,
+/// so this holds on both. Classed moves take their class's colour
+/// ([tobyArrowHue]).
 final Color kTobyArrowColor = kTobyArrowNeutral.withValues(
   alpha: kTobyArrowAlpha,
 );
@@ -110,8 +112,22 @@ final tobyTabSelectedProvider = Provider<bool>(
 /// their place) they replace the engine arrows only; the reader's own
 /// drawings and the game's arrows stay. While the Toby tab is shown the
 /// engine arrows are off anyway ([TobyPanelController.holdsBoard]).
+///
+/// [mark] is the report's class mark for a hovered or pinned candidate that
+/// has one, drawn on its destination square as the board draws a report
+/// move's mark. Toby's top three carry their class in colour only.
 typedef TobyBoardArrows =
-    ({String positionKey, List<cg.Arrow> arrows, bool exclusive});
+    ({
+      String positionKey,
+      List<cg.Arrow> arrows,
+      bool exclusive,
+      TobyBoardMark? mark,
+    });
+
+/// A class mark on the board: the report's badge for [classification] on
+/// [square].
+typedef TobyBoardMark =
+    ({Square square, GameMoveClassification classification});
 
 /// The reader's what-if choices: read the position as if both players were
 /// rated [rating], or at [cadence]. Null means the game's own value.
@@ -119,7 +135,12 @@ typedef TobyWhatIf = ({int? rating, TobyCadence? cadence});
 
 typedef _Mark = ({String positionKey, String uci});
 
-typedef _Shown = ({String positionKey, TobyReading reading});
+typedef _Shown =
+    ({
+      String positionKey,
+      TobyReading reading,
+      Map<String, GameMoveClassification?> classes,
+    });
 
 /// The arrow for a candidate [uci] in [hue], or null when it cannot be
 /// drawn. [weight] is the candidate's chance against the most likely one's
@@ -147,11 +168,15 @@ cg.Arrow? tobyArrowFor(
 
 /// Toby's top [kTobyBoardArrowCount] candidates in [reading] as arrows,
 /// least likely first so the most likely is drawn on top, each in its
-/// quality's hue and weighted by its chance against the most likely one's.
-List<cg.Arrow> tobyTopArrows(TobyReading reading) {
+/// class's colour ([classes], by UCI; Toby's teal without one) and weighted
+/// by its chance against the most likely one's.
+List<cg.Arrow> tobyTopArrows(
+  TobyReading reading, {
+  Map<String, GameMoveClassification?> classes =
+      const <String, GameMoveClassification?>{},
+}) {
   final top = reading.candidates.take(kTobyBoardArrowCount).toList();
   if (top.isEmpty) return const <cg.Arrow>[];
-  final qualities = tobyMoveQualities(reading);
   final leader = top
       .map((candidate) => candidate.probability)
       .fold<double>(0, math.max);
@@ -159,7 +184,7 @@ List<cg.Arrow> tobyTopArrows(TobyReading reading) {
   for (final candidate in top.reversed) {
     final arrow = tobyArrowFor(
       candidate.uci,
-      hue: tobyArrowHue(qualities[candidate.uci] ?? TobyMoveQuality.neutral),
+      hue: tobyArrowHue(classes[candidate.uci]),
       weight: leader > 0 ? candidate.probability / leader : 1,
     );
     if (arrow != null) arrows.add(arrow);
@@ -186,6 +211,10 @@ class TobyPanelController extends ChangeNotifier {
   final ValueNotifier<TobyBoardArrows?> _boardArrows =
       ValueNotifier<TobyBoardArrows?>(null);
   final ValueNotifier<bool> _holdsBoard = ValueNotifier<bool>(false);
+  final ValueNotifier<TobyWhatIf> _whatIfValue = ValueNotifier<TobyWhatIf>((
+    rating: null,
+    cadence: null,
+  ));
   bool _wantsHold = false;
   _Mark? _hover;
   _Mark? _pin;
@@ -216,15 +245,22 @@ class TobyPanelController extends ChangeNotifier {
   }
 
   /// Set by the Toby view with the reading on screen for [positionKey]
-  /// (null for none): while nothing is hovered or pinned, the board shows
-  /// its top three candidates. Applied after the current frame, because the
-  /// view learns it while widgets are building, and only the board hears
-  /// it: the view itself does not rebuild.
-  void showReadingSoon(String? positionKey, TobyReading? reading) {
+  /// (null for none) and its candidates' report [classes]: while nothing is
+  /// hovered or pinned, the board shows its top three candidates. Applied
+  /// after the current frame, because the view learns it while widgets are
+  /// building, and only the board hears it: the view itself does not
+  /// rebuild. Pass the same [classes] map while it holds, so an unchanged
+  /// reading is not drawn again.
+  void showReadingSoon(
+    String? positionKey,
+    TobyReading? reading, [
+    Map<String, GameMoveClassification?> classes =
+        const <String, GameMoveClassification?>{},
+  ]) {
     final next =
         positionKey == null || reading == null
             ? null
-            : (positionKey: positionKey, reading: reading);
+            : (positionKey: positionKey, reading: reading, classes: classes);
     if (_disposed || next == _wantsShown) return;
     _wantsShown = next;
     scheduleMicrotask(() {
@@ -235,6 +271,10 @@ class TobyPanelController extends ChangeNotifier {
   }
 
   TobyWhatIf get whatIf => _whatIf;
+
+  /// [whatIf] alone, for the Toby bar beside the board: it reads with the
+  /// same what-if as the view, but must not rebuild on every hover or pin.
+  ValueListenable<TobyWhatIf> get whatIfListenable => _whatIfValue;
 
   bool get hasWhatIf => _whatIf.rating != null || _whatIf.cadence != null;
 
@@ -249,6 +289,7 @@ class TobyPanelController extends ChangeNotifier {
   void setWhatIf(TobyWhatIf next) {
     if (_disposed || next == _whatIf) return;
     _whatIf = next;
+    _whatIfValue.value = next;
     notifyListeners();
   }
 
@@ -300,16 +341,29 @@ class TobyPanelController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// A hovered or pinned candidate's arrow, at full weight in its quality's
-  /// hue (when the reading on show is for the same position).
-  cg.Arrow? _markArrow(_Mark mark) {
+  /// A hovered or pinned candidate's class, when the reading on show is for
+  /// the same position.
+  GameMoveClassification? _classOf(_Mark mark) {
     final shown = _shown;
-    var quality = TobyMoveQuality.neutral;
-    if (shown != null && shown.positionKey == mark.positionKey) {
-      quality =
-          tobyMoveQualities(shown.reading)[mark.uci] ?? TobyMoveQuality.neutral;
-    }
-    return tobyArrowFor(mark.uci, hue: tobyArrowHue(quality));
+    if (shown == null || shown.positionKey != mark.positionKey) return null;
+    return shown.classes[mark.uci];
+  }
+
+  /// A hovered or pinned candidate's arrow at full weight in its class's
+  /// colour, and the class's mark on its destination square.
+  TobyBoardArrows? _marked(_Mark mark, {required bool exclusive}) {
+    final classification = _classOf(mark);
+    final arrow = tobyArrowFor(mark.uci, hue: tobyArrowHue(classification));
+    if (arrow == null) return null;
+    return (
+      positionKey: mark.positionKey,
+      arrows: [arrow],
+      exclusive: exclusive,
+      mark:
+          classification == null
+              ? null
+              : (square: arrow.dest, classification: classification),
+    );
   }
 
   /// A hover is the only shape on the board; a pin stands in for the top
@@ -317,28 +371,22 @@ class TobyPanelController extends ChangeNotifier {
   TobyBoardArrows? _arrowsFor() {
     final hover = _hover;
     if (hover != null) {
-      final arrow = _markArrow(hover);
-      if (arrow != null) {
-        return (
-          positionKey: hover.positionKey,
-          arrows: [arrow],
-          exclusive: true,
-        );
-      }
+      final marked = _marked(hover, exclusive: true);
+      if (marked != null) return marked;
     }
     final pin = _pin;
-    if (pin != null) {
-      final arrow = _markArrow(pin);
-      return arrow == null
-          ? null
-          : (positionKey: pin.positionKey, arrows: [arrow], exclusive: false);
-    }
+    if (pin != null) return _marked(pin, exclusive: false);
     final shown = _shown;
     if (shown == null) return null;
-    final arrows = tobyTopArrows(shown.reading);
+    final arrows = tobyTopArrows(shown.reading, classes: shown.classes);
     return arrows.isEmpty
         ? null
-        : (positionKey: shown.positionKey, arrows: arrows, exclusive: false);
+        : (
+          positionKey: shown.positionKey,
+          arrows: arrows,
+          exclusive: false,
+          mark: null,
+        );
   }
 
   @override
@@ -346,6 +394,23 @@ class TobyPanelController extends ChangeNotifier {
     _disposed = true;
     _boardArrows.dispose();
     _holdsBoard.dispose();
+    _whatIfValue.dispose();
     super.dispose();
   }
+}
+
+/// The one query a board asks Toby with: [request] under the [controller]'s
+/// what-if, from the board's session. The Toby Predicts view and the Toby bar
+/// beside the board both build it here, so they watch the same
+/// [tobyReadingProvider] instance and a position is asked about once per
+/// board, never once per surface.
+TobyQuery tobyQueryFor(TobyRequest request, TobyPanelController controller) {
+  final whatIf = controller.whatIf;
+  return TobyQuery(
+    request: request.copyWith(
+      ratingOverride: whatIf.rating,
+      cadenceOverride: whatIf.cadence,
+    ),
+    session: controller.session,
+  );
 }

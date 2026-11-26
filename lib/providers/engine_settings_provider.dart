@@ -173,6 +173,7 @@ bool shouldShowGameCardEvalBarFromSettings(
 class EngineSettings {
   const EngineSettings({
     this.showEngineGauge = true,
+    this.showTobyBar = true,
     this.showDepthOverlay = true,
     this.showPvArrows = true,
     this.showEngineAnalysis = false,
@@ -192,6 +193,12 @@ class EngineSettings {
                : (maxArrowsOnBoard > 4 ? 4 : maxArrowsOnBoard);
 
   final bool showEngineGauge;
+
+  /// The desktop board's Toby bar: Toby's win, draw and loss chances beside
+  /// the board, on by default for every reader. Independent of
+  /// [showEngineAnalysis] (Toby is not Stockfish). Device-local, like the
+  /// gauge.
+  final bool showTobyBar;
   final bool showDepthOverlay;
   final bool showPvArrows;
   final bool
@@ -314,6 +321,7 @@ class EngineSettings {
 
   EngineSettings copyWith({
     bool? showEngineGauge,
+    bool? showTobyBar,
     bool? showDepthOverlay,
     bool? showPvArrows,
     bool? showEngineAnalysis,
@@ -323,6 +331,7 @@ class EngineSettings {
   }) {
     return EngineSettings(
       showEngineGauge: showEngineGauge ?? this.showEngineGauge,
+      showTobyBar: showTobyBar ?? this.showTobyBar,
       showDepthOverlay: showDepthOverlay ?? this.showDepthOverlay,
       showPvArrows: showPvArrows ?? this.showPvArrows,
       showEngineAnalysis: showEngineAnalysis ?? this.showEngineAnalysis,
@@ -403,6 +412,14 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
   Future<void> toggleEngineGauge(bool value) async {
     final currentState = state.valueOrNull ?? const EngineSettings();
     final newSettings = currentState.copyWith(showEngineGauge: value);
+    state = AsyncValue.data(newSettings);
+    await _persist(newSettings);
+  }
+
+  /// Shows or hides the Toby bar beside the desktop board.
+  Future<void> toggleTobyBar(bool value) async {
+    final currentState = state.valueOrNull ?? const EngineSettings();
+    final newSettings = currentState.copyWith(showTobyBar: value);
     state = AsyncValue.data(newSettings);
     await _persist(newSettings);
   }
@@ -550,6 +567,7 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
       final db = AppDatabase.instance;
       final json = jsonEncode({
         'showEngineGauge': settings.showEngineGauge,
+        'showTobyBar': settings.showTobyBar,
         'showDepthOverlay': settings.showDepthOverlay,
         'showPvArrows': settings.showPvArrows,
         'showEngineAnalysis': settings.showEngineAnalysis,
@@ -615,7 +633,9 @@ class EngineSettingsNotifierNew extends AsyncNotifier<EngineSettings> {
 EngineSettings engineSettingsFromCache(Map<String, dynamic> map) {
   const defaults = EngineSettings();
   return EngineSettings(
-    showEngineGauge: map['showEngineGauge'] as bool? ?? defaults.showEngineGauge,
+    showEngineGauge:
+        map['showEngineGauge'] as bool? ?? defaults.showEngineGauge,
+    showTobyBar: map['showTobyBar'] as bool? ?? defaults.showTobyBar,
     showDepthOverlay:
         map['showDepthOverlay'] as bool? ?? defaults.showDepthOverlay,
     showPvArrows: map['showPvArrows'] as bool? ?? defaults.showPvArrows,

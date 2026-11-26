@@ -69,6 +69,7 @@ class E2eIds {
   static const countrymenSearchField = 'e2e_countrymen_search_field';
 
   static const boardEvalBar = 'e2e_board_eval_bar';
+  static const boardTobyBar = 'e2e_board_toby_bar';
   static const boardPvList = 'e2e_board_pv_list';
   static const boardNotationRoot = 'e2e_board_notation_root';
   static const boardGameSelector = 'e2e_board_game_selector';

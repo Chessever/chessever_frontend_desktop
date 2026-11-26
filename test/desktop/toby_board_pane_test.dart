@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,13 +21,14 @@ import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
-import 'package:chessever/desktop/services/toby/toby_quality.dart';
+import 'package:chessever/desktop/services/toby/toby_classes.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/toby_panel.dart';
+import 'package:chessever/desktop/widgets/board_wheel_navigation.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
@@ -38,6 +40,7 @@ import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
+import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 
 /// The whole board pane with the Toby Predicts tab in its engine pane:
@@ -76,6 +79,62 @@ void main() {
     _script.value = const TobyReadingState(TobyStatus.thinking);
     _queries.clear();
     _pvIndex = 0;
+    _tobyBar = false;
+  });
+
+  group('the Toby bar', () {
+    final bar = find.byKey(const ValueKey('e2e_board_toby_bar'));
+
+    testWidgets('sits on the board\'s right at the board\'s height, asks on '
+        'the Stockfish tab too, and never moves the board', (tester) async {
+      _tobyBar = true;
+      await _pumpBoard(tester, toby: false);
+      expect(bar, findsOneWidget);
+      final board = tester.getRect(find.byType(DesktopChessBoard));
+      final barRect = tester.getRect(bar);
+      expect(barRect.height, moreOrLessEquals(board.height));
+      expect(barRect.top, moreOrLessEquals(board.top));
+      expect(barRect.left, moreOrLessEquals(board.right + 12));
+      expect(barRect.width, 24);
+      // The bar reads the position on the board.
+      expect(_queries.map((q) => q.request.moves.length), [4]);
+      expect(_queries.single.session, isNotEmpty);
+      expect(find.bySemanticsLabel('Toby: no reading'), findsOneWidget);
+
+      _script.value = TobyReadingState.ready(_reading(final_: true));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.bySemanticsLabel('Toby: White 30%, draw 50%, Black 20%'),
+        findsOneWidget,
+      );
+      expect(tester.getRect(find.byType(DesktopChessBoard)), board);
+    });
+
+    testWidgets('with the Toby tab open, the bar and the tab ask about each '
+        'position once between them', (tester) async {
+      _tobyBar = true;
+      await _pumpBoard(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.home);
+      await tester.pump();
+      await tester.pump();
+      _queries.clear();
+      _script.value = TobyReadingState.ready(_reading(final_: true));
+      for (var step = 0; step < 3; step++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pump();
+        await tester.pump();
+      }
+      expect(_queries.map((q) => q.request.moves.length).toList(), [1, 2, 3]);
+      expect(_queries.map((q) => q.session).toSet(), hasLength(1));
+    });
+
+    testWidgets('hidden by its setting: no bar, no room for it, nothing '
+        'asked', (tester) async {
+      await _pumpBoard(tester, toby: false);
+      expect(bar, findsNothing);
+      expect(_queries, isEmpty);
+    });
   });
 
   testWidgets('the board keeps its full height, and switching tabs never '
@@ -164,6 +223,88 @@ void main() {
     await _tapTab(tester, 'Stockfish');
     await tester.pump();
     expect(_boardShapes(tester), containsAll(<cg.Shape>[circle, engine]));
+  });
+
+  testWidgets('a hovered or pinned candidate with a class puts the '
+      'report\'s mark on its square, as the board marks a report move; the '
+      'top three carry colour only', (tester) async {
+    await _pumpBoard(tester);
+    // After 1. e4 e5 2. Nf3 Nc6, from 50%: Bb5 the only good move.
+    _script.value = TobyReadingState.ready(
+      const TobyReading(
+        isFinal: true,
+        sideToMove: Side.white,
+        candidates: [
+          TobyCandidate(
+            uci: 'f1b5',
+            san: 'Bb5',
+            probability: 0.6,
+            wdl: TobyWdl(white: 0.40, draw: 0.30, black: 0.30),
+          ),
+          TobyCandidate(
+            uci: 'h2h3',
+            san: 'h3',
+            probability: 0.3,
+            wdl: TobyWdl(white: 0.15, draw: 0.30, black: 0.55),
+          ),
+        ],
+        positionWdl: TobyWdl(white: 0.35, draw: 0.30, black: 0.35),
+        otherProbability: 0.1,
+        otherMoveCount: 12,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    Finder mark(GameMoveClassification classification) =>
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is SvgPicture &&
+              widget.bytesLoader is SvgAssetLoader &&
+              (widget.bytesLoader as SvgAssetLoader).assetName ==
+                  classificationIconAsset(classification),
+        );
+    final onBoard = find.descendant(
+      of: find.byType(BoardWheelNavigation),
+      matching: mark(GameMoveClassification.bestMove),
+    );
+    expect(_boardShapes(tester).where(_isToby), hasLength(2));
+    expect(onBoard, findsNothing);
+
+    final gesture = await _hover(tester, find.text('Bb5'));
+    await tester.pumpAndSettle();
+    expect(onBoard, findsOneWidget);
+    // The report mark's placement: 40% of a square, centred on b5's
+    // top-right corner (nudged 4% down).
+    final board = tester.getRect(find.byType(DesktopChessBoard));
+    final square = board.width / 8;
+    final badge = tester.getRect(onBoard);
+    // Inside the badge's 0.5 px lip.
+    expect(badge.width, moreOrLessEquals(square * 0.40 - 1, epsilon: 0.01));
+    expect(
+      badge.center.dx,
+      moreOrLessEquals(board.left + 2 * square, epsilon: 0.5),
+    );
+    expect(
+      badge.center.dy,
+      moreOrLessEquals(board.top + 3 * square + square * 0.04, epsilon: 0.5),
+    );
+
+    await gesture.moveTo(const Offset(5, 5));
+    await tester.pump();
+    expect(onBoard, findsNothing);
+
+    await tester.tap(find.text('Bb5'));
+    await tester.pump();
+    await gesture.moveTo(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(onBoard, findsOneWidget);
+    expect(
+      (_boardShapes(tester).where(_isToby).single as cg.Arrow).color.withValues(
+        alpha: 1,
+      ),
+      classificationColor(GameMoveClassification.bestMove),
+    );
   });
 
   testWidgets('a pin adds Toby\'s arrow beside the reader\'s shapes', (
@@ -880,12 +1021,13 @@ Set<cg.Shape> _boardShapes(WidgetTester tester) =>
         .shapes
         .toSet();
 
-/// Toby's arrows, in any quality's hue.
+/// Toby's arrows, in any class's colour or Toby's teal.
 bool _isToby(cg.Shape shape) =>
     shape is cg.Arrow &&
-    TobyMoveQuality.values
-        .map(tobyArrowHue)
-        .contains(shape.color.withValues(alpha: 1));
+    <GameMoveClassification?>[
+      null,
+      ...GameMoveClassification.values,
+    ].map(tobyArrowHue).contains(shape.color.withValues(alpha: 1));
 
 /// Everything on the board but Toby's arrows.
 Set<cg.Shape> _nonToby(WidgetTester tester) =>
@@ -1096,6 +1238,7 @@ class _TestBoardSettingsNotifier extends BoardSettingsNotifierNew {
 class _EngineWithArrowsOnNotifier extends EngineSettingsNotifierNew {
   EngineSettings get _settings => EngineSettings(
     showEngineGauge: false,
+    showTobyBar: _tobyBar,
     showEngineAnalysis: _engineOn,
     showPvArrows: true,
     principalVariationIndex: _pvIndex,
@@ -1120,6 +1263,11 @@ class _TestKeyboardShortcutsNotifier extends KeyboardShortcutsNotifier {
 
 int _pvIndex = 0;
 bool _engineOn = true;
+
+/// The Toby bar beside the board. Off for the tests of the Toby Predicts
+/// tab alone (on its own the tab asks only while it is shown); on for the
+/// bar's own tests.
+bool _tobyBar = false;
 
 const List<BoardPv> _threeLines = <BoardPv>[
   BoardPv(evaluation: 0.31, mate: null, moves: 'f1b5 a7a6 b5a4 g8f6 e1g1'),

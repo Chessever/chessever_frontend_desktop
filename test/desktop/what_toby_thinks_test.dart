@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:dartchess/dartchess.dart' show Side, Square;
 import 'package:dio/dio.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,11 +22,16 @@ import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/services/desktop_global_search_intent.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
-import 'package:chessever/desktop/services/toby/toby_quality.dart';
+import 'package:chessever/desktop/services/engine/game_analysis_report.dart'
+    show GameMoveClassification;
+import 'package:chessever/desktop/services/toby/toby_classes.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/state/toby_panel.dart';
+import 'package:chessever/desktop/widgets/move_classification_icon.dart';
 import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
+import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 typedef _Call = ({Map<String, Object?> body, CancelToken cancel});
@@ -34,6 +41,11 @@ class _FakeGamebase extends GamebaseRepository {
 
   final FutureOr<GamebaseTobyReply> Function(_Call call, int index) _answer;
   final calls = <_Call>[];
+
+  /// The opening tree's game count per move, for the Book class, and the
+  /// positions it was asked for.
+  Map<String, int>? bookCounts;
+  final bookAsks = <({String fen, String line})>[];
 
   @override
   Future<GamebaseTobyReply> getTobyReading(
@@ -114,6 +126,11 @@ Map<String, dynamic> _move(String uci, String san, double p, {double? prior}) =>
 
 const String _positionKey = 'position-after-e4-e5';
 
+/// Italian Game, White to move: a real position, for the board facts the
+/// report classes read.
+const String _italian =
+    'r1bq1rk1/ppp2ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - 0 7';
+
 TobyTarget _target({String positionKey = _positionKey, int plies = 2}) =>
     TobyTarget.read(
       TobyRequest(
@@ -140,18 +157,44 @@ class _PlayEngineMoveIntent extends Intent {
 }
 
 class _Harness {
-  _Harness(this.container, this.repo, this.subscription, this.controller);
+  _Harness(
+    this.container,
+    this.repo,
+    this.subscription,
+    this.controller,
+    this.bookAccess,
+  );
 
   final ProviderContainer container;
   final _FakeGamebase repo;
   final _Subscription subscription;
   final TobyPanelController controller;
+  final DesktopAccessContext? bookAccess;
   int closes = 0;
   int searches = 0;
   int steps = 0;
   int engineMoves = 0;
   final played = <String>[];
 }
+
+/// The reader's account, as the board's window resolves it.
+class _Reader extends DesktopAccountIdentityNotifier {
+  _Reader(this.identity);
+
+  final DesktopAccountIdentity identity;
+
+  @override
+  DesktopAccountIdentity build() => identity;
+}
+
+/// The engine pane's `playedContext` for an opening position: the explorer
+/// request the Book class asks under.
+const _bookAccess = DesktopAccessContext(
+  feature: DesktopFeature.openingExplorer,
+  action: DesktopAction.previewNavigate,
+  origin: DesktopDiscoveryOrigin.gamebase,
+  playedPlies: 12,
+);
 
 /// Wide enough, in the test font (every glyph as wide as its size), for the
 /// verdict beside the inputs and the outcome bars beside the moves.
@@ -167,6 +210,11 @@ Future<_Harness> _pump(
   double width = _wide,
   double height = 560,
   FutureOr<GamebaseTobyReply> Function(_Call call, int index)? answer,
+  Map<String, int>? bookCounts,
+  DesktopAccountIdentity identity = const DesktopAccountIdentity(
+    userId: 'reader',
+  ),
+  DesktopAccessContext? bookAccess = _bookAccess,
 }) async {
   SharedPreferences.setMockInitialValues({if (toby) tobyTabStorageKey: true});
   tester.view.devicePixelRatio = 1;
@@ -174,11 +222,17 @@ Future<_Harness> _pump(
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.view.resetPhysicalSize);
 
-  final repo = _FakeGamebase(answer ?? (_, _) => _reply(200, _payload()));
+  final repo = _FakeGamebase(answer ?? (_, _) => _reply(200, _payload()))
+    ..bookCounts = bookCounts;
   final subscription = _Subscription(premium ? _member() : SubscriptionState());
   final container = ProviderContainer(
     overrides: [
       gamebaseRepositoryProvider.overrideWithValue(repo),
+      tobyBookCountsProvider.overrideWith((ref, position) {
+        repo.bookAsks.add(position);
+        return repo.bookCounts;
+      }),
+      desktopAccountIdentityProvider.overrideWith(() => _Reader(identity)),
       subscriptionProvider.overrideWith((ref) => subscription),
       desktopEntitlementProvider.overrideWithValue(
         guest
@@ -196,6 +250,7 @@ Future<_Harness> _pump(
     repo,
     subscription,
     TobyPanelController(session: 'panel-test-0001'),
+    bookAccess,
   );
   addTearDown(harness.controller.dispose);
   await tester.pumpWidget(
@@ -298,6 +353,7 @@ class _Pane extends ConsumerWidget {
                           target: target,
                           controller: harness.controller,
                           onPlayUci: harness.played.add,
+                          bookAccess: harness.bookAccess,
                         ),
                   )
                   : const Text('Stockfish lines'),
@@ -737,8 +793,9 @@ void main() {
       await _settle(tester);
 
       final chance = tester.widget<Text>(find.text('71.0%'));
-      // Nf3 is the best move here: its quality's tone.
-      expect(chance.style!.color, tobyRowTone(TobyMoveQuality.good));
+      // Nf3 is the best line by half a point: no class, Toby's teal.
+      expect(chance.style!.color, kTobyAccent);
+      expect(tobyRowTone(null), kTobyAccent);
       expect(chance.style!.fontWeight, FontWeight.w700);
       final view = tester.getRect(find.byType(WhatTobyThinks));
       // The 16 px list inset, then the row's 1 px border and 8 px padding.
@@ -1031,8 +1088,10 @@ void main() {
         (orig: arrow.orig, dest: arrow.dest),
         (orig: Square.d2, dest: Square.d4),
       );
-      // d4 gives away half a point against Nf3: good, at full weight.
-      expect(arrow.color, kTobyArrowGood.withValues(alpha: kTobyArrowAlpha));
+      // d4 gives away half a point against Nf3: no class, Toby's teal at
+      // full weight, and no mark on the board.
+      expect(arrow.color, kTobyArrowNeutral.withValues(alpha: kTobyArrowAlpha));
+      expect(hovered.mark, isNull);
       expect(arrow.scale, kTobyArrowScale);
 
       // The gap under a row belongs to it: no flicker back to the engine.
@@ -1270,106 +1329,283 @@ void main() {
       expect(h.closes, 0);
     });
 
-    testWidgets('each row takes its move\'s quality: tone on the chance and '
-        'the fill, spoken in its label; the board draws the top three, least '
-        'likely first, weighted and coloured the same way', (tester) async {
-      Map<String, dynamic> row(
-        String uci,
-        String san,
-        double p,
-        List<double> w,
-      ) => {
-        'uci': uci,
-        'san': san,
-        'probability': p,
-        'prior': p,
-        'wdl': {'white': w[0], 'draw': w[1], 'black': w[2]},
-      };
+    testWidgets('each row takes its move\'s report class: the report\'s '
+        'mark beside the move, the class colour on the chance and the fill, '
+        'its name in the label; the board draws the top three in the same '
+        'colours, and a hovered move\'s mark on its square', (tester) async {
+      Map<String, dynamic> row(String uci, String san, double p, double win) {
+        // White's win% is white + draw / 2; a 30% draw throughout.
+        final white = win / 100 - 0.15;
+        return {
+          'uci': uci,
+          'san': san,
+          'probability': p,
+          'prior': p,
+          'wdl': {'white': white, 'draw': 0.30, 'black': 0.70 - white},
+        };
+      }
+
       final judged =
           _payload()
+            ..['positionWdl'] = {'white': 0.35, 'draw': 0.30, 'black': 0.35}
             ..['moves'] = [
-              // White to move. Expected scores: .575, .525, .375.
-              row('g1f3', 'Nf3', 0.5, [0.30, 0.55, 0.15]),
-              row('d2d4', 'd4', 0.4, [0.25, 0.55, 0.20]),
-              row('d1h5', 'Qh5', 0.1, [0.15, 0.45, 0.40]),
+              // From 50%: Bg5 the only good move, a3 theory, h3 a blunder.
+              row('c1g5', 'Bg5', 0.5, 55),
+              row('a2a3', 'a3', 0.4, 47),
+              row('h2h3', 'h3', 0.1, 33),
             ];
+      _targetNotifier.value = TobyTarget.read(
+        TobyRequest(moves: [...List.filled(11, 'a2a3'), 'd7d6']),
+        positionKey: _italian,
+      );
       final h = await _pump(
         tester,
         premium: true,
         toby: true,
         height: 640,
         answer: (_, _) => _reply(200, judged),
+        bookCounts: {'a2a3': 120, 'h2h3': 500},
       );
       await _settle(tester);
+      // The engine pane's "played" request for the same position and line.
+      expect(h.repo.bookAsks.toSet(), {
+        (fen: _italian, line: [...List.filled(11, 'a2a3'), 'd7d6'].join(' ')),
+      });
+
+      const top = GameMoveClassification.bestMove;
+      const book = GameMoveClassification.bookMove;
+      const blunder = GameMoveClassification.blunder;
 
       Color chance(String text) =>
           tester.widget<Text>(find.text(text)).style!.color!;
-      expect(chance('50.0%'), tobyRowTone(TobyMoveQuality.good));
-      expect(chance('40.0%'), tobyRowTone(TobyMoveQuality.dubious));
-      expect(chance('10.0%'), tobyRowTone(TobyMoveQuality.bad));
+      expect(chance('50.0%'), kTobyClassRowTones[top]);
+      expect(chance('40.0%'), kTobyClassRowTones[book]);
+      expect(chance('10.0%'), kTobyClassRowTones[blunder]);
       final fills = [
         for (final element in _paintedBy('_TobyRowPainter').evaluate())
           ((element.widget as CustomPaint).painter as dynamic).fill as Color,
       ];
       expect(fills.map((fill) => fill.withValues(alpha: 1)), [
-        tobyRowTone(TobyMoveQuality.good),
-        tobyRowTone(TobyMoveQuality.dubious),
-        tobyRowTone(TobyMoveQuality.bad),
+        classificationColor(top),
+        classificationColor(book),
+        classificationColor(blunder),
       ]);
+
+      // The report's own mark, at the move list's size, 4 px after the
+      // move and centred on its line.
+      for (final (san, classification) in [
+        ('Bg5', top),
+        ('a3', book),
+        ('h3', blunder),
+      ]) {
+        final mark = find.byWidgetPredicate(
+          (widget) =>
+              widget is MoveClassificationIcon &&
+              widget.classification == classification,
+        );
+        expect(mark, findsOneWidget, reason: san);
+        final markRect = tester.getRect(mark);
+        final sanRect = tester.getRect(find.text(san));
+        expect(markRect.size, const Size.square(17));
+        expect(markRect.left - sanRect.right, moreOrLessEquals(4));
+        expect(markRect.center.dy, moreOrLessEquals(sanRect.center.dy));
+        expect(
+          find.descendant(of: mark, matching: find.byType(SvgPicture)),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<SvgPicture>(
+                find.descendant(of: mark, matching: find.byType(SvgPicture)),
+              )
+              .bytesLoader,
+          isA<SvgAssetLoader>().having(
+            (loader) => loader.assetName,
+            'asset',
+            classificationIconAsset(classification),
+          ),
+        );
+      }
+      // Every move starts at the same x, mark or not.
+      expect({
+        for (final san in ['Bg5', 'a3', 'h3'])
+          tester.getTopLeft(find.text(san)).dx,
+      }, hasLength(1));
+
       expect(
         find.bySemanticsLabel(
-          'Nf3, 50 percent. After it: White 30, draw 55, Black 15',
+          'Bg5, 50 percent, Top move. After it: White 40, draw 30, Black 30',
         ),
         findsOneWidget,
       );
       expect(
         find.bySemanticsLabel(
-          'd4, 40 percent, dubious. After it: White 25, draw 55, Black 20',
+          'a3, 40 percent, Book. After it: White 32, draw 30, Black 38',
         ),
         findsOneWidget,
       );
       expect(
         find.bySemanticsLabel(
-          'Qh5, 10 percent, a mistake. After it: White 15, draw 45, Black 40',
+          'h3, 10 percent, Blunder. After it: White 18, draw 30, Black 52',
         ),
         findsOneWidget,
       );
 
-      final top = h.controller.boardArrows.value!;
-      expect(top.positionKey, _positionKey);
-      expect(top.exclusive, isFalse);
+      final arrows = h.controller.boardArrows.value!;
+      expect(arrows.positionKey, _italian);
+      expect(arrows.exclusive, isFalse);
+      expect(arrows.mark, isNull);
       expect(
-        [for (final a in top.arrows) (a.orig, a.dest)],
+        [for (final a in arrows.arrows) (a.orig, a.dest)],
         [
-          (Square.d1, Square.h5),
-          (Square.d2, Square.d4),
-          (Square.g1, Square.f3),
+          (Square.h2, Square.h3),
+          (Square.a2, Square.a3),
+          (Square.c1, Square.g5),
         ],
       );
-      expect(top.arrows.map((a) => a.color.withValues(alpha: 1)), [
-        kTobyArrowBad,
-        kTobyArrowDubious,
-        kTobyArrowGood,
+      expect(arrows.arrows.map((a) => a.color.withValues(alpha: 1)), [
+        classificationColor(blunder),
+        classificationColor(book),
+        classificationColor(top),
       ]);
-      expect(top.arrows.last.scale, kTobyArrowScale);
-      expect(top.arrows.last.color.a, moreOrLessEquals(kTobyArrowAlpha));
-      expect(top.arrows[1].scale, moreOrLessEquals(0.8 * 0.8));
-      expect(top.arrows[1].color.a, moreOrLessEquals(0.9 * 0.8, epsilon: 0.01));
-      expect(top.arrows.first.scale, kTobyArrowMinScale);
-      expect(
-        top.arrows.first.color.a,
-        moreOrLessEquals(kTobyArrowMinAlpha, epsilon: 0.01),
-      );
+      expect(arrows.arrows.last.scale, kTobyArrowScale);
+      expect(arrows.arrows.last.color.a, moreOrLessEquals(kTobyArrowAlpha));
+      expect(arrows.arrows[1].scale, moreOrLessEquals(0.8 * 0.8));
+      expect(arrows.arrows.first.scale, kTobyArrowMinScale);
 
-      // A hovered bad move is the only arrow, at full weight in its hue.
-      await _hover(tester, find.text('Qh5'));
+      // A hovered blunder is the only arrow, at full weight in its colour,
+      // with the report's mark on its square.
+      await _hover(tester, find.text('h3'));
       final hovered = h.controller.boardArrows.value!;
       expect(hovered.exclusive, isTrue);
       expect(
         hovered.arrows.single.color,
-        kTobyArrowBad.withValues(alpha: kTobyArrowAlpha),
+        classificationColor(blunder).withValues(alpha: kTobyArrowAlpha),
       );
       expect(hovered.arrows.single.scale, kTobyArrowScale);
+      expect(hovered.mark, (square: Square.h3, classification: blunder));
+    });
+
+    // The engine pane's "played" rule, and the web's `explorerCanBrowse`:
+    // a reader who may not browse the opening tree gets no Book, and the
+    // tree is never asked.
+    for (final (name, identity, access) in <(
+      String,
+      DesktopAccountIdentity,
+      DesktopAccessContext?,
+    )>[
+      (
+        'an anonymous guest',
+        const DesktopAccountIdentity(userId: 'guest', isAnonymous: true),
+        _bookAccess,
+      ),
+      ('a signed-out reader', const DesktopAccountIdentity(), _bookAccess),
+      (
+        'a stale session',
+        const DesktopAccountIdentity(userId: 'reader', staleSession: true),
+        _bookAccess,
+      ),
+      (
+        'a board with no explorer request',
+        const DesktopAccountIdentity(userId: 'reader'),
+        null,
+      ),
+    ]) {
+      testWidgets('no Book for $name: the opening tree is not asked', (
+        tester,
+      ) async {
+        final judged =
+            _payload()
+              ..['positionWdl'] = {'white': 0.35, 'draw': 0.30, 'black': 0.35}
+              ..['moves'] = [
+                {
+                  'uci': 'c1g5',
+                  'san': 'Bg5',
+                  'probability': 0.6,
+                  'prior': 0.6,
+                  'wdl': {'white': 0.40, 'draw': 0.30, 'black': 0.30},
+                },
+                {
+                  'uci': 'a2a3',
+                  'san': 'a3',
+                  'probability': 0.4,
+                  'prior': 0.4,
+                  'wdl': {'white': 0.32, 'draw': 0.30, 'black': 0.38},
+                },
+              ];
+        _targetNotifier.value = TobyTarget.read(
+          TobyRequest(moves: [...List.filled(11, 'a2a3'), 'd7d6']),
+          positionKey: _italian,
+        );
+        final h = await _pump(
+          tester,
+          premium: true,
+          toby: true,
+          answer: (_, _) => _reply(200, judged),
+          bookCounts: {'a2a3': 120},
+          identity: identity,
+          bookAccess: access,
+        );
+        await _settle(tester);
+        expect(h.repo.bookAsks, isEmpty);
+        expect(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is MoveClassificationIcon &&
+                widget.classification == GameMoveClassification.bookMove,
+          ),
+          findsNothing,
+        );
+        expect(find.text('a3'), findsOneWidget);
+      });
+    }
+
+    testWidgets('every class draws the report\'s own badge at the move '
+        'list\'s 17 px, and says the report\'s name for it', (tester) async {
+      for (final classification in GameMoveClassification.values) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Center(
+              child: MoveClassificationIcon(classification: classification),
+            ),
+          ),
+        );
+        final icon = find.byType(MoveClassificationIcon);
+        expect(tester.getSize(icon), const Size.square(17));
+        final svg = tester.widget<SvgPicture>(
+          find.descendant(of: icon, matching: find.byType(SvgPicture)),
+        );
+        expect(
+          (svg.bytesLoader as SvgAssetLoader).assetName,
+          classificationIconAsset(classification),
+        );
+        expect(
+          tobyCandidateSemanticsLabel(
+            const TobyCandidate(uci: 'g1f3', san: 'Nf3', probability: 0.5),
+            classification: classification,
+          ),
+          'Nf3, 50 percent, ${classification.label}',
+        );
+      }
+      expect(
+        tobyCandidateSemanticsLabel(
+          const TobyCandidate(uci: 'g1f3', san: 'Nf3', probability: 0.5),
+        ),
+        'Nf3, 50 percent',
+      );
+    });
+
+    testWidgets('a row without a class draws no mark, and its row is no '
+        'taller than the mark', (tester) async {
+      await _pump(tester, premium: true, toby: true);
+      await _settle(tester);
+      expect(find.byType(MoveClassificationIcon), findsNothing);
+      final row = _painted(tester, '_TobyRowPainter').first;
+      // 7 px padding above and below the line, which is as tall as its
+      // text or the 18 px outcome bar box: the 17 px mark adds nothing, so
+      // marked and plain rows match.
+      final line = math.max(tester.getSize(find.text('Nf3')).height, 18);
+      expect(row.size.height, 2 * 7 + line);
     });
 
     testWidgets('a certainty reads 100% in the chance column', (tester) async {

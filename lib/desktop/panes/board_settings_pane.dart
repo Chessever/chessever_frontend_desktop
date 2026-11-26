@@ -423,6 +423,14 @@ class _EngineCard extends StatelessWidget {
           ),
           const _RowDivider(),
           _SwitchRow(
+            label: 'Toby bar',
+            description:
+                'Show Toby\'s win, draw and loss chances beside the board.',
+            value: settings.showTobyBar,
+            onChange: notifier.toggleTobyBar,
+          ),
+          const _RowDivider(),
+          _SwitchRow(
             label: 'Eval bar while playing',
             description:
                 'Show a live evaluation bar beside the board in Play games.',

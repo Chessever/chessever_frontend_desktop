@@ -275,7 +275,12 @@ class _PreviewBoardSettings extends BoardSettingsNotifierNew {
 class _PreviewEngineSettings extends EngineSettingsNotifierNew {
   @override
   Future<EngineSettings> build() async =>
-      const EngineSettings(showEngineGauge: false, showEngineAnalysis: false);
+  // No Toby bar either: the decorative backdrop asks Toby nothing.
+  const EngineSettings(
+    showEngineGauge: false,
+    showTobyBar: false,
+    showEngineAnalysis: false,
+  );
 }
 
 class _PreviewTabs extends StatelessWidget {

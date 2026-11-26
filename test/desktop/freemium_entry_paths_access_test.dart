@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'support/current_broadcast_games.dart';
 
+import 'package:dio/dio.dart' show CancelToken;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -84,6 +85,15 @@ class _MiniatureGamebase implements GamebaseRepository {
           '1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0',
     );
   }
+
+  /// The Toby bar beside the board asks about each position; this Gamebase
+  /// cannot read any, so the bar stays an empty track.
+  @override
+  Future<GamebaseTobyReply> getTobyReading(
+    Map<String, Object?> body,
+    CancelToken cancelToken, {
+    bool recheckAccess = false,
+  }) async => (statusCode: 404, data: null, retryAfter: null);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

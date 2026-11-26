@@ -4,9 +4,9 @@ import 'package:chessever/desktop/widgets/cut_item_fade.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/utils/text_line_metrics.dart';
 import 'package:chessever/desktop/state/engine_formatted_display.dart';
+import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
-import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/services/engine/engine_played.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
@@ -17,7 +17,6 @@ import 'package:flutter/foundation.dart'
     show kIsWeb, visibleForTesting, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
@@ -36,6 +35,7 @@ import 'package:chessever/screens/chessboard/game_review/evaluation_graph_marker
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/move_classification_icon.dart';
 import 'package:chessever/desktop/widgets/engine_settings_popover.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
@@ -511,7 +511,6 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     ) {
       if (before != null && before != after) _reportController.invalidate();
     });
-    final identity = ref.watch(desktopAccountIdentityProvider);
     final reportAccess =
         !kIsWeb ||
         desktopPremiumAccess(ref.watch(subscriptionProvider)) ==
@@ -553,13 +552,8 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                 playedContext != null &&
                 playedPosition != null &&
                 playedPosition.fen == widget.fen &&
-                identity.isPermanent &&
-                !identity.staleSession &&
-                evaluateDesktopAccess(
-                  context: playedContext,
-                  subscription: ref.watch(subscriptionProvider),
-                  entitlement: ref.watch(desktopEntitlementProvider),
-                ).isAllowed
+                // One rule with the Book class on Toby's rows.
+                desktopPlayedCountsAllowed(ref.watch, playedContext)
             ? ref.watch(enginePlayedProvider(playedPosition)).valueOrNull
             : null;
 
@@ -2033,20 +2027,8 @@ class _GameReportClassificationIcon extends StatelessWidget {
   final double size;
 
   @override
-  Widget build(BuildContext context) {
-    // Badge SVG already carries its own coloured disc — render bare, no circle.
-    return DesktopTooltip(
-      message: classification.label,
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: SvgPicture.asset(
-          classificationIconAsset(classification),
-          fit: BoxFit.contain,
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      MoveClassificationIcon(classification: classification, size: size);
 }
 
 Color _classificationColor(GameMoveClassification classification) =>
