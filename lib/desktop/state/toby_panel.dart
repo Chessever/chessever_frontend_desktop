@@ -215,8 +215,10 @@ class TobyPanelController extends ChangeNotifier {
     rating: null,
     cadence: null,
   ));
+  Object? _viewOwner;
   bool _wantsHold = false;
   _Mark? _hover;
+  bool _previewHoveredMove = true;
   _Mark? _pin;
 
   /// The reading the view shows, and the one it last asked to show (applied
@@ -233,6 +235,18 @@ class TobyPanelController extends ChangeNotifier {
   /// engine keeps analysing (its score stays in the header), but its arrows
   /// leave the board: they would point at lines the reader cannot see.
   ValueListenable<bool> get holdsBoard => _holdsBoard;
+
+  void attachView(Object owner) => _viewOwner = owner;
+
+  void detachView(Object owner) {
+    scheduleMicrotask(() {
+      if (_disposed || !identical(_viewOwner, owner)) return;
+      _viewOwner = null;
+      holdBoardSoon(false);
+      showReadingSoon(null, null);
+      clearMarks();
+    });
+  }
 
   /// Set by the Toby view as it mounts and leaves. Notifies after the
   /// current frame, because the view learns it while widgets are building.
@@ -295,17 +309,23 @@ class TobyPanelController extends ChangeNotifier {
 
   /// Shows [uci] alone on the board while the pointer (or keyboard focus)
   /// rests on it; null clears it.
-  void hover(String positionKey, String? uci) {
+  void hover(String positionKey, String? uci, {bool previewOnBoard = true}) {
     final next = uci == null ? null : (positionKey: positionKey, uci: uci);
-    if (_disposed || next == _hover) return;
+    if (_disposed || (next == _hover && previewOnBoard == _previewHoveredMove)) return;
+    final changeBoard = (_hover != null && _previewHoveredMove) ||
+        (next != null && previewOnBoard);
     _hover = next;
-    _changed();
+    _previewHoveredMove = previewOnBoard;
+    if (changeBoard) {
+      _changed();
+    } else {
+      notifyListeners();
+    }
   }
 
   void clearHover() {
     if (_disposed || _hover == null) return;
-    _hover = null;
-    _changed();
+    hover('', null, previewOnBoard: _previewHoveredMove);
   }
 
   /// Pins [uci], or unpins it when it is already the pin.
@@ -370,7 +390,7 @@ class TobyPanelController extends ChangeNotifier {
   /// three; otherwise the reading's top three.
   TobyBoardArrows? _arrowsFor() {
     final hover = _hover;
-    if (hover != null) {
+    if (hover != null && _previewHoveredMove) {
       final marked = _marked(hover, exclusive: true);
       if (marked != null) return marked;
     }

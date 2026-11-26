@@ -17,12 +17,16 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
 import 'package:chessever/desktop/panes/board_pane.dart';
+import 'package:chessever/desktop/panes/board_settings_pane.dart';
+import 'package:chessever/providers/auto_pin_preferences_provider.dart';
+import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin_preferences_repository.dart';
 import 'package:chessever/desktop/services/engine/pv_san_formatter.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 import 'package:chessever/desktop/services/toby/toby_classes.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
@@ -41,6 +45,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/repository/supabase/game/game_stream_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
+import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.dart';
 
 /// The whole board pane with the Toby Predicts tab in its engine pane:
@@ -80,6 +85,20 @@ void main() {
     _queries.clear();
     _pvIndex = 0;
     _tobyBar = false;
+  });
+
+  testWidgets('master pause hides both readings and restores the Toby bar', (tester) async {
+    _tobyBar = true;
+    await _pumpBoard(tester, toby: false);
+    final bar = find.byKey(const ValueKey('e2e_board_toby_bar'));
+    expect(bar, findsOneWidget);
+    final power = find.byIcon(Icons.power_settings_new_rounded);
+    await tester.tap(power);
+    await tester.pump();
+    expect(bar, findsNothing);
+    await tester.tap(find.byIcon(Icons.power_settings_new_outlined));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(bar, findsOneWidget);
   });
 
   group('the Toby bar', () {
@@ -137,8 +156,128 @@ void main() {
     });
   });
 
-  testWidgets('the board keeps its full height, and switching tabs never '
-      'resizes it', (tester) async {
+  testWidgets('new Board preferences show both analyses even if the legacy engine setting is off', (tester) async {
+    _engineOn = false;
+    addTearDown(() => _engineOn = true);
+    final probe = await _pumpBoard(tester, size: const Size(2400, 820), toby: false);
+    // This full Board test leaves the real async SAN formatter in place.
+    // The published score proves Stockfish is running independently of whether
+    // native background SAN formatting has finished.
+    probe.emitEngine(_threeLines, isEvaluating: false);
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text('Stockfish'), findsOneWidget);
+    final liveFen = _boardFen(tester);
+    final container = ProviderScope.containerOf(tester.element(find.byType(BoardPane)));
+    expect(probe.notifiers, isNotEmpty);
+    expect(container.read(boardEvalProvider(liveFen)).pvs, _threeLines);
+    expect(find.text('3.Nf3'), findsOneWidget);
+    expect(find.text('60.0%'), findsOneWidget);
+    expect(find.text('Played'), findsNothing);
+    expect(find.descendant(of: _pvLineFinder, matching: find.textContaining('%')), findsNothing);
+  });
+
+  testWidgets('Board gear defaults to three Stockfish lines and remembers a choice', (tester) async {
+    await _pumpBoard(tester, toby: false);
+    await tester.tap(find.byType(EngineSettingsPopover));
+    await tester.pumpAndSettle();
+    final gear = find.ancestor(
+      of: find.text('Engine lines'),
+      matching: find.byWidgetPredicate((widget) =>
+          widget.runtimeType.toString() == '_SegmentedRow'),
+    );
+    Finder line(String value) => find.descendant(of: gear, matching: find.text(value));
+    expect(tester.widget<Text>(line('3')).style?.color, kBackgroundColor);
+    await tester.tap(line('4'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(line('4')).style?.color, kBackgroundColor);
+    final saved = await SharedPreferences.getInstance();
+    expect(saved.getInt('desktop.analysis.stockfishLines.v1'), 3);
+  });
+
+  testWidgets('Board settings use the same Stockfish line preference as the gear', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1440, 1120);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+        engineSettingsProviderNew.overrideWith(_EngineWithArrowsOnNotifier.new),
+        autoPinPreferencesProvider.overrideWith(_TestAutoPinPreferences.new),
+      ],
+      child: const MaterialApp(home: Scaffold(body: BoardSettingsPane())),
+    ));
+    await tester.pumpAndSettle();
+    final field = find.ancestor(
+      of: find.text('Number of lines'),
+      matching: find.byWidgetPredicate((w) => w.runtimeType.toString() == '_SegmentedField'),
+    );
+    Finder option(String value) => find.descendant(of: field, matching: find.text(value));
+    Color? color(String value) => DefaultTextStyle.of(tester.element(option(value))).style.color;
+    expect(color('3'), kBackgroundColor);
+    await tester.ensureVisible(option('4'));
+    await tester.tap(option('4'));
+    await tester.pumpAndSettle();
+    expect(color('4'), kBackgroundColor);
+    final container = ProviderScope.containerOf(tester.element(find.byType(BoardSettingsPane)));
+    expect(container.read(boardAnalysisPreferencesProvider).stockfishLineIndex, 3);
+  });
+
+  testWidgets('compact Toby credit only appears on its title hover', (tester) async {
+    await _pumpBoard(tester, size: const Size(2400, 820), toby: false);
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    await tester.pumpAndSettle();
+    expect(find.textContaining(kTobyAttribution, findRichText: true), findsNothing);
+    final hover = await _hover(tester, find.text(kTobyFeatureLabel));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining(kTobyAttribution, findRichText: true), findsOneWidget);
+    await hover.moveTo(const Offset(5, 5));
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.textContaining(kTobyAttribution, findRichText: true), findsNothing);
+  });
+
+  testWidgets('dragging the analysis divider down shows more Toby moves', (tester) async {
+    await _pumpBoard(tester, size: const Size(2400, 820), toby: false);
+    _script.value = TobyReadingState.ready(const TobyReading(
+      isFinal: true,
+      sideToMove: Side.white,
+      candidates: [
+        TobyCandidate(uci: 'b1c3', san: 'Nc3', probability: 0.3),
+        TobyCandidate(uci: 'd2d4', san: 'd4', probability: 0.24),
+        TobyCandidate(uci: 'f1b5', san: 'Bb5', probability: 0.2),
+        TobyCandidate(uci: 'f1c4', san: 'Bc4', probability: 0.13),
+        TobyCandidate(uci: 'f1e2', san: 'Be2', probability: 0.08),
+        TobyCandidate(uci: 'h2h3', san: 'h3', probability: 0.05),
+      ],
+      otherProbability: 0,
+      otherMoveCount: 0,
+    ));
+    await tester.pumpAndSettle();
+    final view = find.byType(WhatTobyThinks);
+    final nextLine = find.text('3.Bc4');
+    final split = find.byWidgetPredicate((widget) => widget is ResizableSplitView &&
+        widget.storageKey == desktopEngineRightRailSplitStorageKey);
+    expect(tester.widget<ResizableSplitView>(split).gutterColor, kLightGreyColor);
+    final before = tester.getRect(view);
+    expect(tester.getBottomLeft(find.text('3.Bb5')).dy, lessThanOrEqualTo(before.bottom));
+    expect(tester.getBottomLeft(nextLine).dy, greaterThan(before.bottom));
+    final engine = tester.getRect(find.byType(EnginePanel));
+    await tester.timedDragFrom(
+      Offset(engine.center.dx, engine.bottom + desktopEngineRightRailGutterThickness / 2),
+      const Offset(0, 160),
+      const Duration(milliseconds: 200),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getRect(view).height, greaterThan(before.height));
+    expect(nextLine.hitTestable(), findsOneWidget);
+  });
+
+  testWidgets('wide rails show both analyses without shrinking the board', (tester) async {
     await _pumpBoard(tester, size: const Size(2400, 820), toby: false);
     final before = _boardSize(tester);
 
@@ -157,10 +296,16 @@ void main() {
     expect(before, moreOrLessEquals(available));
 
     _script.value = TobyReadingState.ready(_reading(final_: true));
-    await _tapTab(tester, kTobyFeatureLabel);
     await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(TobyViewTabs), findsNothing);
     expect(find.byType(WhatTobyThinks), findsOneWidget);
+    expect(find.text('Stockfish'), findsOneWidget);
+    expect(find.text('3.Nf3'), findsOneWidget);
     expect(_boardSize(tester), before);
+    tester.view.physicalSize = const Size(1100, 1000);
+    await tester.pumpAndSettle();
+    expect(find.byType(TobyViewTabs), findsOneWidget);
+    expect(find.byType(WhatTobyThinks), findsNothing);
   });
 
   testWidgets('on the Stockfish tab the board pane asks Toby nothing', (
@@ -182,53 +327,42 @@ void main() {
     expect(_boardShapes(tester).whereType<cg.Arrow>(), isNotEmpty);
   });
 
-  testWidgets('the Toby tab takes Stockfish\'s arrows off the board and '
-      'draws Toby\'s top candidates; hovering a row leaves only its arrow', (
-    tester,
-  ) async {
+  testWidgets('arrow source is independent of the visible tab and hover', (tester) async {
     final probe = await _pumpBoard(tester, toby: false);
+    final prefs = ProviderScope.containerOf(tester.element(find.byType(BoardPane)))
+        .read(boardAnalysisPreferencesProvider.notifier);
     probe.emitEngine(_engineLine);
     _drawCircle(tester, Square.e4);
     await tester.pump();
     final circle = _circleAt(tester, Square.e4);
     final engine = _engineArrow(tester);
-    expect(_boardShapes(tester), containsAll(<cg.Shape>[circle, engine]));
-
     _script.value = TobyReadingState.ready(_reading(final_: true));
     await _tapTab(tester, kTobyFeatureLabel);
-    await tester.pump();
-    // The engine keeps analysing (its score stays in the header), but its
-    // arrows leave with its lines. Toby's candidates (two in this reading)
-    // join the reader's circle, the most likely drawn last.
+    expect(_boardShapes(tester), containsAll(<cg.Shape>[circle, engine]));
+
+    prefs.setArrows(BoardAnalysisArrows.toby);
     await tester.pump();
     expect(_nonToby(tester), {circle});
     expect(_boardShapes(tester).where(_isToby).map(_tobyArrow), [
-      (Square.d2, Square.d4),
-      (Square.g1, Square.f3),
+      (Square.d2, Square.d4), (Square.g1, Square.f3),
     ]);
+    final shapes = _boardShapes(tester);
+    final hover = await _hover(tester, find.text('3.Nf3'));
+    expect(_boardShapes(tester), shapes);
+    await hover.removePointer();
 
-    // The pane's default height shows one whole row (the list ends on it,
-    // over Toby's attribution): the most likely move.
-    final gesture = await _hover(tester, find.text('Nf3'));
-    final hover = _boardShapes(tester);
-    expect(hover, hasLength(1));
-    expect(_tobyArrow(hover.single), (Square.g1, Square.f3));
-
-    await gesture.moveTo(const Offset(5, 5));
-    await tester.pump();
-    expect(_nonToby(tester), {circle});
-    expect(_boardShapes(tester).where(_isToby), hasLength(2));
-
-    // Back on Stockfish, its arrows return.
     await _tapTab(tester, 'Stockfish');
     await tester.pump();
-    expect(_boardShapes(tester), containsAll(<cg.Shape>[circle, engine]));
+    expect(_boardShapes(tester).where(_isToby), hasLength(2));
+    prefs.setArrows(BoardAnalysisArrows.off);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(_boardShapes(tester), {circle});
   });
 
-  testWidgets('a hovered or pinned candidate with a class puts the '
+  testWidgets('a pinned candidate with a class puts the '
       'report\'s mark on its square, as the board marks a report move; the '
       'top three carry colour only', (tester) async {
-    await _pumpBoard(tester);
+    await _pumpBoard(tester, arrows: BoardAnalysisArrows.toby);
     // After 1. e4 e5 2. Nf3 Nc6, from 50%: Bb5 the only good move.
     _script.value = TobyReadingState.ready(
       const TobyReading(
@@ -271,7 +405,10 @@ void main() {
     expect(_boardShapes(tester).where(_isToby), hasLength(2));
     expect(onBoard, findsNothing);
 
-    final gesture = await _hover(tester, find.text('Bb5'));
+    final gesture = await _hover(tester, find.text('3.Bb5'));
+    await tester.pumpAndSettle();
+    expect(onBoard, findsNothing);
+    await tester.tap(find.text('3.Bb5'));
     await tester.pumpAndSettle();
     expect(onBoard, findsOneWidget);
     // The report mark's placement: 40% of a square, centred on b5's
@@ -291,13 +428,7 @@ void main() {
     );
 
     await gesture.moveTo(const Offset(5, 5));
-    await tester.pump();
-    expect(onBoard, findsNothing);
-
-    await tester.tap(find.text('Bb5'));
-    await tester.pump();
-    await gesture.moveTo(const Offset(5, 5));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(onBoard, findsOneWidget);
     expect(
       (_boardShapes(tester).where(_isToby).single as cg.Arrow).color.withValues(
@@ -310,7 +441,7 @@ void main() {
   testWidgets('a pin adds Toby\'s arrow beside the reader\'s shapes', (
     tester,
   ) async {
-    final probe = await _pumpBoard(tester);
+    final probe = await _pumpBoard(tester, arrows: BoardAnalysisArrows.toby);
     probe.emitEngine(_engineLine);
     _drawCircle(tester, Square.e4);
     _script.value = TobyReadingState.ready(_reading(final_: true));
@@ -318,11 +449,11 @@ void main() {
     await tester.pump();
     final circle = _circleAt(tester, Square.e4);
 
-    final gesture = await _hover(tester, find.text('Nf3'));
-    await tester.tap(find.text('Nf3'));
+    final gesture = await _hover(tester, find.text('3.Nf3'));
+    await tester.tap(find.text('3.Nf3'));
     await tester.pump();
     await gesture.moveTo(const Offset(5, 5));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     final pinned = _boardShapes(tester);
     expect(pinned, contains(circle));
@@ -332,7 +463,7 @@ void main() {
 
   testWidgets('a pin resets when the position changes; ←/→ still step the '
       'game from the rows', (tester) async {
-    await _pumpBoard(tester);
+    await _pumpBoard(tester, arrows: BoardAnalysisArrows.toby);
     await tester.sendKeyEvent(LogicalKeyboardKey.home);
     await tester.pump();
     await tester.pump();
@@ -341,7 +472,7 @@ void main() {
     await tester.pump();
     final start = _boardFen(tester);
 
-    await tester.tap(find.text('Nf3'));
+    await tester.tap(find.text('1.Nf3'));
     await tester.pump();
     expect(_boardShapes(tester).where(_isToby).map(_tobyArrow), [
       (Square.g1, Square.f3),
@@ -363,6 +494,8 @@ void main() {
     await tester.pump();
     expect(_boardFen(tester), start);
     expect(_boardShapes(tester).where(_isToby), hasLength(2));
+    // Drain the tooltip's deferred exit after the pointer target changed.
+    await tester.pump(const Duration(milliseconds: 400));
   });
 
   testWidgets('each position visited on the Toby tab is asked about once', (
@@ -408,18 +541,20 @@ void main() {
     }
     expect(rebuilt['WhatTobyThinks'] ?? 0, 0);
 
-    final gesture = await _hover(tester, find.text('d4'));
-    await gesture.moveTo(tester.getCenter(find.text('Nf3')));
+    final gesture = await _hover(tester, find.text('3.d4'));
+    await gesture.moveTo(tester.getCenter(find.text('3.Nf3')));
     await tester.pump();
     debugOnRebuildDirtyWidget = previous;
     expect(rebuilt['_BoardArea'] ?? 0, 0);
-    expect(rebuilt['DesktopChessBoard'], greaterThan(0));
+    expect(rebuilt['DesktopChessBoard'] ?? 0, 0);
+    await gesture.removePointer();
+    await tester.pump(const Duration(milliseconds: 400));
   });
 
   testWidgets('the Toby tab sizes the engine pane for three whole rows; '
       'moving through the game never resizes it, and Stockfish keeps the '
       'split as it was', (tester) async {
-    await _pumpBoard(tester, size: const Size(1440, 860), toby: false);
+    await _pumpBoard(tester, size: const Size(1100, 860), toby: false);
     double engineHeight() => tester.getSize(find.byType(EnginePanel)).height;
     final stockfish = engineHeight();
     expect(_engineComfortableSize(tester), isNull);
@@ -441,6 +576,7 @@ void main() {
         WhatTobyThinks.comfortableHeight(
           tester.element(find.byType(WhatTobyThinks)),
           width: view.width,
+          compactPredictions: true,
         ),
       ),
     );
@@ -467,10 +603,10 @@ void main() {
   testWidgets('on the Toby tab the engine pane follows the reader\'s drags '
       'and the window, as on Stockfish: a window change never undoes a '
       'drag', (tester) async {
-    await _pumpBoard(tester, size: const Size(1440, 860), toby: false);
+    await _pumpBoard(tester, size: const Size(1100, 860), toby: false);
     double engineHeight() => tester.getSize(find.byType(EnginePanel)).height;
     Future<void> resize(double height) async {
-      tester.view.physicalSize = Size(1440, height);
+      tester.view.physicalSize = Size(1100, height);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
     }
@@ -786,10 +922,8 @@ void main() {
     expect(rail.minSize, greaterThanOrEqualTo(280));
   });
 
-  testWidgets('with the engine off, choosing a tab by keyboard keeps the '
+  testWidgets('choosing a narrow tab by keyboard keeps the '
       'engine pane, the notation and the focus on the tab', (tester) async {
-    _engineOn = false;
-    addTearDown(() => _engineOn = true);
     FocusManager.instance.highlightStrategy =
         FocusHighlightStrategy.alwaysTraditional;
     addTearDown(
@@ -841,24 +975,17 @@ void main() {
     expect(_notationPanel(tester).showEngine, isTrue);
     await press('Stockfish', LogicalKeyboardKey.space);
     expect(find.byType(WhatTobyThinks), findsNothing);
-    expect(_notationPanel(tester).showEngine, isFalse);
+    expect(_notationPanel(tester).showEngine, isTrue);
   });
 
-  testWidgets('with the engine off the tabs stay, and the Toby tab works and '
-      'keeps the engine pane open', (tester) async {
-    _engineOn = false;
-    addTearDown(() => _engineOn = true);
-    await _pumpBoard(tester, toby: false);
-    expect(find.byType(TobyViewTabs), findsOneWidget);
-    expect(_queries, isEmpty);
-    final notation = _notationPanel(tester);
-    expect(notation.showEngine, isFalse);
-
-    _script.value = TobyReadingState.ready(_reading(final_: true));
-    await _tapTab(tester, kTobyFeatureLabel);
-    await tester.pump(const Duration(seconds: 1));
+  testWidgets('when Stockfish lines are off, Toby fills the pane', (tester) async {
+    await _pumpBoard(tester, toby: false, stockfish: false);
+    expect(find.byType(TobyViewTabs), findsNothing);
     expect(_notationPanel(tester).showEngine, isTrue);
-    expect(find.text('Nf3'), findsOneWidget);
+    _script.value = TobyReadingState.ready(_reading(final_: true));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text('3.Nf3'), findsOneWidget);
     expect(_queries, isNotEmpty);
   });
 
@@ -1137,10 +1264,10 @@ class _BoardProbe {
   Iterable<_ManualBoardEvalNotifier> get notifiers =>
       _notifiers.values.where((notifier) => notifier.mounted);
 
-  void emitEngine(List<BoardPv> pvs) {
+  void emitEngine(List<BoardPv> pvs, {bool isEvaluating = true}) {
     for (final notifier in _notifiers.values) {
       if (notifier.mounted) {
-        notifier.emit(BoardEvalState(pvs: pvs, isEvaluating: true, depth: 12));
+        notifier.emit(BoardEvalState(pvs: pvs, isEvaluating: isEvaluating, depth: 12));
       }
     }
   }
@@ -1148,10 +1275,16 @@ class _BoardProbe {
 
 Future<_BoardProbe> _pumpBoard(
   WidgetTester tester, {
-  Size size = const Size(1800, 1000),
+  Size size = const Size(1100, 1000),
   bool toby = true,
+  BoardAnalysisArrows arrows = BoardAnalysisArrows.stockfish,
+  bool? stockfish,
 }) async {
-  SharedPreferences.setMockInitialValues({tobyTabStorageKey: toby});
+  SharedPreferences.setMockInitialValues({
+    tobyTabStorageKey: toby,
+    'desktop.analysis.arrows.v1': arrows.name,
+    if (stockfish != null) 'desktop.analysis.stockfish.v1': stockfish,
+  });
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -1209,8 +1342,6 @@ Future<_BoardProbe> _pumpBoard(
   await tester.pump();
 
   expect(find.byType(DesktopChessBoard), findsOneWidget);
-  expect(find.byType(TobyViewTabs), findsOneWidget);
-  expect(find.byType(WhatTobyThinks), toby ? findsOneWidget : findsNothing);
   return _BoardProbe(evalNotifiers);
 }
 
@@ -1227,6 +1358,11 @@ class _ManualBoardEvalNotifier extends BoardEvalNotifier {
       );
 
   void emit(BoardEvalState value) => state = value;
+}
+
+class _TestAutoPinPreferences extends AutoPinPreferencesNotifier {
+  @override
+  Future<AutoPinPreferences> build() async => AutoPinPreferences.defaults;
 }
 
 class _TestBoardSettingsNotifier extends BoardSettingsNotifierNew {
@@ -1252,6 +1388,7 @@ class _EngineWithArrowsOnNotifier extends EngineSettingsNotifierNew {
   Future<void> toggleEngineAnalysis(bool value) async {
     state = AsyncValue.data(_settings.copyWith(showEngineAnalysis: value));
   }
+
 }
 
 class _TestKeyboardShortcutsNotifier extends KeyboardShortcutsNotifier {

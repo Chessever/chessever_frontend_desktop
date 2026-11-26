@@ -9,6 +9,7 @@ import 'package:chessever/desktop/widgets/cursor_mode.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/providers/auto_pin_preferences_provider.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin_preferences_repository.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -192,7 +193,7 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _SettingsSidebar extends StatelessWidget {
+class _SettingsSidebar extends ConsumerWidget {
   const _SettingsSidebar({
     required this.engine,
     required this.board,
@@ -204,7 +205,8 @@ class _SettingsSidebar extends StatelessWidget {
   final AutoPinPreferences autoPin;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final analysis = ref.watch(boardAnalysisPreferencesProvider);
     final theme = getBoardThemeByIndex(board.boardThemeIndex);
     final pieces = getPieceSetByIndex(board.pieceStyleIndex);
     final autoPinCount =
@@ -232,8 +234,8 @@ class _SettingsSidebar extends StatelessWidget {
                       icon: Icons.memory_rounded,
                       title: 'Engine',
                       value:
-                          engine.showEngineAnalysis
-                              ? '${engine.principalVariationLabel()} lines · ${engine.maxArrowsLabel()} arrows'
+                          analysis.stockfishAnalysis
+                              ? '${EngineSettings.principalVariationLabels[analysis.stockfishLineIndex]} lines · ${engine.maxArrowsLabel()} arrows'
                               : 'Off',
                     ),
                     const SizedBox(height: 8),
@@ -399,27 +401,34 @@ class _EngineCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final notifier = ref.read(engineSettingsProviderNew.notifier);
+    final prefs = ref.watch(boardAnalysisPreferencesProvider);
+    final analysis = ref.read(boardAnalysisPreferencesProvider.notifier);
     return _SectionCard(
       icon: Icons.memory_rounded,
       title: 'Engine experience',
-      subtitle: 'Stockfish analysis, evaluation gauge, and PV arrows.',
+      subtitle: 'Stockfish and Toby on the Board.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _SwitchRow(
-            label: 'Computer analysis',
-            description:
-                'Run Stockfish on the active position. Disable to free CPU.',
-            value: settings.showEngineAnalysis,
-            onChange: notifier.toggleEngineAnalysis,
+            label: 'Stockfish analysis',
+            description: 'Show Stockfish’s suggested lines.',
+            value: prefs.stockfishAnalysis,
+            onChange: analysis.setStockfishAnalysis,
           ),
           const _RowDivider(),
           _SwitchRow(
-            label: 'Evaluation gauge',
-            description:
-                'Show the bar beside the board indicating who stands better.',
-            value: settings.showEngineGauge,
-            onChange: notifier.toggleEngineGauge,
+            label: 'Stockfish bar',
+            description: 'Show Stockfish’s evaluation beside the board.',
+            value: prefs.stockfishBar(settings),
+            onChange: analysis.setStockfishBar,
+          ),
+          const _RowDivider(),
+          _SwitchRow(
+            label: 'Toby analysis',
+            description: 'Show the moves Toby thinks the player will choose.',
+            value: prefs.tobyAnalysis,
+            onChange: analysis.setTobyAnalysis,
           ),
           const _RowDivider(),
           _SwitchRow(
@@ -446,11 +455,12 @@ class _EngineCard extends StatelessWidget {
             onChange: notifier.toggleDepthOverlay,
           ),
           const _RowDivider(),
-          _SwitchRow(
-            label: 'PV arrows on board',
-            description: 'Draw arrows for the engine\'s top moves.',
-            value: settings.showPvArrows,
-            onChange: notifier.togglePvArrows,
+          _SegmentedField(
+            label: 'Board arrows',
+            helpText: 'Choose which analysis draws its moves on the Board.',
+            options: const ['Stockfish', 'Toby', 'Off'],
+            selectedIndex: prefs.arrows(settings).index,
+            onSelect: (index) => analysis.setArrows(BoardAnalysisArrows.values[index]),
           ),
           const SizedBox(height: 18),
           _SegmentedField(
@@ -465,8 +475,8 @@ class _EngineCard extends StatelessWidget {
             label: 'Number of lines',
             helpText: 'How many alternative variations the engine reports.',
             options: EngineSettings.principalVariationLabels,
-            selectedIndex: settings.principalVariationIndex,
-            onSelect: notifier.setPrincipalVariationIndex,
+            selectedIndex: prefs.stockfishLineIndex,
+            onSelect: analysis.setStockfishLineIndex,
           ),
           const SizedBox(height: 14),
           _SegmentedField(

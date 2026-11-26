@@ -4,6 +4,7 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
@@ -544,18 +545,28 @@ double _toPawns(int cp) {
   );
 }
 
+final _boardEvalConfigProvider = Provider<BoardEvalConfig>((ref) {
+  final snapshot = ref.watch(engineSettingsProviderNew);
+  final settings = snapshot.valueOrNull ?? const EngineSettings();
+  final preferences = ref.watch(boardAnalysisPreferencesProvider);
+  return BoardEvalConfig(
+    enabled: snapshot.hasValue && !preferences.paused &&
+        (preferences.stockfishAnalysis || preferences.stockfishBar(settings)),
+    searchTimeIndex: settings.searchTimeIndex,
+    principalVariationIndex: preferences.stockfishLineIndex,
+  );
+});
+
 final boardEvalProvider = StateNotifierProvider.autoDispose
     .family<BoardEvalNotifier, BoardEvalState, String>((ref, fen) {
-      final config = ref.watch(
-        engineSettingsProviderNew.select((async) {
-          final settings = async.valueOrNull ?? const EngineSettings();
-          return BoardEvalConfig(
-            enabled: settings.showEngineAnalysis,
-            searchTimeIndex: settings.searchTimeIndex,
-            principalVariationIndex: settings.principalVariationIndex,
-          );
-        }),
-      );
+      // An absent position is idle regardless of late settings restoration.
+      final config = fen.isEmpty
+          ? const BoardEvalConfig(
+              enabled: false,
+              searchTimeIndex: 0,
+              principalVariationIndex: 0,
+            )
+          : ref.watch(_boardEvalConfigProvider);
       return BoardEvalNotifier(ref, fen, config);
     });
 

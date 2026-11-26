@@ -1442,12 +1442,12 @@ void main() {
     expect(repository.requestedTourIds, hasLength(4));
   });
 
-  test('desktop board eval bar hides when engine analysis is off', () {
+  test('desktop board eval bar follows its own setting', () {
     expect(
       shouldShowDesktopBoardEvalBar(
         const EngineSettings(showEngineAnalysis: false, showEngineGauge: true),
       ),
-      isFalse,
+      isTrue,
     );
     expect(
       shouldShowDesktopBoardEvalBar(
