@@ -114,6 +114,7 @@ import 'package:chessever/desktop/widgets/desktop_toast.dart';
 import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
+import 'package:chessever/desktop/widgets/toby/toby_bar.dart';
 import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart';
 import 'package:chessever/desktop/widgets/engine_pv_arrow_palette.dart';
 import 'package:chessever/desktop/widgets/event_games_table.dart';
@@ -531,6 +532,7 @@ double desktopBoardColumnFitWidth({
   required bool focusMode,
   required double evalBarReservation,
   required double outerPadding,
+  double tobyBarReservation = 0,
 }) {
   final height = math.max(0.0, vLimit);
   final preferred =
@@ -544,7 +546,8 @@ double desktopBoardColumnFitWidth({
             math.min(height, _maxDesktopBoardSize),
           )
           .toDouble();
-  return (board + evalBarReservation + outerPadding * 2).ceilToDouble();
+  return (board + evalBarReservation + tobyBarReservation + outerPadding * 2)
+      .ceilToDouble();
 }
 
 /// The last full-toolbar and board-fit widths any Board pane measured. A
@@ -561,6 +564,16 @@ final _desktopBoardPlayerPhotoProvider = FutureProvider.autoDispose
 @visibleForTesting
 bool shouldShowDesktopBoardEvalBar(EngineSettings settings) {
   return settings.showEngineAnalysis && settings.showEngineGauge;
+}
+
+/// Whether a board shows the Toby bar on its right: the reader's setting
+/// (on by default, for everyone) and a game Toby can read ([variant]).
+/// Independent of the engine: Toby is not Stockfish. Decided from settings
+/// and the game alone, never from whether a reading has arrived, so a
+/// reading never moves the board.
+@visibleForTesting
+bool shouldShowDesktopBoardTobyBar(EngineSettings settings, String? variant) {
+  return settings.showTobyBar && tobyReadsVariant(variant);
 }
 
 @visibleForTesting
@@ -641,15 +654,35 @@ ActiveBoardEvalTarget activeBoardEvalTarget({
 /// retains its theme, orientation, annotations, player bars, and whichever
 /// evaluation-gauge state is on screen.
 @visibleForTesting
+/// [trimRight] logical pixels are cut off the image's right edge: the room
+/// the Toby bar holds beside the board, which the export leaves out (its
+/// numbers never travel without Toby's attribution).
 Future<Uint8List?> captureDesktopBoardShareImage(
   GlobalKey captureKey, {
   required double pixelRatio,
+  double trimRight = 0,
 }) async {
   final renderObject = captureKey.currentContext?.findRenderObject();
   if (renderObject is! RenderRepaintBoundary) return null;
 
-  final image = await renderObject.toImage(pixelRatio: pixelRatio);
+  var image = await renderObject.toImage(pixelRatio: pixelRatio);
   try {
+    final trim = (trimRight * pixelRatio).round();
+    if (trim > 0 && trim < image.width) {
+      final width = image.width - trim;
+      final height = image.height;
+      final recorder = ui.PictureRecorder();
+      final rect = Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble());
+      Canvas(recorder).drawImageRect(image, rect, rect, Paint());
+      final picture = recorder.endRecording();
+      try {
+        final cropped = await picture.toImage(width, height);
+        image.dispose();
+        image = cropped;
+      } finally {
+        picture.dispose();
+      }
+    }
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     return byteData?.buffer.asUint8List();
   } finally {
@@ -4707,9 +4740,19 @@ class _BoardPaneContent extends HookConsumerWidget {
 
         final pixelRatio =
             MediaQuery.devicePixelRatioOf(context).clamp(1.0, 3.0).toDouble();
+        final shareSettings =
+            ref.read(engineSettingsProviderNew).valueOrNull ??
+            const EngineSettings();
         final liveBoardPngBytes = await captureDesktopBoardShareImage(
           boardShareCaptureKey,
           pixelRatio: pixelRatio,
+          trimRight:
+              shouldShowDesktopBoardTobyBar(
+                    shareSettings,
+                    pgnHeaders.value['Variant'],
+                  )
+                  ? _BoardArea.tobyBarReservation
+                  : 0,
         );
         if (!context.mounted) return;
         if (liveBoardPngBytes == null) {
@@ -5306,6 +5349,57 @@ class _BoardPaneContent extends HookConsumerWidget {
         isAtGameEndingPly
             ? _gameEndingFor(headers['Result'] ?? '', position)
             : null;
+
+    // What Toby reads for this board at a line-preview step. The Toby
+    // Predicts view and the Toby bar both resolve it here, and both watch
+    // its query through `tobyQueryFor`, so one board runs one loop for both.
+    TobyTarget tobyTargetAt(int previewStep) {
+      final view = boardViewAt(previewStep);
+      final tobyHeaders = pgnHeaders.value;
+      final sourceGame = boardArgs?.sourceGame;
+      return resolveTobyTarget(
+        foreground: isForegroundSurface,
+        previewing:
+            view.position.fen != position.fen || view.evalTarget.isThreatProbe,
+        gameOver: position.isGameOver,
+        variant: tobyHeaders['Variant'],
+        positionKey: position.fen,
+        // Raw game facts: Gamebase derives the ratings, cadence and rating
+        // pool.
+        request:
+            () => TobyRequest(
+              startFen: chessGame.value.startingFen,
+              moves: lineUcis,
+              whiteRating: _tobyRating(
+                sourceGame?.whitePlayer.rating,
+                tobyHeaders['WhiteElo'],
+              ),
+              blackRating: _tobyRating(
+                sourceGame?.blackPlayer.rating,
+                tobyHeaders['BlackElo'],
+              ),
+              timeControl: tobyHeaders['TimeControl'],
+              category: sourceGame?.timeControl,
+              site: tobyHeaders['Site'],
+              event: tobyHeaders['Event'],
+            ),
+      );
+    }
+
+    // The game's result for the Toby bar when the board shows a finished
+    // game: the position's own outcome (mate, stalemate, dead position), or
+    // the PGN result at the game's last move (a resignation, a flag). The
+    // bar then shows it and asks nothing.
+    TobyWdl? tobyResultAt(int previewStep) {
+      final shown = boardViewAt(previewStep).position;
+      // Same order as the web's `tobyBarResult`: the PGN result at the
+      // game's last move first, then the board's own outcome anywhere.
+      final atLastMove = isAtGameEndingPly && shown.fen == position.fen;
+      return tobyResultWdl(
+        pgnResult: atLastMove ? headers['Result'] : null,
+        outcome: shown.isGameOver ? (shown.outcome ?? Outcome.draw) : null,
+      );
+    }
 
     // Pull the user's bindings from the sqflite-backed provider. We
     // build the (Activator → Intent) map once per binding-map change
@@ -6143,6 +6237,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                             fen: boardPosition.fen,
                             analysisFen: view.evalTarget.fen,
                             tobyPanel: tobyPanel,
+                            tobyTarget: tobyTargetAt(previewStep),
+                            tobyResult: tobyResultAt(previewStep),
+                            tobyPositionKey: position.fen,
                             threatMode: view.evalTarget.isThreatProbe,
                             flipped: flipped.value,
                             sideToMove: boardPosition.turn,
@@ -6214,8 +6311,18 @@ class _BoardPaneContent extends HookConsumerWidget {
                                   shouldShowDesktopBoardEvalBar(settings)
                                       ? _BoardArea.evalBarReservation
                                       : 0.0;
+                              final tobyBarReservation =
+                                  shouldShowDesktopBoardTobyBar(
+                                        settings,
+                                        pgnHeaders.value['Variant'],
+                                      )
+                                      ? _BoardArea.tobyBarReservation
+                                      : 0.0;
                               final targetColumnSize =
-                                  size + evalBarReservation + 48;
+                                  size +
+                                  evalBarReservation +
+                                  tobyBarReservation +
+                                  48;
                               // Stacked, the split runs top to bottom and
                               // has no games rail: index and size both
                               // describe a column that is not there.
@@ -6331,39 +6438,19 @@ class _BoardPaneContent extends HookConsumerWidget {
                               final view = boardViewAt(previewStep);
                               final activeEvalTarget = view.evalTarget;
                               final boardPosition = view.position;
-                              final headers = pgnHeaders.value;
-                              final sourceGame = boardArgs?.sourceGame;
                               final toby = WhatTobyThinks(
-                                target: resolveTobyTarget(
-                                  foreground: isForegroundSurface,
-                                  previewing:
-                                      boardPosition.fen != position.fen ||
-                                      activeEvalTarget.isThreatProbe,
-                                  gameOver: position.isGameOver,
-                                  variant: headers['Variant'],
-                                  positionKey: position.fen,
-                                  // Raw game facts: Gamebase derives the
-                                  // ratings, cadence and rating pool.
-                                  request:
-                                      () => TobyRequest(
-                                        startFen: chessGame.value.startingFen,
-                                        moves: lineUcis,
-                                        whiteRating: _tobyRating(
-                                          sourceGame?.whitePlayer.rating,
-                                          headers['WhiteElo'],
-                                        ),
-                                        blackRating: _tobyRating(
-                                          sourceGame?.blackPlayer.rating,
-                                          headers['BlackElo'],
-                                        ),
-                                        timeControl: headers['TimeControl'],
-                                        category: sourceGame?.timeControl,
-                                        site: headers['Site'],
-                                        event: headers['Event'],
-                                      ),
-                                ),
+                                target: tobyTargetAt(previewStep),
                                 controller: tobyPanel,
                                 onPlayUci: playUci,
+                                // The engine pane's `playedContext`: Book
+                                // asks the opening tree under the same rule.
+                                bookAccess: desktopExplorerAccessContext(
+                                  GamebaseExplorerState(
+                                    currentFen: position.fen,
+                                    game: chessGame.value,
+                                    movePointer: pointer.value,
+                                  ),
+                                ),
                               );
                               return NotationOpeningPanel(
                                 tabId: activeTabId,
@@ -9757,6 +9844,9 @@ class _BoardArea extends ConsumerWidget {
     required this.fen,
     required this.analysisFen,
     required this.tobyPanel,
+    required this.tobyTarget,
+    required this.tobyResult,
+    required this.tobyPositionKey,
     required this.threatMode,
     required this.flipped,
     required this.sideToMove,
@@ -9807,6 +9897,16 @@ class _BoardArea extends ConsumerWidget {
   /// Toby's per-board state. The board draws its arrow (in
   /// [_BoardWithAnnotations] only) and drops its hover on a right-click.
   final TobyPanelController tobyPanel;
+
+  /// What Toby reads for this board (the Toby Predicts view's target too),
+  /// and the game's result when it is over on the board. The Toby bar on
+  /// the board's right draws them.
+  final TobyTarget tobyTarget;
+  final TobyWdl? tobyResult;
+
+  /// The FEN of the board's own position (not a previewed line): the Toby
+  /// bar keeps old values only while they describe it.
+  final String tobyPositionKey;
   final bool threatMode;
   final bool flipped;
   final Side sideToMove;
@@ -9917,11 +10017,19 @@ class _BoardArea extends ConsumerWidget {
   static const double headerGap = 4.0;
   static const double evalBarReservation = _evalBarWidth + _evalBarGap;
 
+  /// The Toby bar on the board's right: the eval bar's width and gap.
+  static const double _tobyBarWidth = _evalBarWidth;
+  static const double _tobyBarGap = _evalBarGap;
+  static const double tobyBarReservation = _tobyBarWidth + _tobyBarGap;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final engineSettingsValue = ref.watch(engineSettingsProviderNew);
     final engineSettings =
-        ref.watch(engineSettingsProviderNew).valueOrNull ??
-        const EngineSettings();
+        engineSettingsValue.valueOrNull ?? const EngineSettings();
+    // Until the reader's settings load, the Toby bar holds its (default)
+    // room but asks nothing: a reader who hid it never sends a request.
+    final tobyBarSettled = engineSettingsValue.hasValue;
     final showEngineAnalysis =
         engineSettings.showEngineAnalysis && !suppressEngineAnalysis;
     // [analysisFen] comes from [activeBoardEvalTarget] above the board and
@@ -9935,6 +10043,10 @@ class _BoardArea extends ConsumerWidget {
     final engineArrowFen =
         showEngineAnalysis && engineSettings.showPvArrows ? analysisFen : null;
     final showEvalBar = shouldShowDesktopBoardEvalBar(engineSettings);
+    final showTobyBar = shouldShowDesktopBoardTobyBar(
+      engineSettings,
+      pgnHeaders['Variant'],
+    );
     final tournament =
         boardArgs == null ? ref.watch(tournamentGamesProvider) : null;
     final activeTournamentGameId = tournament?.activeGameId;
@@ -10151,6 +10263,10 @@ class _BoardArea extends ConsumerWidget {
     // evaluation bar and the button strips.
     final evalBarReservation =
         showEvalBar ? _BoardArea.evalBarReservation : 0.0;
+    // The Toby bar's room on the right is reserved from settings alone, so
+    // the board never moves when a reading arrives.
+    final tobyBarReservation =
+        showTobyBar ? _BoardArea.tobyBarReservation : 0.0;
 
     // The board subtree for the last layout pass of this build. A resize that
     // leaves the board's own size alone (the common case once the board sits
@@ -10169,7 +10285,9 @@ class _BoardArea extends ConsumerWidget {
             builder: (context, constraints) {
               final hLimit = math.max(
                 0.0,
-                constraints.biggest.width - evalBarReservation,
+                constraints.biggest.width -
+                    evalBarReservation -
+                    tobyBarReservation,
               );
               final vLimit = math.max(
                 0.0,
@@ -10198,7 +10316,8 @@ class _BoardArea extends ConsumerWidget {
                             math.min(maxBoardSize, _maxDesktopBoardSize),
                           )
                           .toDouble();
-              final boardWithBar = boardSize + evalBarReservation;
+              final boardWithBar =
+                  boardSize + evalBarReservation + tobyBarReservation;
               final hasResizeHandle = !(pictureInPicture || boardSize < 16);
               final reportColumnFit = onColumnFitWidthChanged;
               if (reportColumnFit != null && !pictureInPicture) {
@@ -10207,6 +10326,7 @@ class _BoardArea extends ConsumerWidget {
                   sizePreference: sizePreference,
                   focusMode: focusMode,
                   evalBarReservation: evalBarReservation,
+                  tobyBarReservation: tobyBarReservation,
                   outerPadding: chromeMetrics.outerPadding,
                 );
                 // After layout: the listener rebuilds the split view.
@@ -10227,6 +10347,8 @@ class _BoardArea extends ConsumerWidget {
                   vLimit: vLimit,
                   hasResizeHandle: hasResizeHandle,
                   showEvalBar: showEvalBar,
+                  showTobyBar: showTobyBar,
+                  tobyBarSettled: tobyBarSettled,
                   showEngineAnalysis: showEngineAnalysis,
                   threatActive: threatActive,
                   engineArrowFen: engineArrowFen,
@@ -10266,7 +10388,9 @@ class _BoardArea extends ConsumerWidget {
                   // click. The overlay is a sibling of the annotation layer;
                   // exclude it here too so starting a drag/reset cannot
                   // erase annotations.
-                  final cornerRight = (constraints.maxWidth + boardWithBar) / 2;
+                  final cornerRight =
+                      (constraints.maxWidth + boardWithBar) / 2 -
+                      tobyBarReservation;
                   final cornerBottom =
                       (constraints.maxHeight + boardSize + extraVertical) / 2 -
                       bottomRowHeight -
@@ -10321,6 +10445,8 @@ class _BoardArea extends ConsumerWidget {
     required double vLimit,
     required bool hasResizeHandle,
     required bool showEvalBar,
+    required bool showTobyBar,
+    required bool tobyBarSettled,
     required bool showEngineAnalysis,
     required bool threatActive,
     required String? engineArrowFen,
@@ -10381,6 +10507,10 @@ class _BoardArea extends ConsumerWidget {
               tobyHoldsBoard: tobyPanel.holdsBoard,
             ),
           ),
+          // The Toby bar's room. The bar itself is drawn over it from
+          // outside the share export (see the Stack below): a shared image
+          // carries Toby's numbers nowhere without Toby's attribution.
+          if (showTobyBar) const SizedBox(width: _BoardArea.tobyBarReservation),
         ],
       ),
     );
@@ -10404,12 +10534,17 @@ class _BoardArea extends ConsumerWidget {
             )
             : null;
 
+    // The player rows sit over the board alone, clear of both bars.
+    final rowInsets = EdgeInsets.only(
+      left: showEvalBar ? _BoardArea.evalBarReservation : 0.0,
+      right: showTobyBar ? _BoardArea.tobyBarReservation : 0.0,
+    );
     Widget chromeRow({required double height, required Widget? header}) {
       return SizedBox(
         width: boardWithBar,
         height: height,
-        child: Align(
-          alignment: Alignment.centerRight,
+        child: Padding(
+          padding: rowInsets,
           child: SizedBox(
             width: boardSize,
             child: Row(
@@ -10443,13 +10578,37 @@ class _BoardArea extends ConsumerWidget {
               ),
             ),
           ),
+          if (showTobyBar)
+            Positioned(
+              top: topRowHeight + _BoardArea.headerGap,
+              right: 0,
+              width: _tobyBarWidth,
+              height: boardSize,
+              child: SizedBox(
+                key: e2eKey(E2eIds.boardTobyBar),
+                width: _tobyBarWidth,
+                height: boardSize,
+                child: TobyBarSurface(
+                  target:
+                      tobyBarSettled
+                          ? tobyTarget
+                          : const TobyTarget.idle(TobyIdleReason.background),
+                  controller: tobyPanel,
+                  result: tobyResult,
+                  positionKey: tobyPositionKey,
+                  flipped: flipped,
+                  width: _tobyBarWidth,
+                  height: boardSize,
+                ),
+              ),
+            ),
           if (hasHeaders && !focusMode && resizeHandle != null)
             Positioned(
               // Coordinates are inside the squares, not a separate gutter.
               // Keep the target in the extreme 16px corner, away from the
               // piece centre, and outside share exports.
               bottom: bottomRowHeight + _BoardArea.headerGap,
-              right: 0,
+              right: showTobyBar ? _BoardArea.tobyBarReservation : 0.0,
               child: SizedBox.square(dimension: 16, child: resizeHandle),
             ),
         ],
@@ -10825,7 +10984,26 @@ class _BoardWithAnnotations extends ConsumerWidget {
                   ),
             ),
           ),
-          if (badge != null) badge,
+          // A hovered or pinned Toby candidate's class mark, drawn as the
+          // report's mark is; it stands in for the report's on that square.
+          ValueListenableBuilder<TobyBoardArrows?>(
+            valueListenable: tobyArrows,
+            builder: (context, toby, _) {
+              final mark = toby?.positionKey == fen ? toby?.mark : null;
+              if (mark == null) return badge ?? const SizedBox.shrink();
+              return Stack(
+                children: [
+                  if (badge != null && boardAnnotationSquare != mark.square)
+                    badge,
+                  _tobyClassBadge(
+                    boardSize: boardSize,
+                    flipped: flipped,
+                    mark: mark,
+                  ),
+                ],
+              );
+            },
+          ),
           if (gameEndOverlay != null) gameEndOverlay,
         ],
       ),
@@ -12551,6 +12729,29 @@ LichessMoveAnnotationType _annotationTypeForReportClassification(
   GameMoveClassification classification,
 ) => annotationTypeForClassification(classification);
 
+/// A Toby candidate's report class on its destination square: the report
+/// mark's own badge, size and placement.
+Widget _tobyClassBadge({
+  required double boardSize,
+  required bool flipped,
+  required TobyBoardMark mark,
+}) {
+  final type = annotationTypeForClassification(mark.classification);
+  return _BoardBadge(
+    key: ValueKey<Object>(('toby-class', mark.square, mark.classification)),
+    boardSize: boardSize,
+    square: mark.square,
+    flipped: flipped,
+    color: _annotationColor(type),
+    sizeFactor: 0.40,
+    selfContainedChild: true,
+    child: SvgPicture.asset(
+      _annotationIconAssetPath(type),
+      fit: BoxFit.contain,
+    ),
+  );
+}
+
 String _annotationIconAssetPath(LichessMoveAnnotationType type) =>
     moveAnnotationIconAsset(type);
 
@@ -12713,6 +12914,7 @@ _GameEndingData? _gameEndingFor(String result, Position position) {
 /// "pops" its annotation.
 class _BoardBadge extends StatelessWidget {
   const _BoardBadge({
+    super.key,
     required this.boardSize,
     required this.square,
     required this.flipped,

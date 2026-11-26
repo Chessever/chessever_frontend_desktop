@@ -624,6 +624,9 @@ String _ratingSource(_OnlineSite? site, TobyCadence cadence) => switch ((
   _ => 'FIDE',
 };
 
+/// One move's outcome in a reading: how games tend to end after it.
+typedef TobyMoveOutcome = ({String uci, TobyWdl wdl});
+
 /// Toby's reading of one position: the network stage (quick, muted, no
 /// per-move outcomes) or the final reading.
 @immutable
@@ -636,7 +639,7 @@ class TobyReading {
     required this.otherMoveCount,
     this.positionWdl,
     this.inputs,
-    this.bestOutcomeScore,
+    this.allOutcomes,
   });
 
   /// True for the final stage, false for the network stage.
@@ -656,13 +659,21 @@ class TobyReading {
   /// The inputs Toby used. Null when Gamebase did not report them.
   final TobyInputs? inputs;
 
-  /// The mover's highest expected score (win plus half the draw) over EVERY
-  /// move the payload sent with an outcome, taken before [candidates] is cut
-  /// to 24. The quality colours judge each row against it, so a strong move
-  /// past the cut still counts, as on the web (which keeps every move).
-  /// Null when no move carried an outcome, or for a reading built by hand
-  /// (then `tobyMoveQualities` falls back to [candidates]).
-  final double? bestOutcomeScore;
+  /// EVERY move the payload sent with an outcome, taken before [candidates]
+  /// is cut to 24, in the payload's order of likelihood. Null for a reading
+  /// built by hand; read [outcomes].
+  final List<TobyMoveOutcome>? allOutcomes;
+
+  /// Every move with an outcome: the lines the move classes compare each
+  /// candidate against (`toby_classes.dart`), so a strong move past the cut
+  /// still counts, as on the web (which keeps every move). [allOutcomes]
+  /// when the parser kept them, otherwise the [candidates] that carry one.
+  List<TobyMoveOutcome> get outcomes =>
+      allOutcomes ??
+      [
+        for (final candidate in candidates)
+          if (candidate.wdl case final wdl?) (uci: candidate.uci, wdl: wdl),
+      ];
 
   TobyCandidate? candidate(String uci) {
     for (final candidate in candidates) {
@@ -722,16 +733,10 @@ class TobyReading {
       );
     }
     candidates.sort((a, b) => b.probability.compareTo(a.probability));
-    double? best;
-    for (final candidate in candidates) {
-      final outcome = candidate.wdl;
-      if (outcome == null) continue;
-      final total = outcome.white + outcome.draw + outcome.black;
-      if (total <= 0) continue;
-      final win = side == Side.white ? outcome.white : outcome.black;
-      final score = (win + outcome.draw / 2) / total;
-      if (best == null || score > best) best = score;
-    }
+    final outcomes = <TobyMoveOutcome>[
+      for (final candidate in candidates)
+        if (candidate.wdl case final wdl?) (uci: candidate.uci, wdl: wdl),
+    ];
     final rawPositionWdl = json['positionWdl'];
     final positionWdl =
         rawPositionWdl == null ? null : TobyWdl.fromJson(rawPositionWdl);
@@ -746,7 +751,7 @@ class TobyReading {
       otherProbability: other,
       otherMoveCount: otherCount,
       inputs: TobyInputs.fromJson(json['inputs']),
-      bestOutcomeScore: best,
+      allOutcomes: List<TobyMoveOutcome>.unmodifiable(outcomes),
     );
   }
 }
@@ -959,9 +964,10 @@ final TobyReadingCache tobyReadingCache = TobyReadingCache(
 
 /// Toby's reading for one view and position.
 ///
-/// Watch it only while the Toby Predicts tab is shown: it is
-/// auto-disposed, and an unobserved instance sends nothing (or cancels what
-/// it sent). A new position is a new [TobyQuery], so the old instance's
+/// Watched while the Toby Predicts tab or the Toby bar beside the board is
+/// shown, both through `tobyQueryFor` (so one board runs one loop for both):
+/// it is auto-disposed, and an unobserved instance sends nothing (or cancels
+/// what it sent). A new position is a new [TobyQuery], so the old instance's
 /// request is cancelled as the view moves on. Who may read is Gamebase's
 /// call; a refusal ends in [TobyStatus.signInRequired] or
 /// [TobyStatus.premiumRequired] (or [TobyStatus.premiumUnconfirmed]).

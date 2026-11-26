@@ -25,19 +25,24 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/auth/desktop_access_context.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_guest_upgrade_dialog.dart';
 import 'package:chessever/desktop/services/desktop_web_link_launcher.dart';
+import 'package:chessever/desktop/services/engine/engine_played.dart';
+import 'package:chessever/desktop/services/engine/game_analysis_report.dart'
+    show GameMoveClassification;
 import 'package:chessever/desktop/services/toby/toby_access.dart';
+import 'package:chessever/desktop/services/toby/toby_classes.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
-import 'package:chessever/desktop/services/toby/toby_quality.dart';
 import 'package:chessever/desktop/state/toby_panel.dart';
 import 'package:chessever/desktop/widgets/cut_item_fade.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/move_classification_icon.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/utils/text_line_metrics.dart';
@@ -125,22 +130,31 @@ const Color _kWdlWhite = Color(0xFFE8E6E1);
 const Color _kWdlDraw = Color(0xFF8E8E93);
 const Color _kWdlBlack = Color(0xFF3A3A3C);
 
-/// A row's chance and fill for each move quality, on the pane's dark
-/// surface (the desktop shell is dark only): light, desaturated tones of the
-/// board arrows' hues ([tobyArrowHue]), each well clear of the row surface
-/// for its 13 px chance. Neutral is Toby's teal.
-const Color _kRowGood = Color(0xFF8CC4A0);
-const Color _kRowDubious = Color(0xFFD9B77E);
-const Color _kRowBad = Color(0xFFE0948C);
-
-/// The tone of a row whose move is [quality].
+/// The chance text of a row whose move is [classification], on the pane's
+/// dark surface (the desktop shell is dark only): a light tone of the
+/// class's own colour ([kTobyClassRowTones]), clear of the row and its fill
+/// for its 13 px chance. A move without a class keeps Toby's teal.
 @visibleForTesting
-Color tobyRowTone(TobyMoveQuality quality) => switch (quality) {
-  TobyMoveQuality.good => _kRowGood,
-  TobyMoveQuality.dubious => _kRowDubious,
-  TobyMoveQuality.bad => _kRowBad,
-  TobyMoveQuality.neutral => kTobyAccent,
-};
+Color tobyRowTone(GameMoveClassification? classification) =>
+    classification == null
+        ? kTobyAccent
+        : kTobyClassRowTones[classification] ?? kTobyAccent;
+
+/// A row's fill: its class's own colour (as its arrow on the board), or
+/// Toby's teal.
+Color _rowFillHue(GameMoveClassification? classification) =>
+    classification == null ? kTobyAccent : tobyArrowHue(classification);
+
+/// The opening tree's game count per move in a position, for the Book
+/// class on Toby's rows: the engine pane's "played" request for the same
+/// position and line ([enginePlayedProvider]: settled, cancellable, cached,
+/// the same aggregates the report's book lookup reads), so the two share
+/// one request. Null until it answers, or when the tree has no games.
+final tobyBookCountsProvider = Provider.autoDispose
+    .family<Map<String, int>?, EnginePlayedPosition>(
+      (ref, position) =>
+          ref.watch(enginePlayedProvider(position)).valueOrNull?.counts,
+    );
 
 const String _kThinking = 'Toby is thinking…';
 const String _kBusy = 'Toby is busy right now';
@@ -190,11 +204,15 @@ const TextStyle _kMessageStyle = TextStyle(
 double _textWidth(BuildContext context, String text, TextStyle style) =>
     desktopTextLineWidth(context, text, style);
 
-/// A candidate row's height, as [_TobyRow] lays it out.
+/// A candidate row's height, as [_TobyRow] lays it out: its line holds the
+/// chance, the move and the move's class mark.
 double _tobyRowExtent(BuildContext context, {required bool showBars}) {
   final line = math.max(
-    desktopTextLineSize(context, '00.0%', _kChanceStyle).height,
-    desktopTextLineSize(context, 'Bb5', _kSanStyle).height,
+    math.max(
+      desktopTextLineSize(context, '00.0%', _kChanceStyle).height,
+      desktopTextLineSize(context, 'Bb5', _kSanStyle).height,
+    ),
+    kMoveClassificationIconSize,
   );
   return 2 * _kRowPaddingY + math.max(line, showBars ? _kWdlBarBoxHeight : 0);
 }
@@ -302,8 +320,10 @@ TobyTarget resolveTobyTarget({
 
 /// The Toby Predicts tab's list area. The board pane builds it with an
 /// immutable [target] and its own [controller]; the engine pane mounts it in
-/// place of Stockfish's lines only while the tab is shown. It alone watches
-/// Toby's reading, so nothing is asked while Stockfish is shown. While it is
+/// place of Stockfish's lines only while the tab is shown. It watches Toby's
+/// reading through [tobyQueryFor], the same query as the Toby bar beside the
+/// board, so the two share one request loop; with the bar hidden, nothing is
+/// asked while Stockfish is shown. While it is
 /// mounted, the engine's arrows leave the board
 /// ([TobyPanelController.holdsBoard]).
 class WhatTobyThinks extends ConsumerStatefulWidget {
@@ -312,10 +332,18 @@ class WhatTobyThinks extends ConsumerStatefulWidget {
     required this.target,
     required this.controller,
     this.onPlayUci,
+    this.bookAccess,
   });
 
   final TobyTarget target;
   final TobyPanelController controller;
+
+  /// The explorer request the position read makes, for the Book class: the
+  /// opening tree's game counts are asked for only when the engine pane's
+  /// "played" column may ask for them ([desktopPlayedCountsAllowed]: a
+  /// permanent account, a live session, explorer access), as the web gates
+  /// `bookLookup` on `explorerCanBrowse`. Null: no Book class.
+  final DesktopAccessContext? bookAccess;
 
   /// The least height at which the view still shows one whole row and the
   /// attribution under it: its tightest step.
@@ -393,6 +421,59 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   final GlobalKey _whatIfKey = GlobalKey(debugLabel: 'Toby what-if');
 
   TobyPanelController get _controller => widget.controller;
+
+  /// The last classes worked out, and what they were worked out from, so a
+  /// rebuild with the same reading hands the board the same map.
+  Map<String, GameMoveClassification?> _classes =
+      const <String, GameMoveClassification?>{};
+  Object? _classesKey;
+
+  /// The report classes of [reading]'s candidates for the position read.
+  Map<String, GameMoveClassification?> _classesFor(
+    TobyReading? reading,
+    Map<String, int>? bookCounts,
+  ) {
+    final request = widget.target.request;
+    final positionKey = widget.target.positionKey;
+    if (reading == null || request == null || positionKey == null) {
+      _classesKey = null;
+      return _classes = const <String, GameMoveClassification?>{};
+    }
+    final key = (reading, bookCounts, positionKey, request.cacheKey);
+    if (key == _classesKey) return _classes;
+    _classesKey = key;
+    return _classes = Map<String, GameMoveClassification?>.unmodifiable(
+      tobyMoveClasses(
+        reading,
+        fen: positionKey,
+        startFen: request.startFen,
+        moves: request.moves,
+        bookCounts: bookCounts,
+      ),
+    );
+  }
+
+  /// The opening tree's game count per move in the position read, through
+  /// the engine pane's "played" request for the same position (one request
+  /// per position, shared, cached), or null when book does not apply or the
+  /// reader may not ask the opening tree ([WhatTobyThinks.bookAccess]).
+  Map<String, int>? _bookCounts(TobyReading? reading) {
+    final request = widget.target.request;
+    final positionKey = widget.target.positionKey;
+    if (reading == null ||
+        request == null ||
+        positionKey == null ||
+        !desktopPlayedCountsAllowed(ref.watch, widget.bookAccess) ||
+        !tobyBookApplies(
+          startFen: request.startFen,
+          plies: request.moves.length,
+        )) {
+      return null;
+    }
+    return ref.watch(
+      tobyBookCountsProvider((fen: positionKey, line: request.moves.join(' '))),
+    );
+  }
 
   @override
   void initState() {
@@ -598,14 +679,9 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     TobyQuery? query;
     TobyReadingState? state;
     if (request != null) {
-      final whatIf = _controller.whatIf;
-      query = TobyQuery(
-        request: request.copyWith(
-          ratingOverride: whatIf.rating,
-          cadenceOverride: whatIf.cadence,
-        ),
-        session: _controller.session,
-      );
+      // The same query the Toby bar beside the board watches: one loop per
+      // board for both.
+      query = tobyQueryFor(request, _controller);
       final provider = tobyReadingProvider(query);
       state = ref.watch(provider);
       // The first position after the reader chooses the tab is asked at
@@ -619,9 +695,10 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
             reading == null || reading.candidates.isEmpty
                 ? const <TobyCandidate>[]
                 : tobyListedCandidates(reading);
+    final classes = _classesFor(reading, _bookCounts(reading));
     // The board draws the reading's top three while nothing is hovered or
     // pinned. Through the controller, so only the board hears it.
-    _controller.showReadingSoon(widget.target.positionKey, reading);
+    _controller.showReadingSoon(widget.target.positionKey, reading, classes);
     return Focus(
       canRequestFocus: false,
       skipTraversal: true,
@@ -725,7 +802,12 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
                 slivers: [
                   if (lead != null) SliverToBoxAdapter(child: lead),
                   SliverToBoxAdapter(
-                    child: _rows(reading, listed, showBars: showBars),
+                    child: _rows(
+                      reading,
+                      listed,
+                      classes: classes,
+                      showBars: showBars,
+                    ),
                   ),
                   if (others != null)
                     SliverToBoxAdapter(child: _otherMoves(others)),
@@ -843,10 +925,10 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   Widget _rows(
     TobyReading reading,
     List<TobyCandidate> listed, {
+    required Map<String, GameMoveClassification?> classes,
     required bool showBars,
   }) {
     final positionKey = widget.target.positionKey!;
-    final qualities = tobyMoveQualities(reading);
     final hovered = _controller.hoveredUci(positionKey);
     final pinned = _controller.pinnedUci(positionKey);
     final focused =
@@ -889,9 +971,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
                         child: _TobyRow(
                           key: ValueKey<String>(listed[i].uci),
                           candidate: listed[i],
-                          quality:
-                              qualities[listed[i].uci] ??
-                              TobyMoveQuality.neutral,
+                          classification: classes[listed[i].uci],
                           muted: !reading.isFinal,
                           showBar: showBars,
                           highlighted:
@@ -1078,14 +1158,13 @@ ProviderContainer _windowContainer(BuildContext context) {
   return container;
 }
 
-/// "Nb3, 71 percent, first instinct 64 percent, a mistake. After it: White
+/// "Nb3, 71 percent, first instinct 64 percent, Mistake. After it: White
 /// 30, draw 55, Black 15". The first instinct is spoken when the row shows
-/// it, and the move's [quality] when it is dubious or a mistake (a good
-/// move's colour says nothing worth a word).
+/// it, and the move's report class by the report's own name for it.
 @visibleForTesting
 String tobyCandidateSemanticsLabel(
   TobyCandidate candidate, {
-  TobyMoveQuality quality = TobyMoveQuality.neutral,
+  GameMoveClassification? classification,
 }) {
   String spoken(double probability) =>
       probability > 0 && probability < .001
@@ -1096,8 +1175,7 @@ String tobyCandidateSemanticsLabel(
       prior != null && candidate.priorDiffers
           ? ', first instinct ${spoken(prior)}'
           : '';
-  final judged = tobyQualitySpoken(quality);
-  final verdict = judged.isEmpty ? '' : ', $judged';
+  final verdict = classification == null ? '' : ', ${classification.label}';
   final wdl = candidate.wdl?.percentages;
   return wdl == null
       ? '${candidate.san}, ${spoken(candidate.probability)}$instinct$verdict'
@@ -1119,14 +1197,16 @@ String _wholePercent(double probability) =>
 
 /// One candidate, as a Stockfish row: the chance in the score column, then
 /// the move with Toby's first instinct when it differs by five points or
-/// more, and the outcome bar at the end. The row's own surface fills to its
-/// chance; the hover fill and the pin's edge compose over it. The chance and
-/// the fill take the move's [quality] tone, as its arrow on the board does.
+/// more, and the outcome bar at the end. The move carries the report's mark
+/// for its [classification], as in the move list. The row's own surface
+/// fills to its chance; the hover fill and the pin's edge compose over it.
+/// The chance and the fill take the class's colour, as its arrow on the
+/// board does.
 class _TobyRow extends StatelessWidget {
   const _TobyRow({
     super.key,
     required this.candidate,
-    required this.quality,
+    required this.classification,
     required this.muted,
     required this.showBar,
     required this.highlighted,
@@ -1135,7 +1215,7 @@ class _TobyRow extends StatelessWidget {
   });
 
   final TobyCandidate candidate;
-  final TobyMoveQuality quality;
+  final GameMoveClassification? classification;
 
   /// The quick network stage: fills and text are muted until the final
   /// reading replaces them in place.
@@ -1150,7 +1230,7 @@ class _TobyRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final prior = candidate.prior;
-    final tone = tobyRowTone(quality);
+    final tone = tobyRowTone(classification);
     final content = Row(
       children: [
         _Chance(
@@ -1162,6 +1242,7 @@ class _TobyRow extends StatelessWidget {
           child: _RowLine(
             san: candidate.san,
             sanColor: muted ? kWhiteColor70 : kWhiteColor,
+            classification: classification,
             instinct:
                 !muted && prior != null && candidate.priorDiffers
                     ? 'first instinct ${_wholePercent(prior)}'
@@ -1177,7 +1258,10 @@ class _TobyRow extends StatelessWidget {
     return Semantics(
       button: true,
       selected: pinned,
-      label: tobyCandidateSemanticsLabel(candidate, quality: quality),
+      label: tobyCandidateSemanticsLabel(
+        candidate,
+        classification: classification,
+      ),
       excludeSemantics: true,
       onTap: onActivate,
       child: SingleMotionBuilder(
@@ -1187,9 +1271,9 @@ class _TobyRow extends StatelessWidget {
             (context, value, child) => CustomPaint(
               painter: _TobyRowPainter(
                 chance: candidate.probability,
-                fill: tone.withValues(
-                  alpha: muted ? _kNetworkFillAlpha : _kFillAlpha,
-                ),
+                fill: _rowFillHue(
+                  classification,
+                ).withValues(alpha: muted ? _kNetworkFillAlpha : _kFillAlpha),
                 hover: value.clamp(0.0, 1.0),
                 pinned: pinned,
               ),
@@ -1243,24 +1327,42 @@ class _Chance extends StatelessWidget {
   }
 }
 
-/// A row's line: the move, then Toby's first instinct when it differs.
-/// Nothing in it is cut: a long promotion shrinks into the room it has, and
-/// an instinct without room steps aside (it stays in the row's semantics).
+/// A row's line: the move, its class mark as the move list draws it (17 px,
+/// 4 px after the SAN, centred on the line), then Toby's first instinct
+/// when it differs. Every move starts at the same x, so a row without a mark
+/// keeps the column. Nothing in it is cut: a long promotion shrinks into the
+/// room it has, and an instinct without room steps aside (it stays in the
+/// row's semantics).
 class _RowLine extends StatelessWidget {
-  const _RowLine({required this.san, required this.sanColor, this.instinct});
+  const _RowLine({
+    required this.san,
+    required this.sanColor,
+    this.classification,
+    this.instinct,
+  });
 
   final String san;
   final Color sanColor;
+  final GameMoveClassification? classification;
   final String? instinct;
+
+  /// Between the move and its class mark, as in the move list.
+  static const double _markGap = 4;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final instinct = this.instinct;
+        final classification = this.classification;
+        final markWidth =
+            classification == null
+                ? 0.0
+                : _markGap + kMoveClassificationIconSize;
         final showInstinct =
             instinct != null &&
             _textWidth(context, san, _kSanStyle) +
+                    markWidth +
                     _kDetailGap +
                     _textWidth(context, instinct, _kDetailStyle) +
                     1 <=
@@ -1278,6 +1380,10 @@ class _RowLine extends StatelessWidget {
                 ),
               ),
             ),
+            if (classification != null) ...[
+              const SizedBox(width: _markGap),
+              MoveClassificationIcon(classification: classification),
+            ],
             if (showInstinct) ...[
               const SizedBox(width: _kDetailGap),
               Text(

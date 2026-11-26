@@ -97,6 +97,13 @@ class _PopoverBody extends ConsumerWidget {
           ),
           const SizedBox(height: 10),
           _SwitchRow(
+            label: 'Toby bar',
+            description: 'Show Toby\'s chances beside the board.',
+            value: settings.showTobyBar,
+            onChange: notifier.toggleTobyBar,
+          ),
+          const SizedBox(height: 10),
+          _SwitchRow(
             label: 'PV arrows',
             description: 'Draw arrows for the top engine lines.',
             value: settings.showPvArrows,

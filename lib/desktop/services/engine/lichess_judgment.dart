@@ -160,8 +160,21 @@ LichessJudgement? _cpAdvice(
   // `info.color.fold(-d, d)`: a positive delta is winning chances *lost* by
   // whoever moved.
   final delta = moverIsWhite ? -change : change;
+  return lichessJudgementForWinningChanceLoss(delta);
+}
+
+/// The judgment table on its own: the verdict for a mover who handed over
+/// [loss] winning chances (on lichess's `[-1, +1]` scale, so a 0..100
+/// win-percentage drop divided by 50). Null below the Inaccuracy row.
+///
+/// For callers that already hold winning chances rather than engine scores
+/// (Toby's predicted moves, which carry win/draw/loss outcomes and no
+/// centipawns). It is the same table [lichessAdvice] judges centipawn
+/// changes with; mate transitions have no counterpart here.
+LichessJudgement? lichessJudgementForWinningChanceLoss(double loss) {
+  if (!loss.isFinite) return null;
   for (final (threshold, judgement) in _winningChanceJudgements) {
-    if (threshold <= delta) return judgement;
+    if (threshold <= loss) return judgement;
   }
   return null;
 }

@@ -18,6 +18,7 @@ import 'package:chessever/desktop/auth/desktop_access_policy.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/auth/desktop_access_providers.dart';
 import 'package:chessever/desktop/auth/desktop_entitlement_snapshot.dart';
+import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 
 /// Signature shared by `ProviderContainer.read`, `Ref.read` and
@@ -42,6 +43,26 @@ DesktopAccessDecision readDesktopAccess(
     entitlement: read(desktopEntitlementProvider),
     now: now,
   );
+}
+
+/// Whether the opening tree's per-move game counts for a position (the
+/// engine pane's "played" column, and the Book class on Toby's rows, which
+/// reads the same request) may be asked for: a permanent account, a live
+/// session, and explorer access for [context]. Watches through [watch], so
+/// a widget rebuilds when any of them changes. The web reads the same rule
+/// as `explorerCanBrowse` (FocusBoard.tsx: `playedFen` and `bookLookup`).
+bool desktopPlayedCountsAllowed(
+  DesktopProviderRead watch,
+  DesktopAccessContext? context,
+) {
+  if (context == null) return false;
+  final identity = watch(desktopAccountIdentityProvider);
+  if (!identity.isPermanent || identity.staleSession) return false;
+  return evaluateDesktopAccess(
+    context: context,
+    subscription: watch(subscriptionProvider),
+    entitlement: watch(desktopEntitlementProvider),
+  ).isAllowed;
 }
 
 /// The decision for [context] as a guest with no membership. Allowed here

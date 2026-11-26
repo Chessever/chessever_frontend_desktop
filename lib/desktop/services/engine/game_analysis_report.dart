@@ -1794,23 +1794,6 @@ GameMoveClassification? _classifyGameReportMoveCore({
       before.bestLine.moves.isNotEmpty &&
       before.bestLine.moves.first == move.uci;
 
-  final moverBefore = isWhite ? beforeWin : (100 - beforeWin);
-  final moverAfter = isWhite ? afterWin : (100 - afterWin);
-
-  // A single engine line can never support a positive label — they all have to
-  // beat an alternative — so the judgment is the whole verdict here.
-  if (before.lines.length <= 1) {
-    return _missedOrLoss(
-      index: index,
-      game: game,
-      positions: positions,
-      moverChange: moverChange,
-      moverBefore: moverBefore,
-      moverAfter: moverAfter,
-      previousMoveClassification: previousMoveClassification,
-    );
-  }
-
   final sourceAlternatives = before.lines.where(
     (line) => line.moves.isNotEmpty && line.moves.first != move.uci,
   );
@@ -1822,10 +1805,6 @@ GameMoveClassification? _classifyGameReportMoveCore({
           : (sourceAlternatives.isEmpty
               ? null
               : gameReportWinPercentage(sourceAlternatives.first));
-  final alternativeMoverWin =
-      alternativeWin == null
-          ? null
-          : (isWhite ? alternativeWin : (100 - alternativeWin));
 
   final alternativeGap =
       nativePolicy
@@ -1834,7 +1813,9 @@ GameMoveClassification? _classifyGameReportMoveCore({
           ? 0.0
           : (afterWin - alternativeWin) * (isWhite ? 1 : -1);
 
+  final multiLine = before.lines.length > 1;
   final simpleRecapture =
+      multiLine &&
       index > 0 &&
       isSimpleReportRecapture(
         positions[index - 1].fen,
@@ -1842,13 +1823,211 @@ GameMoveClassification? _classifyGameReportMoveCore({
         move.uci,
       );
 
+  // The same-search snapshot gates: a native label needs one coherent root,
+  // the positions it was read in, one engine and no pending confirmation.
+  final positiveEvidenceVerified =
+      !nativePolicy ||
+      (comparison != null &&
+          before.fen ==
+              (index == 0 ? game.startingFen : game.mainline[index - 1].fen) &&
+          positions[index + 1].fen == move.fen &&
+          (before.search == null ||
+              positions[index + 1].search == null ||
+              before.search!.engineId ==
+                  positions[index + 1].search!.engineId) &&
+          before.uncertainty == null &&
+          positions[index + 1].uncertainty == null &&
+          !gameReportMoveNeedsConfirmation(
+            index: index,
+            game: game,
+            positions: positions,
+          ));
+
+  return classifyReportMoveEvidence(
+    ReportMoveEvidence(
+      beforeFen: before.fen,
+      uci: move.uci,
+      san: move.san,
+      isWhite: isWhite,
+      beforeWin: beforeWin,
+      afterWin: afterWin,
+      moverChange: moverChange,
+      playedIsBest: playedIsBest,
+      lineCount: before.lines.length,
+      alternativeWin: alternativeWin,
+      alternativeGap: alternativeGap,
+      previousUci: index > 0 ? game.mainline[index - 1].uci : null,
+      simpleRecapture: simpleRecapture,
+      positiveEvidenceVerified: positiveEvidenceVerified,
+      judgement: lichessJudgementForReportMove(
+        index: index,
+        game: game,
+        positions: positions,
+      ),
+      previousMoveClassification: previousMoveClassification,
+      nativePolicy: nativePolicy,
+      criticalPunishmentVerified:
+          nativePolicy
+              ? () =>
+                  nativeCriticalPunishmentReason(
+                    index: index,
+                    game: game,
+                    positions: positions,
+                    previous: previousMoveClassification,
+                  ) ==
+                  'verified_native_critical_punishment'
+              : null,
+      likelyOpeningBook:
+          () => isReportLikelyOpeningBookForBrilliant(index, game),
+      previousPositionWin:
+          nativePolicy && index > 0
+              ? gameReportWinPercentage(positions[index - 1].bestLine)
+              : null,
+      continuation: positions[index + 1].bestLine.moves,
+    ),
+  );
+}
+
+/// Everything [classifyReportMoveEvidence] reads about one move, already
+/// reduced to numbers and board facts, so a caller with its own evaluations
+/// (Toby's predicted moves) is judged by the very same rules as a report move.
+///
+/// Win percentages are White's, 0..100. The report builds this from its
+/// engine positions in [classifyGameReportMove]; Toby builds it from its
+/// win/draw/loss outcomes in `lib/desktop/services/toby/toby_classes.dart`.
+@immutable
+class ReportMoveEvidence {
+  const ReportMoveEvidence({
+    required this.beforeFen,
+    required this.uci,
+    required this.san,
+    required this.isWhite,
+    required this.beforeWin,
+    required this.afterWin,
+    required this.moverChange,
+    required this.playedIsBest,
+    required this.lineCount,
+    required this.alternativeWin,
+    required this.alternativeGap,
+    required this.previousUci,
+    required this.simpleRecapture,
+    required this.positiveEvidenceVerified,
+    required this.judgement,
+    required this.likelyOpeningBook,
+    this.previousMoveClassification,
+    this.nativePolicy = true,
+    this.criticalPunishmentVerified,
+    this.previousPositionWin,
+    this.continuation,
+  });
+
+  /// The position the move is played from.
+  final String beforeFen;
+  final String uci;
+  final String san;
+  final bool isWhite;
+
+  /// White's win% before and after the move.
+  final double beforeWin;
+  final double afterWin;
+
+  /// The mover's change in win% (negative = lost chances), already capped by
+  /// the loss against the best line where that applies.
+  final double moverChange;
+
+  /// Whether the move is the evaluator's own first choice.
+  final bool playedIsBest;
+
+  /// How many candidate lines were evaluated in the position (MultiPV).
+  final int lineCount;
+
+  /// White's win% after the best other move, or null when there is none.
+  final double? alternativeWin;
+
+  /// The mover's margin (pp) of the played move over the best other move.
+  final double alternativeGap;
+
+  /// The move before this one, or null at the first move.
+  final String? previousUci;
+
+  /// Whether the move simply takes back what the previous move took.
+  final bool simpleRecapture;
+
+  /// The evaluator's own consistency gates for positive labels (the report's
+  /// same-search snapshot checks). Errors never depend on it.
+  final bool positiveEvidenceVerified;
+
+  /// Lichess's judgment of the move, or null when lichess leaves it unmarked
+  /// (including when the move is the evaluator's own choice).
+  final LichessJudgement? judgement;
+
+  /// The previous move's class, or null when unknown.
+  final GameMoveClassification? previousMoveClassification;
+
+  /// Whether the native report's own policy applies (versus a verified
+  /// official source's).
+  final bool nativePolicy;
+
+  /// The native three-position Brilliant exception, asked only when positive
+  /// labels are open. Null never grants it.
+  final bool Function()? criticalPunishmentVerified;
+
+  /// [isReportLikelyOpeningBookForBrilliant] for this move, asked only by the
+  /// Brilliant gate.
+  final bool Function() likelyOpeningBook;
+
+  /// White's win% in the position before the previous move, for the
+  /// Brilliant gate that refuses a win established before the opponent
+  /// moved. Null skips that gate.
+  final double? previousPositionWin;
+
+  /// The evaluator's best line after the move. Null when the evaluator gives
+  /// no line (Toby): Brilliant's multi-ply persistence check is then skipped
+  /// and every other Brilliant gate still applies.
+  final List<String>? continuation;
+}
+
+/// The report's classifier on [ReportMoveEvidence]: the rules of
+/// [classifyGameReportMove] before the Book override, taking win percentages
+/// instead of engine positions.
+GameMoveClassification? classifyReportMoveEvidence(ReportMoveEvidence e) {
+  final isWhite = e.isWhite;
+  final beforeWin = e.beforeWin;
+  final afterWin = e.afterWin;
+  final moverChange = e.moverChange;
+  final playedIsBest = e.playedIsBest;
+  final previousMoveClassification = e.previousMoveClassification;
+
+  final moverBefore = isWhite ? beforeWin : (100 - beforeWin);
+  final moverAfter = isWhite ? afterWin : (100 - afterWin);
+
+  // A single engine line can never support a positive label — they all have to
+  // beat an alternative — so the judgment is the whole verdict here.
+  if (e.lineCount <= 1) {
+    return _missedOrLoss(
+      judgement: e.judgement,
+      moverChange: moverChange,
+      moverBefore: moverBefore,
+      moverAfter: moverAfter,
+      previousMoveClassification: previousMoveClassification,
+    );
+  }
+
+  final alternativeWin = e.alternativeWin;
+  final alternativeMoverWin =
+      alternativeWin == null
+          ? null
+          : (isWhite ? alternativeWin : (100 - alternativeWin));
+  final alternativeGap = e.alternativeGap;
+  final simpleRecapture = e.simpleRecapture;
+
   // ── Steps 2–3: board facts and outcome-band context ────────────────────
   // Derived from the FENs alone, so re-tuning the rules below never needs a
   // fresh engine run.
   final facts = describeMove(
-    beforeFen: before.fen,
-    playedUci: move.uci,
-    previousUci: index > 0 ? game.mainline[index - 1].uci : null,
+    beforeFen: e.beforeFen,
+    playedUci: e.uci,
+    previousUci: e.previousUci,
   );
 
   // Routine and forced moves veto *positive* labels only. They must still fall
@@ -1857,24 +2036,7 @@ GameMoveClassification? _classifyGameReportMoveCore({
   var positiveLabelsEligible =
       !facts.isForcedOrRoutine &&
       !simpleRecapture &&
-      (!nativePolicy ||
-          (comparison != null &&
-              before.fen ==
-                  (index == 0
-                      ? game.startingFen
-                      : game.mainline[index - 1].fen) &&
-              positions[index + 1].fen == move.fen &&
-              (before.search == null ||
-                  positions[index + 1].search == null ||
-                  before.search!.engineId ==
-                      positions[index + 1].search!.engineId) &&
-              before.uncertainty == null &&
-              positions[index + 1].uncertainty == null &&
-              !gameReportMoveNeedsConfirmation(
-                index: index,
-                game: game,
-                positions: positions,
-              )));
+      e.positiveEvidenceVerified;
 
   // Routine material recovery: taking a loose or already-committed unit while
   // conceding nothing, in a position the capture does not actually change.
@@ -1938,14 +2100,7 @@ GameMoveClassification? _classifyGameReportMoveCore({
 
   // ── Steps 4–7: positive labels ─────────────────────────────────────────
   if (positiveLabelsEligible) {
-    if (nativePolicy &&
-        nativeCriticalPunishmentReason(
-              index: index,
-              game: game,
-              positions: positions,
-              previous: previousMoveClassification,
-            ) ==
-            'verified_native_critical_punishment') {
+    if (e.criticalPunishmentVerified?.call() ?? false) {
       return GameMoveClassification.brilliant;
     }
     // Brilliant (!!): engine-best/tied + genuine material investment +
@@ -1956,24 +2111,11 @@ GameMoveClassification? _classifyGameReportMoveCore({
     // three-position gate, not fall through its quality/necessity veto via
     // the ordinary two-position verifier at the winning-band boundary.
     final requiresCriticalEvidence =
-        nativePolicy &&
+        e.nativePolicy &&
         previousMoveClassification == GameMoveClassification.blunder &&
         (moverBefore >= kBandCompetitiveMax - kBandHysteresisPp ||
             moverAfter >= kBandCompetitiveMax - kBandHysteresisPp);
-    if (!requiresCriticalEvidence &&
-        verifyBrilliantMove(
-          index: index,
-          game: game,
-          positions: positions,
-          winPercentages: winPercentages,
-          moverChange: moverChange,
-          playedIsBest: playedIsBest,
-          alternativeWin: alternativeWin,
-          alternativeGap: alternativeGap,
-          simpleRecapture: simpleRecapture,
-          facts: facts,
-          evidencePolicy: evidencePolicy,
-        )) {
+    if (!requiresCriticalEvidence && verifyBrilliantEvidence(e, facts: facts)) {
       return GameMoveClassification.brilliant;
     }
 
@@ -2049,9 +2191,7 @@ GameMoveClassification? _classifyGameReportMoveCore({
 
   // ── Steps 8–11 ─────────────────────────────────────────────────────────
   return _missedOrLoss(
-    index: index,
-    game: game,
-    positions: positions,
+    judgement: e.judgement,
     moverChange: moverChange,
     moverBefore: moverBefore,
     moverAfter: moverAfter,
@@ -2101,9 +2241,7 @@ LichessJudgement? lichessJudgementForReportMove({
 /// negative symbol. The winning-side bound stays roughly +3.3; the losing-side
 /// bound is independent, keeping further deterioration silent once already lost.
 GameMoveClassification? _missedOrLoss({
-  required int index,
-  required ChessGame game,
-  required List<GameReportPosition> positions,
+  required LichessJudgement? judgement,
   required double moverChange,
   required double moverBefore,
   required double moverAfter,
@@ -2119,11 +2257,6 @@ GameMoveClassification? _missedOrLoss({
     return null;
   }
 
-  final judgement = lichessJudgementForReportMove(
-    index: index,
-    game: game,
-    positions: positions,
-  );
   if (judgement == null) return null;
 
   // ── Missed Win ─────────────────────────────────────────────────────────
@@ -2379,20 +2512,57 @@ bool verifyBrilliantMove({
   final move = game.mainline[index];
   final before = positions[index];
   final after = positions[index + 1];
-  final isWhite = move.turn == ChessColor.white;
-  final beforeWin = winPercentages[index];
-  final afterWin = winPercentages[index + 1];
+  return verifyBrilliantEvidence(
+    ReportMoveEvidence(
+      beforeFen: before.fen,
+      uci: move.uci,
+      san: move.san,
+      isWhite: move.turn == ChessColor.white,
+      beforeWin: winPercentages[index],
+      afterWin: winPercentages[index + 1],
+      moverChange: moverChange,
+      playedIsBest: playedIsBest,
+      lineCount: before.lines.length,
+      alternativeWin: alternativeWin,
+      alternativeGap: alternativeGap,
+      previousUci: index > 0 ? game.mainline[index - 1].uci : null,
+      simpleRecapture: simpleRecapture,
+      // Neither is read by the Brilliant gate.
+      positiveEvidenceVerified: true,
+      judgement: null,
+      likelyOpeningBook:
+          () => isReportLikelyOpeningBookForBrilliant(index, game),
+      previousPositionWin:
+          evidencePolicy == GameReportEvidencePolicy.native && index > 0
+              ? gameReportWinPercentage(positions[index - 1].bestLine)
+              : null,
+      continuation: after.bestLine.moves,
+    ),
+    facts: facts,
+  );
+}
+
+/// [verifyBrilliantMove] on [ReportMoveEvidence]. A null
+/// [ReportMoveEvidence.continuation] (an evaluator that gives no line, such
+/// as Toby) skips the multi-ply persistence check only; a null
+/// [ReportMoveEvidence.previousPositionWin] skips the already-won gate.
+bool verifyBrilliantEvidence(ReportMoveEvidence e, {MovePositionFacts? facts}) {
+  final isWhite = e.isWhite;
+  final beforeWin = e.beforeWin;
+  final afterWin = e.afterWin;
+  final moverChange = e.moverChange;
+  final alternativeWin = e.alternativeWin;
+  final alternativeGap = e.alternativeGap;
 
   // A decisive reply cannot acquire !! merely by converting an advantage
   // already established before the opponent moved. The three-position
   // exception is for a newly created tactical win, not an older won game.
   final moverBefore = isWhite ? beforeWin : 100 - beforeWin;
   final moverAfter = isWhite ? afterWin : 100 - afterWin;
-  if (evidencePolicy == GameReportEvidencePolicy.native &&
-      index > 0 &&
+  final preWin = e.previousPositionWin;
+  if (preWin != null &&
       moverBefore >= kBandBetterMax &&
       moverAfter >= kBandBetterMax) {
-    final preWin = gameReportWinPercentage(positions[index - 1].bestLine);
     if ((isWhite ? preWin : 100 - preWin) >=
         kBandCompetitiveMax - kBandHysteresisPp) {
       return false;
@@ -2400,19 +2570,19 @@ bool verifyBrilliantMove({
   }
 
   // ── Hard exclusions ────────────────────────────────────────────────────
-  if (move.san.contains('=')) return false;
-  if (simpleRecapture) return false;
+  if (e.san.contains('=')) return false;
+  if (e.simpleRecapture) return false;
   // A forced reply, a recapture or an attacked piece stepping aside is never
   // Brilliant, however well the engine scores it.
   final moveFacts =
       facts ??
       describeMove(
-        beforeFen: before.fen,
-        playedUci: move.uci,
-        previousUci: index > 0 ? game.mainline[index - 1].uci : null,
+        beforeFen: e.beforeFen,
+        playedUci: e.uci,
+        previousUci: e.previousUci,
       );
   if (moveFacts.isForcedOrRoutine) return false;
-  if (isReportLikelyOpeningBookForBrilliant(index, game)) return false;
+  if (e.likelyOpeningBook()) return false;
   if (isReportCompletelyDecidedForBrilliant(
     beforeWin: beforeWin,
     afterWin: afterWin,
@@ -2433,11 +2603,11 @@ bool verifyBrilliantMove({
 
   // ── Engine-best or effectively tied ────────────────────────────────────
   final tiedForBest = moverChange >= -kBrilliantMaxLossPp;
-  if (!playedIsBest && !tiedForBest) return false;
+  if (!e.playedIsBest && !tiedForBest) return false;
   if (moverChange < -kBrilliantMaxLossPp) return false;
 
   // Need MultiPV alternatives for prestige; single-line "only move" is not !!.
-  if (before.lines.length < 2 || alternativeWin == null) return false;
+  if (e.lineCount < 2 || alternativeWin == null) return false;
 
   // Clear edge over ordinary alternatives, or a uniquely strong only-move.
   final onlyMoveResource = alternativeGap >= 12;
@@ -2445,22 +2615,24 @@ bool verifyBrilliantMove({
   if (!onlyMoveResource && !meaningfulGap) return false;
 
   // ── Material / tactical investment ─────────────────────────────────────
+  final continuation = e.continuation;
   if (!isMeaningfulBrilliantInvestment(
-    before.fen,
-    move.uci,
-    after.bestLine.moves,
+    e.beforeFen,
+    e.uci,
+    continuation ?? const <String>[],
   )) {
     return false;
   }
 
   // ── Multi-ply persistence (not only the immediate reply) ───────────────
-  if (!brilliantContinuationPersists(
-    beforeFen: before.fen,
-    playedUci: move.uci,
-    continuationAfterMove: after.bestLine.moves,
-    afterWin: afterWin,
-    isWhite: isWhite,
-  )) {
+  if (continuation != null &&
+      !brilliantContinuationPersists(
+        beforeFen: e.beforeFen,
+        playedUci: e.uci,
+        continuationAfterMove: continuation,
+        afterWin: afterWin,
+        isWhite: isWhite,
+      )) {
     return false;
   }
 
@@ -2473,18 +2645,36 @@ bool verifyBrilliantMove({
 /// just because the half-move index is low.
 bool isReportLikelyOpeningBookForBrilliant(int index, ChessGame game) {
   if (index >= kBrilliantOpeningPlyLimit) return false;
-  if (_sidePieceCount(game.startingFen) <= 12) return false;
   final move = game.mainline[index];
-  final san = move.san;
+  return isReportLikelyOpeningBookMove(
+    ply: index,
+    startFen: game.startingFen,
+    beforeFen:
+        () => index == 0 ? game.startingFen : game.mainline[index - 1].fen,
+    san: move.san,
+    uci: move.uci,
+  );
+}
+
+/// [isReportLikelyOpeningBookForBrilliant] for a move given by its [ply]
+/// (half-moves from [startFen]), the position it is played from, and its
+/// SAN and UCI.
+bool isReportLikelyOpeningBookMove({
+  required int ply,
+  required String startFen,
+  required String Function() beforeFen,
+  required String san,
+  required String uci,
+}) {
+  if (ply >= kBrilliantOpeningPlyLimit) return false;
+  if (_sidePieceCount(startFen) <= 12) return false;
   // Quiet early moves in a full opening are book-like.
   final tactical = san.contains('x') || san.contains('+') || san.contains('#');
   if (!tactical) return true;
   // Early pawn gambits (even with captures) are not prestigious !! material.
   try {
-    final beforeFen =
-        index == 0 ? game.startingFen : game.mainline[index - 1].fen;
-    final pos = Chess.fromSetup(Setup.parseFen(beforeFen));
-    final played = NormalMove.fromUci(move.uci);
+    final pos = Chess.fromSetup(Setup.parseFen(beforeFen()));
+    final played = NormalMove.fromUci(uci);
     if (!pos.isLegal(played)) return true;
     final piece = pos.board.pieceAt(played.from);
     if (piece?.role == Role.pawn) return true;

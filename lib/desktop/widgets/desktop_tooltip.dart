@@ -20,6 +20,7 @@ class DesktopTooltip extends StatelessWidget {
     this.hoverEnterDuration = const Duration(milliseconds: 350),
     this.tipAnchor = Alignment.bottomCenter,
     this.childAnchor = Alignment.topCenter,
+    this.controller,
   });
 
   final String message;
@@ -28,12 +29,17 @@ class DesktopTooltip extends StatelessWidget {
   final AlignmentGeometry tipAnchor;
   final AlignmentGeometry childAnchor;
 
+  /// Opens and closes the tip from outside, for a tip that must also show
+  /// on keyboard focus. Owned (and disposed) by the caller.
+  final FTooltipController? controller;
+
   @override
   Widget build(BuildContext context) {
     if (message.isEmpty) return child;
     return FTheme(
       data: FThemes.zinc.dark,
       child: FTooltip(
+        controller: controller,
         hoverEnterDuration: hoverEnterDuration,
         tipAnchor: tipAnchor,
         childAnchor: childAnchor,

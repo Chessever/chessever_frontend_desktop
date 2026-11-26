@@ -114,6 +114,24 @@ void main() {
     expect(area, contains('maxSize: math.min(vLimit, _maxDesktopBoardSize)'));
   });
 
+  test('the Toby bar is drawn outside the share export, its room trimmed', () {
+    final board = source('lib/desktop/panes/board_pane.dart');
+    final area = section(
+      board,
+      'class _BoardArea ',
+      'class _BoardEvalBarSurface',
+    );
+    // A shared image never carries Toby's numbers without Toby's
+    // attribution: the bar is a sibling after the export boundary, and the
+    // capture cuts its reserved strip off the image's right edge.
+    expect(
+      area.indexOf('child: TobyBarSurface('),
+      greaterThan(area.indexOf('key: shareCaptureKey')),
+    );
+    expect(board, contains('trimRight:'));
+    expect(board, contains('? _BoardArea.tobyBarReservation'));
+  });
+
   test(
     'only Board event rail tabs lose underline, retaining selected semantics',
     () {
