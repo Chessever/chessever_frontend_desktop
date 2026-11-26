@@ -38,10 +38,18 @@ void main() {
       expect(modules.needsStockfish, isFalse);
     });
 
+    test('the threat button needs Stockfish but not the rail', () {
+      const modules = PlayHelpModules(threats: true);
+      expect(modules.anyOn, isTrue);
+      expect(modules.showsRail, isFalse);
+      expect(modules.needsStockfish, isTrue);
+    });
+
     test('saved choices read back; unknown values read as off', () {
       const modules = PlayHelpModules(
         engineLines: true,
         moveMarks: true,
+        threats: true,
         arrows: PlayHelpArrows.toby,
       );
       expect(PlayHelpModules.fromJson(modules.toJson()), modules);
@@ -134,7 +142,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(FSwitch), findsNWidgets(7));
+    expect(find.byType(FSwitch), findsNWidgets(8));
     await tester.tap(find.byType(FSwitch).at(4)); // Move marks
     await tester.pumpAndSettle();
     expect(

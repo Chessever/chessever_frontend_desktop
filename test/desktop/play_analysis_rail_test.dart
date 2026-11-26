@@ -132,10 +132,58 @@ void main() {
       await tester.tap(find.text('Live help'));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byType(PlayHelpModulesList), findsOneWidget);
-      expect(find.byType(FSwitch), findsNWidgets(7));
+      expect(find.byType(FSwitch), findsNWidgets(8));
       await tester.tap(find.text('Live help'));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byType(FSwitch), findsNothing);
+    });
+  });
+
+  group('show threat', () {
+    testWidgets('without the module there is no threat button', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _harness(const PlayHelpModules(engineLines: true, evalBar: true)),
+      );
+      await tester.pump(const Duration(seconds: 5));
+      expect(find.text('Show threat'), findsNothing);
+    });
+
+    testWidgets('the module puts the button beside the player\'s clock', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_harness(const PlayHelpModules(threats: true)));
+      await tester.pump(const Duration(seconds: 5));
+      // Once, beside the player's own clock.
+      expect(find.text('Show threat'), findsOneWidget);
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(PlayActiveGameView)),
+      );
+      await tester.tap(find.text('Show threat'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(container.read(playThreatShownProvider(_tabId)), isTrue);
+      expect(find.text('Hide threat'), findsOneWidget);
+      // Drain the pill's motion before teardown.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    test('a threat is read only on the player\'s turn, out of check', () {
+      final start = Chess.initial;
+      expect(playThreatApplies(start, humanSide: Side.white), isTrue);
+      expect(playThreatApplies(start, humanSide: Side.black), isFalse);
+      // 1.f3 e5 2.g4 Qh4+: White to move, in check, cannot pass.
+      var checked = Chess.initial as Position;
+      for (final uci in ['f2f3', 'e7e5', 'g2g4', 'd8h4']) {
+        checked = checked.play(Move.parse(uci)!);
+      }
+      expect(checked.isCheck, isTrue);
+      expect(playThreatApplies(checked, humanSide: Side.white), isFalse);
     });
   });
 

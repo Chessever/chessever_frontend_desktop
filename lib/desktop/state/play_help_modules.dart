@@ -28,6 +28,7 @@ class PlayHelpModules {
     this.moveMarks = false,
     this.explorer = false,
     this.arrowEvals = false,
+    this.threats = false,
     this.arrows = PlayHelpArrows.off,
   });
 
@@ -52,6 +53,10 @@ class PlayHelpModules {
   /// The engine's eval on the player's own legal right-drawn arrows.
   final bool arrowEvals;
 
+  /// A "Show threat" button under the board: what the opponent would play
+  /// if the player could pass, as red arrows.
+  final bool threats;
+
   /// Arrows on the board: none, Stockfish's best lines, or Toby's guesses.
   final PlayHelpArrows arrows;
 
@@ -68,6 +73,7 @@ class PlayHelpModules {
       engineLines ||
       evalBar ||
       arrowEvals ||
+      threats ||
       arrows == PlayHelpArrows.stockfish;
 
   bool get anyOn => this != const PlayHelpModules();
@@ -80,6 +86,7 @@ class PlayHelpModules {
     bool? moveMarks,
     bool? explorer,
     bool? arrowEvals,
+    bool? threats,
     PlayHelpArrows? arrows,
   }) => PlayHelpModules(
     engineLines: engineLines ?? this.engineLines,
@@ -89,6 +96,7 @@ class PlayHelpModules {
     moveMarks: moveMarks ?? this.moveMarks,
     explorer: explorer ?? this.explorer,
     arrowEvals: arrowEvals ?? this.arrowEvals,
+    threats: threats ?? this.threats,
     arrows: arrows ?? this.arrows,
   );
 
@@ -100,6 +108,7 @@ class PlayHelpModules {
     'moveMarks': moveMarks,
     'explorer': explorer,
     'arrowEvals': arrowEvals,
+    'threats': threats,
     'arrows': arrows.name,
   };
 
@@ -114,6 +123,7 @@ class PlayHelpModules {
       moveMarks: flag('moveMarks'),
       explorer: flag('explorer'),
       arrowEvals: flag('arrowEvals'),
+      threats: flag('threats'),
       arrows:
           PlayHelpArrows.values.asNameMap()[json['arrows']] ??
           PlayHelpArrows.off,
@@ -130,6 +140,7 @@ class PlayHelpModules {
       other.moveMarks == moveMarks &&
       other.explorer == explorer &&
       other.arrowEvals == arrowEvals &&
+      other.threats == threats &&
       other.arrows == arrows;
 
   @override
@@ -141,6 +152,7 @@ class PlayHelpModules {
     moveMarks,
     explorer,
     arrowEvals,
+    threats,
     arrows,
   );
 }
@@ -199,6 +211,13 @@ class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
 /// Whether the game on screen is a Play game whose help needs Stockfish.
 /// The shared position search ([boardEvalProvider]) runs for it even when
 /// the Board's own analysis is off: Play's help is chosen separately.
+/// Whether the player has asked to see the opponent's threat in each Play
+/// tab. Only read while the threat module is on; it stays as the player
+/// left it for the next game in the same tab.
+final playThreatShownProvider = StateProvider.family<bool, String>(
+  (ref, tabId) => false,
+);
+
 final playStockfishDemandProvider = Provider<bool>((ref) {
   if (!ref.watch(playHelpModulesProvider.select((m) => m.needsStockfish))) {
     return false;

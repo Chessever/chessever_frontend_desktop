@@ -146,22 +146,24 @@ void main() {
   });
 
   testWidgets(
-    'tournament setup is free; Create and start is the paywall',
+    'tournament setup is free on the page; Start tournament is the paywall',
     // Forui 0.16 input semantics hit the same framework debug assertion as
     // library_book_dialog_test; this test covers admission and pointer actions.
     semanticsEnabled: false,
     (tester) async {
       final container = await pumpPlay(tester);
       await _tap(tester, find.text('Tournaments'));
-      await _tap(tester, find.text('Start tournament'));
-      expect(find.text('Create and start'), findsOneWidget);
+      // Set up on the page like a single game, help switches included.
+      expect(find.text('Tournament'), findsOneWidget);
+      expect(find.text('Live help'), findsOneWidget);
+      expect(find.text('Start tournament'), findsOneWidget);
       expect(find.byType(DesktopPaywallView), findsNothing);
       expect(
         container.read(tournamentServerProvider).status,
         TournamentServerStatus.stopped,
       );
 
-      await _tap(tester, find.text('Create and start'));
+      await _tap(tester, find.text('Start tournament'));
       expect(find.byType(DesktopPaywallView), findsOneWidget);
       expect(
         container.read(tournamentServerProvider).status,
@@ -170,7 +172,7 @@ void main() {
       expect(container.read(tournamentServerProvider).snapshot, isNull);
       Navigator.of(tester.element(find.byType(DesktopPaywallView))).pop();
       await tester.pumpAndSettle();
-      expect(find.text('Create and start'), findsOneWidget);
+      expect(find.text('Start tournament'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
