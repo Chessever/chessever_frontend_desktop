@@ -26,6 +26,7 @@ import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/audio_player_service.dart';
 import 'package:chessever/utils/chessground_image_cache.dart';
 import 'package:chessever/web/shims/local_sqlite_web.dart' show webSqliteWasmUri;
+import 'package:chessever/web/chessconnect_adapter_web.dart';
 import 'package:chessever/web/web_file_system.dart';
 import 'package:chessever/web/web_storage_notice.dart';
 import 'package:chessever/web/web_frame_stats.dart';
@@ -174,6 +175,7 @@ Future<void> _boot() async {
     UncontrolledProviderScope(container: container, child: const DesktopApp()),
   );
   WebFrameStats.startIfEnabled();
+  installChessconnectAdapter();
   // Board sounds are a few small files; fetch them once the shell has drawn.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     watchWebFileStorage();
