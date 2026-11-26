@@ -7,7 +7,7 @@ import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/theme/app_theme.dart';
 
 /// One switch per help module, plus where the board's arrows come from.
-/// The setup screen and the in-game popover show the same list, bound to
+/// The setup screen and the in-game section show the same list, bound to
 /// the same saved choice ([playHelpModulesProvider]).
 class PlayHelpModulesList extends ConsumerWidget {
   const PlayHelpModulesList({super.key});
@@ -75,6 +75,12 @@ class PlayHelpModulesList extends ConsumerWidget {
             'The engine’s eval on legal arrows you right-drag.',
             modules.arrowEvals,
             (on) => modules.copyWith(arrowEvals: on),
+          ),
+          row(
+            'Show threat',
+            'A button under the board that marks what your opponent threatens.',
+            modules.threats,
+            (on) => modules.copyWith(threats: on),
           ),
           const SizedBox(height: 14),
           const Text(
@@ -185,6 +191,7 @@ class PlayHelpModulesSection extends ConsumerWidget {
           modules.moveMarks,
           modules.explorer,
           modules.arrowEvals,
+          modules.threats,
           modules.arrows != PlayHelpArrows.off,
         ].where((on) => on).length;
 

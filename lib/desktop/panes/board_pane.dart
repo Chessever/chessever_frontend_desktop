@@ -11076,15 +11076,19 @@ String _firstPvMove(String moves) {
 }
 
 /// Stockfish's arrows for [fen] from its lines [pvs], drawn as the
-/// watching board draws them. Play's live help shares them.
+/// watching board draws them. Play's live help shares them. With
+/// [threatMode], [pvs] are the lines of the null-move position and the
+/// arrows are the Board's red threat arrows.
 List<cg.Shape> boardEnginePvArrowShapes({
   required String fen,
   required List<BoardPv> pvs,
   required EngineSettings settings,
+  bool threatMode = false,
 }) => _enginePvArrowShapes(
   fen: fen,
   pvs: pvs,
   settings: settings.copyWith(showEngineAnalysis: true, showPvArrows: true),
+  threatMode: threatMode,
 );
 
 @visibleForTesting

@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/desktop_play_access.dart';
 
 import 'package:flutter/material.dart';
@@ -28,6 +27,7 @@ import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
 import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
+import 'package:chessever/desktop/widgets/play_setup_layout.dart';
 import 'package:chessever/desktop/widgets/play_strength_control.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -586,159 +586,31 @@ class _PlaySetupScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final config = ref.watch(playSetupProvider);
     final notifier = ref.read(playSetupProvider.notifier);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // The form scales: at desktop widths the two columns sit side by side,
-        // at narrower windows they stack. No fixed pixel breakpoints inside
-        // child panels — those let Padding/Expanded handle the rest.
-        final stacked = constraints.maxWidth < 980;
-        final left = _SetupColumnLeft(config: config, notifier: notifier);
-        final right = _SetupColumnRight(config: config, notifier: notifier);
-        final body =
-            stacked
-                ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [left, const SizedBox(height: 24), right],
-                )
-                : Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: left),
-                    const SizedBox(width: 28),
-                    Expanded(child: right),
-                  ],
-                );
-        return DesktopScrollHost(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(40, 36, 40, 40),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1200),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const _SetupHeader(),
-                  const SizedBox(height: 28),
-                  body,
-                  const SizedBox(height: 32),
-                  _StartBar(config: config, notifier: notifier, tabId: tabId),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _SetupHeader extends StatelessWidget {
-  const _SetupHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Play vs bot',
-          style: TextStyle(
-            color: kWhiteColor,
-            fontSize: 30,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.4,
-          ),
-        ),
-        SizedBox(height: 6),
-        Text(
+    return PlaySetupPage(
+      title: 'Play vs bot',
+      subtitle:
           'Pick a time control, bot, and matching strength mode. Stockfish '
           'uses exact ELO; Leela and Maia use engine-specific profiles.',
-          style: TextStyle(color: kWhiteColor70, fontSize: 14, height: 1.5),
-        ),
-      ],
-    );
-  }
-}
-
-class _SetupColumnLeft extends StatelessWidget {
-  const _SetupColumnLeft({required this.config, required this.notifier});
-
-  final PlayConfig config;
-  final PlaySetupNotifier notifier;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _SetupCard(
+      left: [
+        PlaySetupCard(
           title: 'Time control',
           child: _TimeControlSection(config: config, notifier: notifier),
         ),
-        const SizedBox(height: 18),
         // Each kind of help on its own switch; all off plays the game as
         // in competition. The same list opens from the game itself.
-        const _SetupCard(title: 'Live help', child: PlayHelpModulesList()),
+        const PlaySetupCard(title: 'Live help', child: PlayHelpModulesList()),
       ],
-    );
-  }
-}
-
-class _SetupColumnRight extends StatelessWidget {
-  const _SetupColumnRight({required this.config, required this.notifier});
-
-  final PlayConfig config;
-  final PlaySetupNotifier notifier;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _SetupCard(
+      right: [
+        PlaySetupCard(
           title: 'Bot',
           child: _EngineSection(config: config, notifier: notifier),
         ),
-        const SizedBox(height: 18),
-        _SetupCard(
+        PlaySetupCard(
           title: 'Color',
           child: _ColorSection(config: config, notifier: notifier),
         ),
       ],
-    );
-  }
-}
-
-class _SetupCard extends StatelessWidget {
-  const _SetupCard({required this.title, required this.child});
-
-  final String title;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: kDividerColor),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: kWhiteColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-            ),
-          ),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
+      startBar: _StartBar(config: config, notifier: notifier, tabId: tabId),
     );
   }
 }
@@ -1255,63 +1127,28 @@ class _StartBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final install = ref.watch(engineInstallProvider(config.engine));
     final canStart = engineReady(install);
-    return FTheme(
-      data: FThemes.zinc.dark,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-        decoration: BoxDecoration(
-          color: kBlack2Color,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: kDividerColor),
+    return PlaySetupStartBar(
+      summary:
+          '${config.engine.displayName} • '
+          '${playStrengthStartSummary(config.engine, config.elo)} • '
+          '${config.timeControlShorthand} '
+          '(${config.category.displayName})',
+      detail:
+          'Playing as ${config.color.displayName}'
+          '${config.hasStartingPositionSeed ? ' • from position' : ''}',
+      actions: [
+        FButton(
+          style: playPrimaryActionButtonStyle(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          ),
+          prefix: const Icon(Icons.play_arrow_rounded),
+          onPress:
+              canStart
+                  ? () => _startGame(ref, config, install.binaryPath!, tabId)
+                  : null,
+          child: Text(canStart ? 'Play now' : 'Prepare bot first'),
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${config.engine.displayName} • '
-                    '${playStrengthStartSummary(config.engine, config.elo)} • '
-                    '${config.timeControlShorthand} '
-                    '(${config.category.displayName})',
-                    style: const TextStyle(
-                      color: kWhiteColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Playing as ${config.color.displayName}'
-                    '${config.hasStartingPositionSeed ? ' • from position' : ''}',
-                    style: const TextStyle(
-                      color: kSecondaryTextColor,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            FButton(
-              style: playPrimaryActionButtonStyle(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
-              ),
-              prefix: const Icon(Icons.play_arrow_rounded),
-              onPress:
-                  canStart
-                      ? () =>
-                          _startGame(ref, config, install.binaryPath!, tabId)
-                      : null,
-              child: Text(canStart ? 'Play now' : 'Prepare bot first'),
-            ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 }

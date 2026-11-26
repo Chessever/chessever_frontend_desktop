@@ -40,6 +40,8 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_value_slider.dart';
 import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
+import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
+import 'package:chessever/desktop/widgets/play_setup_layout.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/audio_player_service.dart';
@@ -60,6 +62,10 @@ class _PlayTournamentsPaneState extends ConsumerState<PlayTournamentsPane> {
   String? _focusedGameId;
   bool _userFocusedGame = false;
   _TournamentConsoleTab _tab = _TournamentConsoleTab.live;
+
+  /// Setting up a new event while an earlier one is still on screen. With
+  /// no event at all the setup page shows by itself.
+  bool _creating = false;
 
   @override
   Widget build(BuildContext context) {
@@ -85,23 +91,36 @@ class _PlayTournamentsPaneState extends ConsumerState<PlayTournamentsPane> {
         _syncDefaultHumanBoard(before, after);
       }
     });
+    final snapshot = arena.snapshot;
+    // A tournament is set up on the page, like a single game.
+    if (snapshot == null || _creating) {
+      return _TournamentSetupScreen(
+        arena: arena,
+        onCancel:
+            snapshot == null ? null : () => setState(() => _creating = false),
+        onCreate: (config) async {
+          final started = await _launchTournament(context, ref, config);
+          if (started && mounted) setState(() => _creating = false);
+        },
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _TournamentHeader(state: arena),
+        _TournamentHeader(
+          state: arena,
+          onNewEvent: () => setState(() => _creating = true),
+        ),
         const Divider(height: 1, color: kDividerColor),
         Expanded(
-          child:
-              arena.snapshot == null
-                  ? const _EmptyState()
-                  : _TournamentConsole(
-                    snapshot: arena.snapshot!,
-                    focusedGameId: _focusedGameId,
-                    tabId: widget.tabId,
-                    selectedTab: _tab,
-                    onTabChanged: (tab) => setState(() => _tab = tab),
-                    onFocusGame: _focusGameManually,
-                  ),
+          child: _TournamentConsole(
+            snapshot: snapshot,
+            focusedGameId: _focusedGameId,
+            tabId: widget.tabId,
+            selectedTab: _tab,
+            onTabChanged: (tab) => setState(() => _tab = tab),
+            onFocusGame: _focusGameManually,
+          ),
         ),
       ],
     );
@@ -404,9 +423,10 @@ class _TournamentConsoleTabs extends StatelessWidget {
 }
 
 class _TournamentHeader extends ConsumerWidget {
-  const _TournamentHeader({required this.state});
+  const _TournamentHeader({required this.state, required this.onNewEvent});
 
   final TournamentServerState state;
+  final VoidCallback onNewEvent;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -464,7 +484,7 @@ class _TournamentHeader extends ConsumerWidget {
                 ],
               ),
             ),
-            _TournamentRunControl(state: state),
+            _TournamentRunControl(state: state, onNewEvent: onNewEvent),
             if (snapshot != null) ...[
               const SizedBox(width: 8),
               _TournamentAbortControl(state: state),
@@ -476,7 +496,7 @@ class _TournamentHeader extends ConsumerWidget {
                     state.status == TournamentServerStatus.starting ||
                             state.status == TournamentServerStatus.stopping
                         ? null
-                        : () => _openCreateTournament(context, ref),
+                        : onNewEvent,
                 child: const Text('New event'),
               ),
             ],
@@ -488,9 +508,10 @@ class _TournamentHeader extends ConsumerWidget {
 }
 
 class _TournamentRunControl extends ConsumerWidget {
-  const _TournamentRunControl({required this.state});
+  const _TournamentRunControl({required this.state, required this.onNewEvent});
 
   final TournamentServerState state;
+  final VoidCallback onNewEvent;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -528,7 +549,7 @@ class _TournamentRunControl extends ConsumerWidget {
               ? null
               : () {
                 if (snapshot == null) {
-                  unawaited(_openCreateTournament(context, ref));
+                  onNewEvent();
                 } else if (isRunning) {
                   unawaited(_stopTournamentStream(context, ref));
                 } else if (completed) {
@@ -629,24 +650,24 @@ bool _admitTournament(BuildContext context, DesktopAction action) =>
       surface: 'engine_tournament_${action.name}',
     );
 
-Future<void> _openCreateTournament(BuildContext context, WidgetRef ref) async {
-  final cfg = await showFDialog<TournamentConfig>(
-    context: context,
-    builder:
-        (ctx, _, animation) => _CreateTournamentDialog(animation: animation),
-  );
-  if (cfg == null || !context.mounted) return;
+/// Starts the event set up on the page. Returns whether it started.
+Future<bool> _launchTournament(
+  BuildContext context,
+  WidgetRef ref,
+  TournamentConfig cfg,
+) async {
   // Setup is free; confirm admission before starting any tournament work.
-  if (!_admitTournament(context, DesktopAction.create)) return;
+  if (!_admitTournament(context, DesktopAction.create)) return false;
   final state = ref.read(tournamentServerProvider);
   if (state.status != TournamentServerStatus.running) {
     final ready = await ref.read(tournamentServerProvider.notifier).start();
-    if (!ready || !context.mounted) return;
+    if (!ready || !context.mounted) return false;
   }
   await ref.read(tournamentServerProvider.notifier).launchTournament(cfg);
   unawaited(
     ref.read(playAchievementsProvider.notifier).recordTournamentCreated(cfg),
   );
+  return true;
 }
 
 Future<void> _stopTournamentStream(BuildContext context, WidgetRef ref) async {
@@ -761,52 +782,6 @@ Future<void> _continueTournamentStream(
 ) async {
   if (!_admitTournament(context, DesktopAction.recompute)) return;
   await ref.read(tournamentServerProvider.notifier).continueTournamentStream();
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.emoji_events_outlined,
-                color: kSecondaryTextColor,
-                size: 56,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'No tournament running',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Select New event. Include yourself to get playable pairings, '
-                'or run a pure engine stream to watch.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: kSecondaryTextColor,
-                  fontSize: 13,
-                  height: 1.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _LiveBrowser extends StatelessWidget {
@@ -2505,18 +2480,28 @@ extension _TournamentEngineModeLabel on _TournamentEngineMode {
   };
 }
 
-class _CreateTournamentDialog extends ConsumerStatefulWidget {
-  const _CreateTournamentDialog({required this.animation});
+/// The tournament setup page: the same layout as a single game's, with
+/// the event, its clock, the player's help, the bots and the openings.
+class _TournamentSetupScreen extends ConsumerStatefulWidget {
+  const _TournamentSetupScreen({
+    required this.arena,
+    required this.onCreate,
+    this.onCancel,
+  });
 
-  final Animation<double> animation;
+  final TournamentServerState arena;
+  final Future<void> Function(TournamentConfig config) onCreate;
+
+  /// Back to the event on screen; null when there is none.
+  final VoidCallback? onCancel;
 
   @override
-  ConsumerState<_CreateTournamentDialog> createState() =>
-      _CreateTournamentDialogState();
+  ConsumerState<_TournamentSetupScreen> createState() =>
+      _TournamentSetupScreenState();
 }
 
-class _CreateTournamentDialogState
-    extends ConsumerState<_CreateTournamentDialog> {
+class _TournamentSetupScreenState
+    extends ConsumerState<_TournamentSetupScreen> {
   TournamentFormat _format = TournamentFormat.roundRobin;
   int _participantCount = 8;
   TimeControlCategory _timeCategory = TimeControlCategory.blitz;
@@ -2556,214 +2541,202 @@ class _CreateTournamentDialogState
       format: _format,
       participantCount: _participantCount,
     );
-    return FDialog.raw(
-      animation: widget.animation,
-      constraints: const BoxConstraints(maxWidth: 760, maxHeight: 760),
-      builder: (context, _) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(24, 22, 24, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const _CreateTournamentHeader(),
-              const SizedBox(height: 18),
-              Expanded(
-                child: DesktopScrollHost(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _DialogSection(
-                          icon: FIcons.trophy,
-                          title: 'Event',
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              FTextField(
-                                controller: _title,
-                                label: const Text('Title'),
-                                hint: 'ChessEver Cup',
-                                clearable: (value) => value.text.isNotEmpty,
-                              ),
-                              const SizedBox(height: 12),
-                              _fieldRow(
-                                _selectField<TournamentFormat>(
-                                  label: 'Format',
-                                  value: _format,
-                                  values: TournamentFormat.values,
-                                  format: (value) => value.displayName,
-                                  onChanged: (value) => _format = value,
-                                ),
-                                _ParticipantsField(
-                                  count: _participantCount,
-                                  onChanged:
-                                      (value) => setState(
-                                        () => _participantCount = value,
-                                      ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              _IncludeUserSwitch(
-                                selected: _includeUser,
-                                onChanged:
-                                    (value) =>
-                                        setState(() => _includeUser = value),
-                              ),
-                              const SizedBox(height: 12),
-                              _ScheduleMathPreview(summary: schedule),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        _DialogSection(
-                          icon: FIcons.timer,
-                          title: 'Clock',
-                          child: _TimeControlPicker(
-                            category: _timeCategory,
-                            baseSeconds: _baseSeconds,
-                            incrementSeconds: _incrementSeconds,
-                            onCategoryChanged: (cat) {
-                              setState(() {
-                                _timeCategory = cat;
-                                if (cat != TimeControlCategory.custom) {
-                                  final preset =
-                                      kTimeControlPresets[cat]!.first;
-                                  _baseSeconds = preset.baseSeconds;
-                                  _incrementSeconds = preset.incrementSeconds;
-                                }
-                              });
-                            },
-                            onPresetSelected: (preset) {
-                              setState(() {
-                                _timeCategory = preset.category;
-                                _baseSeconds = preset.baseSeconds;
-                                _incrementSeconds = preset.incrementSeconds;
-                              });
-                            },
-                            onBaseChanged: (v) {
-                              setState(() {
-                                _baseSeconds = v.clamp(10, 3600 * 4);
-                                _timeCategory = TimeControlCategory.custom;
-                              });
-                            },
-                            onIncrementChanged: (v) {
-                              setState(() {
-                                _incrementSeconds = v.clamp(0, 180);
-                                _timeCategory = TimeControlCategory.custom;
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        _DialogSection(
-                          icon: FIcons.target,
-                          title: 'Rating',
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _SliderField(
-                                label: 'Target ELO',
-                                value: _eloCenter,
-                                min: 800,
-                                max: 3200,
-                                onChanged:
-                                    (v) => setState(
-                                      () => _eloCenter = v.clamp(800, 3200),
-                                    ),
-                              ),
-                              const SizedBox(height: 14),
-                              _SliderField(
-                                label: 'ELO spread',
-                                value: _eloJitter,
-                                min: 0,
-                                max: 600,
-                                onChanged:
-                                    (v) => setState(
-                                      () => _eloJitter = v.clamp(0, 600),
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        _DialogSection(
-                          icon: FIcons.bot,
-                          title: 'Bots',
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _engineControls(),
-                              const SizedBox(height: 12),
-                              _resourcePreview(resource),
-                            ],
-                          ),
-                        ),
-                        if (_format == TournamentFormat.knockout) ...[
-                          const SizedBox(height: 14),
-                          _DialogSection(
-                            icon: FIcons.brackets,
-                            title: 'Knockout rules',
-                            child: _fieldRow(
-                              _selectField<KnockoutTiebreakMode>(
-                                label: 'Tiebreak',
-                                value: _tiebreakMode,
-                                values: KnockoutTiebreakMode.values,
-                                format: (value) => value.displayName,
-                                onChanged: (value) => _tiebreakMode = value,
-                              ),
-                              _selectField<KnockoutReseeding>(
-                                label: 'Seeding',
-                                value: _reseeding,
-                                values: KnockoutReseeding.values,
-                                format: (value) => value.displayName,
-                                onChanged: (value) => _reseeding = value,
-                              ),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 14),
-                        _DialogSection(
-                          icon: FIcons.route,
-                          title: 'Openings',
-                          trailing: _CountPill('${_selectedEcos.length}'),
-                          child: _ecoChips(),
-                        ),
-                      ],
-                    ),
+    final arena = widget.arena;
+    final busy =
+        arena.status == TournamentServerStatus.starting ||
+        arena.status == TournamentServerStatus.stopping;
+    final title =
+        _title.text.trim().isEmpty ? 'ChessEver Cup' : _title.text.trim();
+    return FTheme(
+      data: FThemes.zinc.dark,
+      child: PlaySetupPage(
+        title: 'Tournament',
+        subtitle:
+            'Run a local event against bots. Include yourself to play your '
+            'pairings, or leave yourself out and watch the bots play.',
+        left: [
+          PlaySetupCard(
+            title: 'Event',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FTextField(
+                  controller: _title,
+                  label: const Text('Title'),
+                  hint: 'ChessEver Cup',
+                  clearable: (value) => value.text.isNotEmpty,
+                  onChange: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 12),
+                _fieldRow(
+                  _selectField<TournamentFormat>(
+                    label: 'Format',
+                    value: _format,
+                    values: TournamentFormat.values,
+                    format: (value) => value.displayName,
+                    onChanged: (value) => _format = value,
+                  ),
+                  _ParticipantsField(
+                    count: _participantCount,
+                    onChanged:
+                        (value) => setState(() => _participantCount = value),
                   ),
                 ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: FButton(
-                      style: playSecondaryActionButtonStyle(),
-                      prefix: const Icon(FIcons.x),
-                      onPress: () => Navigator.of(context).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FButton(
-                      style: playPrimaryActionButtonStyle(),
-                      prefix: const Icon(FIcons.play),
-                      onPress: () {
-                        if (!_admitTournament(context, DesktopAction.create)) {
-                          return;
-                        }
-                        Navigator.of(context).pop(_buildConfig());
-                      },
-                      child: const Text('Create and start'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+                const SizedBox(height: 12),
+                _IncludeUserSwitch(
+                  selected: _includeUser,
+                  onChanged: (value) => setState(() => _includeUser = value),
+                ),
+                const SizedBox(height: 12),
+                _ScheduleMathPreview(summary: schedule),
+              ],
+            ),
           ),
-        );
-      },
+          PlaySetupCard(
+            title: 'Clock',
+            child: _TimeControlPicker(
+              category: _timeCategory,
+              baseSeconds: _baseSeconds,
+              incrementSeconds: _incrementSeconds,
+              onCategoryChanged: (cat) {
+                setState(() {
+                  _timeCategory = cat;
+                  if (cat != TimeControlCategory.custom) {
+                    final preset = kTimeControlPresets[cat]!.first;
+                    _baseSeconds = preset.baseSeconds;
+                    _incrementSeconds = preset.incrementSeconds;
+                  }
+                });
+              },
+              onPresetSelected: (preset) {
+                setState(() {
+                  _timeCategory = preset.category;
+                  _baseSeconds = preset.baseSeconds;
+                  _incrementSeconds = preset.incrementSeconds;
+                });
+              },
+              onBaseChanged: (v) {
+                setState(() {
+                  _baseSeconds = v.clamp(10, 3600 * 4);
+                  _timeCategory = TimeControlCategory.custom;
+                });
+              },
+              onIncrementChanged: (v) {
+                setState(() {
+                  _incrementSeconds = v.clamp(0, 180);
+                  _timeCategory = TimeControlCategory.custom;
+                });
+              },
+            ),
+          ),
+          // The same switches as a single game, for the games the player
+          // plays in the event. They open from each game's panel as well.
+          const PlaySetupCard(title: 'Live help', child: PlayHelpModulesList()),
+        ],
+        right: [
+          PlaySetupCard(
+            title: 'Rating',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _SliderField(
+                  label: 'Target ELO',
+                  value: _eloCenter,
+                  min: 800,
+                  max: 3200,
+                  onChanged:
+                      (v) => setState(() => _eloCenter = v.clamp(800, 3200)),
+                ),
+                const SizedBox(height: 14),
+                _SliderField(
+                  label: 'ELO spread',
+                  value: _eloJitter,
+                  min: 0,
+                  max: 600,
+                  onChanged:
+                      (v) => setState(() => _eloJitter = v.clamp(0, 600)),
+                ),
+              ],
+            ),
+          ),
+          PlaySetupCard(
+            title: 'Bots',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _engineControls(),
+                const SizedBox(height: 12),
+                _resourcePreview(resource),
+              ],
+            ),
+          ),
+          if (_format == TournamentFormat.knockout)
+            PlaySetupCard(
+              title: 'Knockout rules',
+              child: _fieldRow(
+                _selectField<KnockoutTiebreakMode>(
+                  label: 'Tiebreak',
+                  value: _tiebreakMode,
+                  values: KnockoutTiebreakMode.values,
+                  format: (value) => value.displayName,
+                  onChanged: (value) => _tiebreakMode = value,
+                ),
+                _selectField<KnockoutReseeding>(
+                  label: 'Seeding',
+                  value: _reseeding,
+                  values: KnockoutReseeding.values,
+                  format: (value) => value.displayName,
+                  onChanged: (value) => _reseeding = value,
+                ),
+              ),
+            ),
+          PlaySetupCard(
+            title: 'Openings',
+            trailing: _CountPill('${_selectedEcos.length}'),
+            child: _ecoChips(),
+          ),
+        ],
+        startBar: PlaySetupStartBar(
+          summary:
+              '$title • ${_format.displayName} • $_participantCount players • '
+              '${_clockLabel(_baseSeconds, _incrementSeconds)}',
+          detail:
+              arena.error != null
+                  ? _friendlyArenaError(arena.error!)
+                  : _includeUser
+                  ? 'You play in it'
+                  : 'Bots only, for you to watch',
+          detailIsError: arena.error != null,
+          actions: [
+            if (widget.onCancel != null)
+              FButton(
+                style: playSecondaryActionButtonStyle(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 11,
+                  ),
+                ),
+                prefix: const Icon(Icons.arrow_back_rounded),
+                onPress: busy ? null : widget.onCancel,
+                child: const Text('Back to event'),
+              ),
+            FButton(
+              style: playPrimaryActionButtonStyle(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 11,
+                ),
+              ),
+              prefix: const Icon(Icons.play_arrow_rounded),
+              onPress:
+                  busy
+                      ? null
+                      : () => unawaited(widget.onCreate(_buildConfig())),
+              child: Text(busy ? 'Starting…' : 'Start tournament'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2997,97 +2970,11 @@ class _CreateTournamentDialogState
   }
 }
 
-class _CreateTournamentHeader extends StatelessWidget {
-  const _CreateTournamentHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: kPrimaryColor.withValues(alpha: 0.14),
-            border: Border.all(color: kPrimaryColor.withValues(alpha: 0.42)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Icon(FIcons.trophy, color: kLightYellowColor, size: 20),
-        ),
-        const SizedBox(width: 12),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Create tournament',
-                style: TextStyle(
-                  color: kWhiteColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              SizedBox(height: 2),
-              Text(
-                'Local engine arena',
-                style: TextStyle(color: kSecondaryTextColor, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _DialogSection extends StatelessWidget {
-  const _DialogSection({
-    required this.icon,
-    required this.title,
-    required this.child,
-    this.trailing,
-  });
-
-  final IconData icon;
-  final String title;
-  final Widget child;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: kBlack2Color,
-        border: Border.all(color: kWhiteColor.withValues(alpha: 0.10)),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 15, color: kPrimaryColor),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              if (trailing != null) trailing!,
-            ],
-          ),
-          const SizedBox(height: 12),
-          child,
-        ],
-      ),
-    );
-  }
+/// "3+2", or "45s+1" for a clock that is not whole minutes.
+String _clockLabel(int baseSeconds, int incrementSeconds) {
+  final base =
+      baseSeconds % 60 == 0 ? '${baseSeconds ~/ 60}' : '${baseSeconds}s';
+  return '$base+$incrementSeconds';
 }
 
 class _CountPill extends StatelessWidget {

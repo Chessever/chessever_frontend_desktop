@@ -28,6 +28,7 @@ import 'package:chessever/desktop/state/toby_panel.dart';
 import 'package:chessever/desktop/widgets/board_move_badge.dart';
 import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
+import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
@@ -254,6 +255,9 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     final showsRail = ref.watch(
       playHelpModulesProvider.select((m) => m.showsRail),
     );
+    final threatsOn = ref.watch(
+      playHelpModulesProvider.select((m) => m.threats),
+    );
 
     return CallbackShortcuts(
       bindings: {
@@ -261,6 +265,10 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
         const SingleActivator(LogicalKeyboardKey.arrowLeft): goPrevious,
         const SingleActivator(LogicalKeyboardKey.arrowRight): goNext,
         const SingleActivator(LogicalKeyboardKey.end): goLast,
+        // The Board's threat key, only once the player chose the module.
+        if (threatsOn && !state.isGameOver)
+          const SingleActivator(LogicalKeyboardKey.keyX):
+              () => togglePlayThreat(ref, widget.tabId),
       },
       child: Focus(
         autofocus: true,
@@ -877,6 +885,7 @@ class _PlayBoardColumn extends ConsumerWidget {
                                   child: _PlayerRow(
                                     state: state,
                                     side: topSide,
+                                    tabId: tabId,
                                   ),
                                 ),
                                 const SizedBox(height: _playHeaderGap),
@@ -898,6 +907,7 @@ class _PlayBoardColumn extends ConsumerWidget {
                                   child: _PlayerRow(
                                     state: state,
                                     side: bottomSide,
+                                    tabId: tabId,
                                   ),
                                 ),
                               ],
@@ -1070,10 +1080,15 @@ String _playEvalPositionKey(String fen) {
 }
 
 class _PlayerRow extends ConsumerWidget {
-  const _PlayerRow({required this.state, required this.side});
+  const _PlayerRow({
+    required this.state,
+    required this.side,
+    required this.tabId,
+  });
 
   final PlaySessionState state;
   final Side side;
+  final String tabId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1105,6 +1120,10 @@ class _PlayerRow extends ConsumerWidget {
         (state.isGameOver && isHuman && score != null)
             ? _humanEloDelta(state: state, profile: profile, score: score)
             : null;
+    final showThreatButton =
+        isHuman &&
+        !state.isGameOver &&
+        ref.watch(playHelpModulesProvider.select((m) => m.threats));
     return Row(
       children: [
         if (isHuman)
@@ -1187,6 +1206,11 @@ class _PlayerRow extends ConsumerWidget {
             score: score,
           ),
           const SizedBox(width: 12),
+        ],
+        // Beside the player's own clock, where their eyes already are.
+        if (showThreatButton) ...[
+          _PlayThreatButton(tabId: tabId),
+          const SizedBox(width: 10),
         ],
         _ClockChip(
           key: ValueKey('play-clock-${side.name}'),
@@ -1489,8 +1513,35 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
     // of its lines for the position on the board, as the watching board
     // draws them.
     final shownFen = review.position.fen;
+    final engineSettings =
+        ref.watch(engineSettingsProviderNew).valueOrNull ??
+        const EngineSettings();
+    // The opponent's threat, when the player asked for it: Stockfish's
+    // replies if the player could pass. Only on the player's own turn (the
+    // question is what they must answer) and never in check, where a pass
+    // is illegal. It replaces every other arrow, so nothing mixes with it.
+    final threatShown =
+        modules.threats &&
+        ref.watch(playThreatShownProvider(widget.tabId)) &&
+        !state.isGameOver &&
+        playThreatApplies(review.position, humanSide: state.humanSide);
+    final threatArrows =
+        !threatShown
+            ? const ISet<cg.Shape>.empty()
+            : ISet<cg.Shape>(
+              boardEnginePvArrowShapes(
+                fen: shownFen,
+                pvs: ref.watch(
+                  boardEvalProvider(
+                    threatFenForBoardEval(shownFen),
+                  ).select((s) => s.pvs),
+                ),
+                settings: engineSettings,
+                threatMode: true,
+              ),
+            );
     final engineArrows =
-        modules.arrows != PlayHelpArrows.stockfish
+        threatShown || modules.arrows != PlayHelpArrows.stockfish
             ? const ISet<cg.Shape>.empty()
             : ISet<cg.Shape>(
               boardEnginePvArrowShapes(
@@ -1498,11 +1549,10 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
                 pvs: ref.watch(
                   boardEvalProvider(shownFen).select((s) => s.pvs),
                 ),
-                settings:
-                    ref.watch(engineSettingsProviderNew).valueOrNull ??
-                    const EngineSettings(),
+                settings: engineSettings,
               ),
             );
+    final helpArrows = threatShown ? threatArrows : engineArrows;
     // The player's own arrows that are legal moves here, for their evals.
     final ownArrows = <cg.Arrow>[
       if (modules.arrowEvals)
@@ -1586,10 +1636,11 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
                           // or Toby's guesses, as the player chose. A Toby
                           // row under the pointer still shows its move.
                           shapes: _withTobyArrows(
-                            engineArrows.isEmpty
+                            helpArrows.isEmpty
                                 ? mergedShapes
-                                : mergedShapes.addAll(engineArrows),
-                            toby != null &&
+                                : mergedShapes.addAll(helpArrows),
+                            !threatShown &&
+                                    toby != null &&
                                     (modules.arrows == PlayHelpArrows.toby ||
                                         toby.exclusive)
                                 ? toby
@@ -1676,6 +1727,46 @@ ISet<cg.Shape> _withTobyArrows(
   }
   if (toby.exclusive) return ISet<cg.Shape>(toby.arrows);
   return shapes.addAll(toby.arrows);
+}
+
+/// Whether a threat can be read for [position]: the player is to move, so
+/// the question is what they must answer, and could pass (not in check, the
+/// game not decided).
+@visibleForTesting
+bool playThreatApplies(Position position, {required Side humanSide}) =>
+    position.turn == humanSide && !position.isCheck && !position.isGameOver;
+
+/// Shows or hides the opponent's threat in the Play tab [tabId].
+void togglePlayThreat(WidgetRef ref, String tabId) {
+  final shown = ref.read(playThreatShownProvider(tabId).notifier);
+  shown.state = !shown.state;
+}
+
+/// The "Show threat" toggle beside the player's clock. Present only when
+/// the player turned the threat module on; the arrows appear on their own
+/// turns while it is pressed.
+class _PlayThreatButton extends ConsumerWidget {
+  const _PlayThreatButton({required this.tabId});
+
+  final String tabId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final shown = ref.watch(playThreatShownProvider(tabId));
+    return DesktopToolbarPillButton(
+      label: shown ? 'Hide threat' : 'Show threat',
+      icon: Icons.crisis_alert_rounded,
+      tone:
+          shown
+              ? DesktopToolbarPillTone.primary
+              : DesktopToolbarPillTone.neutral,
+      tooltip:
+          shown
+              ? 'Hide the threat arrows (X)'
+              : 'Mark what your opponent threatens on your turn (X)',
+      onPress: () => togglePlayThreat(ref, tabId),
+    );
+  }
 }
 
 NormalMove? _lastQueuedPremove(List<String> premoves) {
