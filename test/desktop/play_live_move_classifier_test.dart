@@ -1,4 +1,3 @@
-
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -123,6 +122,55 @@ void main() {
       expect(judged.classes[1], GameMoveClassification.blunder);
       // Each position is searched once, however often the game grows.
       expect(searched.toSet().length, searched.length);
+    });
+
+    test('searches the likely replies while the side to move thinks', () async {
+      final searched = <String>[];
+      final booked = <String>[];
+      final classifier = PlayLiveMoveClassifier(
+        openEvaluator:
+            () async => (fen, {required depth, required multiPv}) async {
+              searched.add(fen);
+              return _fakeSearch(
+                fen,
+                depth: depth,
+                multiPv: multiPv,
+                whiteCp: 20,
+              );
+            },
+        bookLookup: (fen, uci, path) async {
+          booked.add(uci);
+          return 0;
+        },
+      );
+      addTearDown(classifier.dispose);
+
+      final afterE4 = playLiveClassifierGame(kInitialFEN, const ['e2e4']);
+      classifier.sync(afterE4);
+      await _settle(classifier);
+      // The fake engine's shortlist after 1.e4 is a7a5, a7a6, b7b5: each
+      // reply is searched, and asked of the book, before it is played.
+      final fenAfterE4 = afterE4.mainline.last.fen;
+      final reply = playLiveFenAfter(fenAfterE4, 'a7a5')!;
+      expect(searched, contains(reply));
+      expect(booked, containsAll(<String>['a7a5', 'a7a6', 'b7b5']));
+
+      final before = searched.length;
+      classifier.sync(
+        playLiveClassifierGame(kInitialFEN, const ['e2e4', 'a7a5']),
+      );
+      // Judged at once from what was already searched.
+      await Future<void>.delayed(Duration.zero);
+      final judged = await _settle(classifier);
+      expect(judged.judgedMoves, 2);
+      expect(searched.sublist(0, before).toSet().length, before);
+      expect(searched.where((fen) => fen == reply), hasLength(1));
+    });
+
+    test('works out the position after a castle written either way', () {
+      const fen = 'r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1';
+      expect(playLiveFenAfter(fen, 'e1g1'), playLiveFenAfter(fen, 'e1h1'));
+      expect(playLiveFenAfter(fen, 'e1e3'), isNull);
     });
 
     test('starts over when the game is not a continuation', () async {

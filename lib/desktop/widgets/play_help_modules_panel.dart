@@ -3,7 +3,6 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/play_help_modules.dart';
-import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -158,75 +157,123 @@ class _ModuleRow extends StatelessWidget {
   }
 }
 
-/// The help modules during a game: an icon button that opens
-/// [PlayHelpModulesList] in a popover, so the player can change what they
-/// see without leaving the board.
-class PlayHelpModulesButton extends StatefulWidget {
-  const PlayHelpModulesButton({super.key, this.dimension});
+/// Whether the in-game Live help section is open. Shared by every Play
+/// tab for the session, and closed to begin with: the switches stay out of
+/// the way until the player asks for them.
+final playHelpSectionExpandedProvider = StateProvider<bool>((ref) => false);
 
-  final double? dimension;
+/// The help modules during a game: one quiet "Live help" row that opens
+/// [PlayHelpModulesList] in place, so the player can change what they see
+/// without leaving the board.
+class PlayHelpModulesSection extends ConsumerWidget {
+  const PlayHelpModulesSection({super.key});
 
-  @override
-  State<PlayHelpModulesButton> createState() => _PlayHelpModulesButtonState();
-}
-
-class _PlayHelpModulesButtonState extends State<PlayHelpModulesButton>
-    with SingleTickerProviderStateMixin {
-  late final FPopoverController _controller = FPopoverController(vsync: this);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  /// Taller lists scroll inside the section instead of pushing the game's
+  /// controls off the panel.
+  static const double _maxListHeight = 300;
 
   @override
-  Widget build(BuildContext context) {
-    final popover = FTheme(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final expanded = ref.watch(playHelpSectionExpandedProvider);
+    final modules = ref.watch(playHelpModulesProvider);
+    final onCount =
+        [
+          modules.engineLines,
+          modules.evalBar,
+          modules.tobyPredictions,
+          modules.tobyBar,
+          modules.moveMarks,
+          modules.explorer,
+          modules.arrowEvals,
+          modules.arrows != PlayHelpArrows.off,
+        ].where((on) => on).length;
+
+    return FTheme(
       data: FThemes.zinc.dark,
-      child: FPopover(
-        controller: _controller,
-        popoverBuilder:
-            (context, _) => Container(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * 0.75,
-              ),
-              width: 340,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: kBlack2Color,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: kDividerColor),
-              ),
-              child: const SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FTappable(
+            style:
+                (style) => style.copyWith(motion: (_) => FTappableMotion.none),
+            semanticsLabel: expanded ? 'Hide live help' : 'Show live help',
+            onPress:
+                () =>
+                    ref.read(playHelpSectionExpandedProvider.notifier).state =
+                        !expanded,
+            builder: (context, states, _) {
+              final hovered = states.contains(WidgetState.hovered);
+              final foreground = hovered ? kWhiteColor : kWhiteColor70;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: hovered ? kBlack3Color : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: kDividerColor),
+                ),
+                child: Row(
                   children: [
+                    Icon(Icons.tune_rounded, size: 16, color: foreground),
+                    const SizedBox(width: 8),
                     Text(
                       'Live help',
                       style: TextStyle(
-                        color: kWhiteColor,
-                        fontSize: 14,
+                        color: foreground,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    SizedBox(height: 8),
-                    PlayHelpModulesList(),
+                    const Spacer(),
+                    Text(
+                      onCount == 0 ? 'Off' : '$onCount on',
+                      style: const TextStyle(
+                        color: kSecondaryTextColor,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    AnimatedRotation(
+                      turns: expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeOutCubic,
+                      child: Icon(
+                        Icons.expand_more_rounded,
+                        size: 18,
+                        color: foreground,
+                      ),
+                    ),
                   ],
                 ),
-              ),
-            ),
-        child: DesktopHeaderIconButton(
-          message: 'Live help',
-          icon: Icons.tune_rounded,
-          unboxed: true,
-          onPress: _controller.toggle,
-        ),
+              );
+            },
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child:
+                expanded
+                    ? Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 6, 4, 2),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxHeight: _maxListHeight,
+                        ),
+                        child: const SingleChildScrollView(
+                          padding: EdgeInsets.only(right: 6),
+                          child: PlayHelpModulesList(),
+                        ),
+                      ),
+                    )
+                    : const SizedBox(width: double.infinity),
+          ),
+        ],
       ),
     );
-    final dimension = widget.dimension;
-    if (dimension == null) return popover;
-    return SizedBox.square(dimension: dimension, child: popover);
   }
 }

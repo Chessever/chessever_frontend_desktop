@@ -1778,14 +1778,7 @@ class _GameSidePanel extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _GameHeader(state: state)),
-              // What help to show, mid-game: the setup screen's list.
-              const PlayHelpModulesButton(dimension: 32),
-            ],
-          ),
+          _GameHeader(state: state),
           const SizedBox(height: 12),
           const Divider(height: 1, color: kDividerColor),
           const SizedBox(height: 12),
@@ -1809,6 +1802,9 @@ class _GameSidePanel extends ConsumerWidget {
               },
             ),
           ),
+          const SizedBox(height: 12),
+          // The help switches, folded away until the player opens them.
+          const PlayHelpModulesSection(),
           const SizedBox(height: 12),
           if (state.premoves.isNotEmpty) ...[
             _PremoveQueue(state: state, tabId: tabId),
@@ -2032,8 +2028,6 @@ class _PlayAnalysisRail extends ConsumerWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // What help to show, mid-game: the setup screen's list.
-                      const PlayHelpModulesButton(dimension: 40),
                       SizedBox.square(
                         dimension: 40,
                         child: EventInfoPopover(headers: headers),
@@ -2069,7 +2063,8 @@ class _PlayAnalysisRail extends ConsumerWidget {
                           : null,
                   tobyTabSelected: tobyTab,
                   unifiedAnalysis: true,
-                  settingsButton: const PlayHelpModulesButton(),
+                  // Play's choices live in its Live help section.
+                  showSettings: false,
                 ),
               ),
             ),
@@ -2084,6 +2079,9 @@ class _PlayAnalysisRail extends ConsumerWidget {
                   _BotEngineStatus(state: state),
                   const SizedBox(height: 12),
                 ],
+                // The help switches, folded away until the player opens them.
+                const PlayHelpModulesSection(),
+                const SizedBox(height: 12),
                 if (state.premoves.isNotEmpty) ...[
                   _PremoveQueue(state: state, tabId: tabId),
                   const SizedBox(height: 12),

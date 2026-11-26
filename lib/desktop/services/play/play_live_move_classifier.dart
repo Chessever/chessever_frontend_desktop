@@ -53,6 +53,25 @@ class PlayLiveMoveJudgements {
 /// position, each with the position after it.
 ///
 /// Moves that do not apply end the line, the way the play board replays them.
+/// The FEN after [uci] from [fen], written as the judged game writes it, or
+/// null when the move is not legal there.
+@visibleForTesting
+String? playLiveFenAfter(String fen, String uci) {
+  try {
+    final position = Chess.fromSetup(Setup.parseFen(fen));
+    final parsed = Move.parse(uci);
+    if (parsed == null) return null;
+    final move =
+        position.isLegal(parsed) || parsed is! NormalMove
+            ? parsed
+            : position.normalizeMove(parsed);
+    if (!position.isLegal(move)) return null;
+    return position.play(move).fen;
+  } catch (_) {
+    return null;
+  }
+}
+
 ChessGame playLiveClassifierGame(String startingFen, List<String> history) {
   Position position;
   try {
@@ -124,6 +143,10 @@ class PlayLiveMoveClassifier extends StateNotifier<PlayLiveMoveJudgements> {
   final Map<int, int?> _bookCounts = {};
   int _bookDryStreak = 0;
 
+  /// Book lookups asked ahead, by ply and move, so a move that was
+  /// expected finds its count waiting.
+  final Map<String, Future<int?>> _bookAhead = {};
+
   GameMoveClassification? _previousClass;
 
   /// Takes the game as it stands now. A game that is not a continuation of
@@ -135,6 +158,7 @@ class PlayLiveMoveClassifier extends StateNotifier<PlayLiveMoveJudgements> {
     if (previous != null && !_continues(previous, game)) {
       _generation++;
       _bookCounts.clear();
+      _bookAhead.clear();
       _bookDryStreak = 0;
       _previousClass = null;
       state = PlayLiveMoveJudgements(engineAvailable: state.engineAvailable);
@@ -159,7 +183,14 @@ class PlayLiveMoveClassifier extends StateNotifier<PlayLiveMoveJudgements> {
         final generation = _generation;
         if (game == null) return;
         final index = state.judgedMoves;
-        if (index >= game.mainline.length) return;
+        if (index >= game.mainline.length) {
+          // Caught up: while the side to move thinks, search the replies
+          // the engine likes best, one at a time, so the move actually
+          // played is usually judged the moment it lands. Each step is
+          // one search, then the loop looks for a real move again.
+          if (await _searchAhead(game, generation)) continue;
+          return;
+        }
         final judged = await _judge(game, index, generation);
         if (_disposed) return;
         if (generation != _generation) continue;
@@ -231,6 +262,46 @@ class PlayLiveMoveClassifier extends StateNotifier<PlayLiveMoveJudgements> {
     }
   }
 
+  /// How many replies are searched ahead: the report's own MultiPV, so the
+  /// engine's whole shortlist is covered.
+  static const int _aheadCandidates =
+      GameAnalysisReportController.reportMultiPv;
+
+  /// Searches one not-yet-searched position a likely next move would reach.
+  /// False when there is nothing left to search ahead (or no engine).
+  Future<bool> _searchAhead(ChessGame game, int generation) async {
+    final evaluator = await (_evaluator ??= _open());
+    if (evaluator == null || _disposed || generation != _generation) {
+      return false;
+    }
+    final fens = gameReportFens(game);
+    final index = game.mainline.length;
+    final fen = fens.last;
+    try {
+      final here = await _search(evaluator, fen, deep: false);
+      final candidates = <String>[
+        for (final line in here.lines.take(_aheadCandidates))
+          if (line.moves.isNotEmpty) line.moves.first,
+      ];
+      for (final uci in candidates) {
+        _bookAheadFor(game, index, uci, fens);
+      }
+      for (final uci in candidates) {
+        final after = playLiveFenAfter(fen, uci);
+        if (after == null) continue;
+        if (_searched.containsKey(after) ||
+            terminalGameReportPosition(after) != null) {
+          continue;
+        }
+        await _search(evaluator, after, deep: false);
+        return !_disposed && generation == _generation;
+      }
+    } catch (error) {
+      debugPrint('[PlayLiveMoveClassifier] search ahead: $error');
+    }
+    return false;
+  }
+
   static List<double> _winPercentages(List<GameReportPosition> positions) =>
       positions
           .map((position) => gameReportWinPercentage(position.bestLine))
@@ -297,14 +368,9 @@ class PlayLiveMoveClassifier extends StateNotifier<PlayLiveMoveJudgements> {
         _bookDryStreak >= kBookProbeDryStreak) {
       return null;
     }
-    int? count;
-    try {
-      count = await lookup(fens[index], game.mainline[index].uci, [
-        for (final move in game.mainline.take(index)) move.uci,
-      ]).timeout(kBookLookupTimeout);
-    } catch (_) {
-      count = null;
-    }
+    final count =
+        await (_bookAhead.remove(_bookKey(index, game.mainline[index].uci)) ??
+            _askBook(lookup, game, index, game.mainline[index].uci, fens));
     _bookCounts[index] = count;
     if (count == null || count < kBookMoveMinGames) {
       _bookDryStreak++;
@@ -312,6 +378,40 @@ class PlayLiveMoveClassifier extends StateNotifier<PlayLiveMoveJudgements> {
       _bookDryStreak = 0;
     }
     return count;
+  }
+
+  static String _bookKey(int index, String uci) => '$index $uci';
+
+  static Future<int?> _askBook(
+    GameReportBookLookup lookup,
+    ChessGame game,
+    int index,
+    String uci,
+    List<String> fens,
+  ) async {
+    try {
+      return await lookup(fens[index], uci, [
+        for (final move in game.mainline.take(index)) move.uci,
+      ]).timeout(kBookLookupTimeout);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Asks the book about [uci] as move [index] before it is played, under
+  /// the same rules as [_bookCount].
+  void _bookAheadFor(ChessGame game, int index, String uci, List<String> fens) {
+    final lookup = _bookLookup;
+    if (lookup == null ||
+        game.startingFen != kInitialFEN ||
+        index >= kBookProbeMaxPlies ||
+        _bookDryStreak >= kBookProbeDryStreak) {
+      return;
+    }
+    _bookAhead.putIfAbsent(
+      _bookKey(index, uci),
+      () => _askBook(lookup, game, index, uci, fens),
+    );
   }
 
   @override

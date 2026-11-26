@@ -89,8 +89,9 @@ void main() {
       expect(find.byType(EnginePanel), findsOneWidget);
       // Liked games are listed publicly; a game against a bot is private.
       expect(find.byType(DesktopBoardLikeButton), findsNothing);
-      // The modules stay one click away during the game.
-      expect(find.byType(PlayHelpModulesButton), findsWidgets);
+      // The modules stay one click away during the game, folded away.
+      expect(find.byType(PlayHelpModulesSection), findsOneWidget);
+      expect(find.byType(PlayHelpModulesList), findsNothing);
       expect(find.text('Resign'), findsOneWidget);
       expect(find.text('Abort'), findsOneWidget);
     });
@@ -122,9 +123,19 @@ void main() {
       expect(find.byType(NotationOpeningPanel), findsNothing);
       expect(find.byType(EnginePanel), findsNothing);
       expect(find.byType(NotationLadderView), findsOneWidget);
-      expect(find.byType(PlayHelpModulesButton), findsOneWidget);
+      expect(find.byType(PlayHelpModulesSection), findsOneWidget);
       expect(find.text('Resign'), findsOneWidget);
       expect(find.text('Abort'), findsOneWidget);
+
+      // Folded until asked for, then every switch is there.
+      expect(find.byType(FSwitch), findsNothing);
+      await tester.tap(find.text('Live help'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(PlayHelpModulesList), findsOneWidget);
+      expect(find.byType(FSwitch), findsNWidgets(7));
+      await tester.tap(find.text('Live help'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(FSwitch), findsNothing);
     });
   });
 
