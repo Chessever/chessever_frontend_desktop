@@ -1942,9 +1942,16 @@ class _GameHeader extends StatelessWidget {
             Icon(
               state.engineReady
                   ? Icons.check_circle_outline
+                  : state.engineFailed
+                  ? Icons.error_outline
                   : Icons.cached_outlined,
               size: 14,
-              color: state.engineReady ? kGreenColor : kSecondaryTextColor,
+              color:
+                  state.engineReady
+                      ? kGreenColor
+                      : state.engineFailed
+                      ? kRedColor
+                      : kSecondaryTextColor,
             ),
             const SizedBox(width: 4),
             Text(
@@ -2172,7 +2179,7 @@ class _PlayAnalysisRail extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (!state.engineReady) ...[
-                  _BotEngineStatus(state: state),
+                  _BotEngineStatus(state: state, tabId: tabId),
                   const SizedBox(height: 12),
                 ],
                 // The help switches, folded away until the player opens them.
@@ -2304,13 +2311,42 @@ class _PlayRailIconAction extends StatelessWidget {
 }
 
 /// The bot's engine while it is not ready to play: starting, or failed.
-class _BotEngineStatus extends StatelessWidget {
-  const _BotEngineStatus({required this.state});
+class _BotEngineStatus extends ConsumerWidget {
+  const _BotEngineStatus({required this.state, required this.tabId});
 
   final PlaySessionState state;
+  final String tabId;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // A failed engine never moves, so a spinner here would claim it is still
+    // on its way. Say what happened and offer the way back.
+    if (state.engineFailed) {
+      return Row(
+        children: [
+          const Icon(Icons.error_outline, size: 14, color: kRedColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              state.engineStatus,
+              style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+            ),
+          ),
+          const SizedBox(width: 8),
+          DesktopToolbarPillButton(
+            label: 'Try again',
+            icon: Icons.refresh,
+            height: 30,
+            onPress:
+                () => unawaited(
+                  ref
+                      .read(playSessionProviderFor(tabId).notifier)
+                      .retryEngine(),
+                ),
+          ),
+        ],
+      );
+    }
     return Row(
       children: [
         const SizedBox(

@@ -143,12 +143,21 @@
       ];
       // image.lichess1.org 301s every request to image.lichess.org.
       var hostAliases = { "image.lichess1.org": "image.lichess.org" };
+      // Engine files (the Maia model) come from the releases Worker, which
+      // sends CORS headers to this app itself. The relay only passes image/*
+      // responses, so relaying them would fail and the bot would never move.
+      function directEngineFile(url) {
+        return (url.hostname === "chessever.com" ||
+            url.hostname === "www.chessever.com") &&
+          url.pathname.indexOf("/updates/engines/") === 0;
+      }
       function relayed(raw) {
         try {
           var url = new URL(raw, location.href);
           // Same-origin requests (the app's own files on chessever.com/webapp,
           // or chessever.com images there) need no relay.
           if (url.origin === location.origin) return null;
+          if (directEngineFile(url)) return null;
           var allowed = relayHosts[url.hostname] ||
             relayPrefixes.some(function (p) {
               return url.hostname === p.host && url.pathname.indexOf(p.path) === 0;

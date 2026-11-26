@@ -84,6 +84,7 @@ class PlaySessionState {
     required this.premoves,
     required this.engineReady,
     required this.engineStatus,
+    this.engineFailed = false,
     required this.endReason,
     required this.outcome,
     required this.lastMove,
@@ -131,6 +132,11 @@ class PlaySessionState {
   final bool engineReady;
   final String engineStatus;
 
+  /// The bot's engine could not start or stopped answering. The bot will not
+  /// move until [PlaySessionNotifier.retryEngine] gets it running again, so
+  /// the game screen must say so instead of showing a loading spinner.
+  final bool engineFailed;
+
   final PlayEndReason endReason;
   final Outcome? outcome;
 
@@ -154,6 +160,7 @@ class PlaySessionState {
     List<String>? premoves,
     bool? engineReady,
     String? engineStatus,
+    bool? engineFailed,
     PlayEndReason? endReason,
     Outcome? outcome,
     NormalMove? lastMove,
@@ -179,6 +186,7 @@ class PlaySessionState {
       premoves: premoves ?? this.premoves,
       engineReady: engineReady ?? this.engineReady,
       engineStatus: engineStatus ?? this.engineStatus,
+      engineFailed: engineFailed ?? this.engineFailed,
       endReason: endReason ?? this.endReason,
       outcome: clearOutcome ? null : (outcome ?? this.outcome),
       lastMove: clearLastMove ? null : (lastMove ?? this.lastMove),
@@ -317,6 +325,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
         _maia3Engine = engine;
         state = state.copyWith(
           engineReady: true,
+          engineFailed: false,
           engineStatus: '${config.engine.displayName} ready',
         );
         if (state.isBotToMove) {
@@ -359,6 +368,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
         state = state.copyWith(
           engineStatus: 'Engine handshake failed',
           engineReady: false,
+          engineFailed: true,
         );
         return;
       }
@@ -367,6 +377,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
       engine.send('isready');
       state = state.copyWith(
         engineReady: true,
+        engineFailed: false,
         engineStatus: '${config.engine.displayName} ready',
       );
       // If the bot owns the seeded side-to-move, start its first search now.
@@ -378,14 +389,53 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
       if (kDebugMode) debugPrint('Engine boot failed: $e\n$st');
       if (!_isCurrentEngineBoot(generation)) return;
       state = state.copyWith(
-        engineStatus: 'Failed to start engine',
+        engineStatus: _engineStartFailureMessage(config.engine),
         engineReady: false,
+        engineFailed: true,
       );
     }
   }
 
   bool _isCurrentEngineBoot(int generation) =>
       mounted && generation == _engineBootGeneration;
+
+  /// Starts the bot's engine again after it failed to start or to move. The
+  /// board, notation and clocks are kept.
+  Future<void> retryEngine() async {
+    if (!mounted || !state.engineFailed || state.isGameOver) return;
+    // Any boot still in flight is stale now; its engine is disposed by the
+    // generation checks in [_bootEngineForGeneration].
+    _engineBootGeneration += 1;
+    final engineSub = _engineSub;
+    _engineSub = null;
+    if (engineSub != null) {
+      try {
+        await engineSub.cancel();
+      } catch (_) {}
+    }
+    final engine = _engine;
+    _engine = null;
+    if (engine != null) {
+      try {
+        await engine.dispose();
+      } catch (_) {}
+    }
+    final maia3 = _maia3Engine;
+    _maia3Engine = null;
+    if (maia3 != null) {
+      try {
+        await maia3.dispose();
+      } catch (_) {}
+    }
+    if (!mounted || state.isGameOver) return;
+    state = state.copyWith(
+      engineReady: false,
+      engineThinking: false,
+      engineFailed: false,
+      engineStatus: 'Starting engine…',
+    );
+    await _bootEngine();
+  }
 
   /// Replaces UCI process handles drained by an aborted updater handoff while
   /// preserving the live game's board, notation, and clock state.
@@ -418,6 +468,7 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     state = state.copyWith(
       engineReady: false,
       engineThinking: false,
+      engineFailed: false,
       engineStatus:
           state.isGameOver ? state.engineStatus : 'Restarting engine…',
     );
@@ -633,8 +684,10 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
     }
   }
 
-  Piece? _virtualPieceAt(Square square) =>
-      buildVirtualPlayBoard(state.position.board, state.premoves).pieceAt(square);
+  Piece? _virtualPieceAt(Square square) => buildVirtualPlayBoard(
+    state.position.board,
+    state.premoves,
+  ).pieceAt(square);
 
   void _scheduleEngineThink() {
     final maia3 = _maia3Engine;
@@ -706,7 +759,8 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
       state = state.copyWith(
         engineThinking: false,
         engineReady: false,
-        engineStatus: 'Maia 3 inference failed',
+        engineFailed: true,
+        engineStatus: 'Maia could not pick a move',
       );
     }
   }
@@ -852,6 +906,11 @@ class PlaySessionNotifier extends StateNotifier<PlaySessionState> {
   }
 }
 
+String _engineStartFailureMessage(BotEngineKind engine) =>
+    engine == BotEngineKind.maia
+        ? 'Maia could not load. Check your connection and try again.'
+        : '${engine.displayName} could not start.';
+
 String _enginePositionCommand(PlaySessionState state) =>
     'position fen ${state.position.fen}';
 
@@ -880,9 +939,7 @@ Board buildVirtualPlayBoard(Board base, List<String> premoves) {
     final rook = rookMove == null ? null : board.pieceAt(rookMove.from);
     board = board.removePieceAt(move.from);
     if (rookMove != null && rook != null) {
-      board = board
-          .removePieceAt(rookMove.from)
-          .setPieceAt(rookMove.to, rook);
+      board = board.removePieceAt(rookMove.from).setPieceAt(rookMove.to, rook);
     }
     final placed =
         move.promotion == null
@@ -1010,7 +1067,8 @@ final playSessionProviderFor =
         final bootEngine = ref.watch(playSessionBootEngineProvider);
         // Read, not watch: entitlement refresh must not destroy a live game.
         // A newly-created/restored session still needs admission before boot.
-        final admitted = readDesktopAccess(ref.read, desktopPlayAccessContext).isAllowed;
+        final admitted =
+            readDesktopAccess(ref.read, desktopPlayAccessContext).isAllowed;
         if (args == null || !admitted) {
           return PlaySessionNotifier(
             config: PlayConfig.defaults,
