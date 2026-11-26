@@ -60,6 +60,9 @@ const allowedRoutes: AllowedRoute[] = [
   { method: "GET", pattern: /^\/api\/game\/[^/]+$/ },
   { method: "GET", pattern: /^\/api\/eval$/ },
   { method: "POST", pattern: /^\/api\/next-move$/, viewer: true },
+  // Toby's estimate of the level each side played at (Game Reports). Same
+  // access gate as next-move, decided by Gamebase from the caller.
+  { method: "POST", pattern: /^\/api\/toby-performance$/, viewer: true },
   { method: "GET", pattern: /^\/api\/search$/ },
   { method: "GET", pattern: /^\/api\/search\/events$/ },
   { method: "GET", pattern: /^\/api\/search\/metadata$/ },

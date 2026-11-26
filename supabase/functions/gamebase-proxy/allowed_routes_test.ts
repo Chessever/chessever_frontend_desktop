@@ -311,4 +311,8 @@ Deno.test("next move predictions accept POST and forward an optional viewer", ()
   assertEquals(matchGamebaseProxyRoute("POST", "/api/next-move")?.member, undefined);
   assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/next-move"), false);
   assertEquals(isAllowedGamebaseProxyRoute("POST", "/api/next-move/admin"), false);
+  assertEquals(matchGamebaseProxyRoute("POST", "/api/toby-performance")?.viewer, true);
+  assertEquals(matchGamebaseProxyRoute("POST", "/api/toby-performance")?.member, undefined);
+  assertEquals(isAllowedGamebaseProxyRoute("GET", "/api/toby-performance"), false);
+  assertEquals(isAllowedGamebaseProxyRoute("POST", "/api/toby-performance/admin"), false);
 });

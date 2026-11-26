@@ -73,8 +73,9 @@ A function deployed before these routes existed answers `route_not_allowed`
 
 ## Next-move predictions and polling
 
-`POST /api/next-move` is a viewer route: Gamebase decides from the caller's
-bearer whether the reading is theirs to see. The function relays `Retry-After`
+`POST /api/next-move` and `POST /api/toby-performance` (Toby's level estimate
+for Game Reports, polled the same way on 202) are viewer routes: Gamebase decides from the caller's
+bearer whether the answer is theirs to see. The function relays `Retry-After`
 (exposed to browsers) so clients pace their polls, and never relays or exposes
 `X-Prediction-Cache`, which would tell one reader what others looked at.
 
