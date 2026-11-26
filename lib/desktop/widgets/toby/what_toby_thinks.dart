@@ -362,17 +362,21 @@ class WhatTobyThinks extends ConsumerStatefulWidget {
   /// metrics and the width alone, never on the reading, so the board's right
   /// rail can size the pane for it once per tab and keep that size while
   /// the reader moves through the game.
+  ///
+  /// [leadHosted]: the compact view sits under the engine header's
+  /// "Toby Predicts" ([TobyLeadHosted], the engine pane's split), so it has
+  /// no reading line of its own at rest and the rows start at the top.
   static double comfortableHeight(
     BuildContext context, {
     required double width,
     bool compactPredictions = false,
+    bool leadHosted = false,
   }) {
     final rowExtent = _tobyRowExtent(
       context,
       showBars: !compactPredictions && width >= kTobyWdlMinPanelWidth,
     );
-    return _kLeadHeight +
-        _kLeadGap +
+    return (compactPredictions && leadHosted ? 0 : _kLeadHeight + _kLeadGap) +
         _kComfortableRows * rowExtent +
         (_kComfortableRows - 1) * _kRowGap +
         _kListBottomPadding +
@@ -549,8 +553,11 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
       _keyboard = true;
       _focusedRow = row;
     });
-    _controller.hover(positionKey, listed[row].uci,
-        previewOnBoard: !widget.compactPredictions);
+    _controller.hover(
+      positionKey,
+      listed[row].uci,
+      previewOnBoard: !widget.compactPredictions,
+    );
   }
 
   void _toggleWhatIf(FPopoverController popover) {
@@ -577,8 +584,11 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
 
   void _hoverRow(String positionKey, String uci) {
     if (_keyboard) setState(() => _keyboard = false);
-    _controller.hover(positionKey, uci,
-        previewOnBoard: !widget.compactPredictions);
+    _controller.hover(
+      positionKey,
+      uci,
+      previewOnBoard: !widget.compactPredictions,
+    );
   }
 
   void _pressRow(int index, String uci) {
@@ -649,8 +659,11 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
         _keyboard = true;
         _focusedRow = next;
       });
-      _controller.hover(positionKey, listed[next].uci,
-          previewOnBoard: !widget.compactPredictions);
+      _controller.hover(
+        positionKey,
+        listed[next].uci,
+        previewOnBoard: !widget.compactPredictions,
+      );
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.enter ||
@@ -710,10 +723,12 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
         builder: (context, constraints) {
           final width = constraints.maxWidth;
           final height = constraints.maxHeight;
-          final showBars = !widget.compactPredictions && width >= kTobyWdlMinPanelWidth;
+          final showBars =
+              !widget.compactPredictions && width >= kTobyWdlMinPanelWidth;
           final rowExtent = _tobyRowExtent(context, showBars: showBars);
           final showCredit = !widget.compactPredictions;
-          final bottomReserve = _kListBottomPadding +
+          final bottomReserve =
+              _kListBottomPadding +
               (showCredit
                   ? _kAttributionScrolledGap + _tobyCreditLineHeight(context)
                   : 0);
@@ -833,19 +848,20 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
                 )
               else
                 list,
-              if (showCredit) Padding(
-                padding: EdgeInsets.fromLTRB(
-                  _kContentInset,
-                  tight
-                      ? _kAttributionTightGap
-                      : scrolls
-                      ? _kAttributionScrolledGap
-                      : _kFooterLineGap,
-                  _kContentInset,
-                  tight ? _kAttributionTightBottom : _kListBottomPadding,
+              if (showCredit)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    _kContentInset,
+                    tight
+                        ? _kAttributionTightGap
+                        : scrolls
+                        ? _kAttributionScrolledGap
+                        : _kFooterLineGap,
+                    _kContentInset,
+                    tight ? _kAttributionTightBottom : _kListBottomPadding,
+                  ),
+                  child: const _TobyAttribution(),
                 ),
-                child: const _TobyAttribution(),
-              ),
             ],
           );
         },
@@ -972,9 +988,14 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
                         child: _TobyRow(
                           key: ValueKey<String>(listed[i].uci),
                           candidate: listed[i],
-                          numberedSan: widget.compactPredictions
-                              ? _numberedTobyMove(listed[i].san, positionKey, reading.sideToMove)
-                              : null,
+                          numberedSan:
+                              widget.compactPredictions
+                                  ? _numberedTobyMove(
+                                    listed[i].san,
+                                    positionKey,
+                                    reading.sideToMove,
+                                  )
+                                  : null,
                           classification: classes[listed[i].uci],
                           muted: !reading.isFinal,
                           showBar: showBars,
@@ -1021,17 +1042,8 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     );
   }
 
-  /// Whether the what-if menu can change anything: there is a position to
-  /// read, Toby can read it, and Gamebase has not refused the reader.
   bool _whatIfApplies(TobyReadingState? state) =>
-      widget.target.request != null &&
-      switch (state?.status) {
-        TobyStatus.notApplicable ||
-        TobyStatus.premiumUnconfirmed ||
-        TobyStatus.premiumRequired ||
-        TobyStatus.signInRequired => false,
-        _ => true,
-      };
+      _tobyWhatIfApplies(widget.target, state);
 
   /// The reading line over the rows: the inputs Toby reads with (they open
   /// the what-if menu), or a busy notice with Try again over a network stage
@@ -1047,6 +1059,12 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   }) {
     final busy =
         state?.status == TobyStatus.busy && reading != null && query != null;
+    // Under the engine header's "Toby Predicts" the line has nothing left to
+    // say at rest: the name is in the header, and the inputs are in its
+    // card. Only a busy notice, with its Try again, stays over the rows.
+    if (widget.compactPredictions && !busy && TobyLeadHosted.of(context)) {
+      return null;
+    }
     // Before the first reading, the inputs Gamebase will derive from the
     // request; never a placeholder.
     final inputs =
@@ -1054,8 +1072,13 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
             ? null
             : (reading?.inputs ?? TobyInputs.expectedFor(query.request)).label;
     final wdl = reading?.positionWdl;
-    final verdict = widget.compactPredictions || wdl == null ? null : tobyVerdictLabel(wdl);
-    if (!widget.compactPredictions && !busy && inputs == null && verdict == null) return null;
+    final verdict =
+        widget.compactPredictions || wdl == null ? null : tobyVerdictLabel(wdl);
+    if (!widget.compactPredictions &&
+        !busy &&
+        inputs == null &&
+        verdict == null)
+      return null;
 
     final room = width - 2 * _kContentInset;
     final leftWidth =
@@ -1123,13 +1146,15 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
         child: Row(
           children: [
             if (widget.compactPredictions && !busy) ...[
-              const _TobyAbout(),
+              _TobyAbout(target: widget.target, controller: _controller),
               const SizedBox(width: _kMetaGap),
             ],
             Expanded(
               child: Align(
-                alignment: widget.compactPredictions && !busy
-                    ? Alignment.centerRight : Alignment.centerLeft,
+                alignment:
+                    widget.compactPredictions && !busy
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
                 child:
                     busy
                         ? busyNotice()
@@ -1243,7 +1268,8 @@ class _TobyRow extends StatelessWidget {
     final prior = candidate.prior;
     final tone = tobyRowTone(classification);
     final move = numberedSan;
-    final chance = '${candidate.percentage} chance this player plays ${move ?? candidate.san}.';
+    final chance =
+        '${candidate.percentage} chance this player plays ${move ?? candidate.san}.';
     final detail = <String>[
       chance,
       if (!muted && prior != null && candidate.priorDiffers)
@@ -1251,54 +1277,62 @@ class _TobyRow extends StatelessWidget {
       if (candidate.wdl case final wdl? when !muted)
         'After the move: ${tobyVerdictLabel(wdl)}.',
     ].join(' ');
-    final content = move != null ? Row(
-      children: [
-        Expanded(child: DesktopTooltip(
-          message: detail,
-          child: _RowLine(
-            san: move,
-            sanColor: muted ? kWhiteColor70 : kWhiteColor,
-            classification: classification,
-            instinct: null,
-          ),
-        )),
-        const SizedBox(width: _kScoreGap),
-        DesktopTooltip(message: chance, child: Text(
-          candidate.percentage,
-          style: _kChanceStyle.copyWith(color: muted ? tone.withValues(alpha: 0.6) : tone),
-        )),
-      ],
-    ) : Row(
-      children: [
-        _Chance(
-          candidate.percentage,
-          color: muted ? tone.withValues(alpha: 0.6) : tone,
-        ),
-        const SizedBox(width: _kScoreGap),
-        Expanded(
-          child: _RowLine(
-            san: candidate.san,
-            sanColor: muted ? kWhiteColor70 : kWhiteColor,
-            classification: classification,
-            instinct:
-                !muted && prior != null && candidate.priorDiffers
-                    ? 'first instinct ${_wholePercent(prior)}'
-                    : null,
-          ),
-        ),
-        if (showBar) ...[
-          const SizedBox(width: _kDetailGap),
-          _WdlBar(wdl: muted ? null : candidate.wdl),
-        ],
-      ],
-    );
+    final content =
+        move != null
+            ? Row(
+              children: [
+                Expanded(
+                  child: DesktopTooltip(
+                    message: detail,
+                    child: _RowLine(
+                      san: move,
+                      sanColor: muted ? kWhiteColor70 : kWhiteColor,
+                      classification: classification,
+                      instinct: null,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: _kScoreGap),
+                DesktopTooltip(
+                  message: chance,
+                  child: Text(
+                    candidate.percentage,
+                    style: _kChanceStyle.copyWith(
+                      color: muted ? tone.withValues(alpha: 0.6) : tone,
+                    ),
+                  ),
+                ),
+              ],
+            )
+            : Row(
+              children: [
+                _Chance(
+                  candidate.percentage,
+                  color: muted ? tone.withValues(alpha: 0.6) : tone,
+                ),
+                const SizedBox(width: _kScoreGap),
+                Expanded(
+                  child: _RowLine(
+                    san: candidate.san,
+                    sanColor: muted ? kWhiteColor70 : kWhiteColor,
+                    classification: classification,
+                    instinct:
+                        !muted && prior != null && candidate.priorDiffers
+                            ? 'first instinct ${_wholePercent(prior)}'
+                            : null,
+                  ),
+                ),
+                if (showBar) ...[
+                  const SizedBox(width: _kDetailGap),
+                  _WdlBar(wdl: muted ? null : candidate.wdl),
+                ],
+              ],
+            );
     return Semantics(
       button: true,
       selected: pinned,
-      label: '${move == null ? '' : '$move. '}${tobyCandidateSemanticsLabel(
-        candidate,
-        classification: classification,
-      )}',
+      label:
+          '${move == null ? '' : '$move. '}${tobyCandidateSemanticsLabel(candidate, classification: classification)}',
       excludeSemantics: true,
       onTap: onActivate,
       child: SingleMotionBuilder(
@@ -1689,42 +1723,320 @@ String _numberedTobyMove(String san, String fen, Side side) {
   return side == Side.white ? '$number.$san' : '$number…$san';
 }
 
-const _aboutToby = 'Toby predicts the human’s next move from the position, '
+const _aboutToby =
+    'Toby predicts the human’s next move from the position, '
     'ratings and time control. Stockfish looks for the strongest move.';
 const _aboutTobyWithCredit = '$_aboutToby\n\n$kTobyAttribution';
 
-class _TobyAbout extends StatelessWidget {
-  const _TobyAbout();
+/// Whether the what-if menu can change anything: there is a position to
+/// read, Toby can read it, and Gamebase has not refused the reader.
+bool _tobyWhatIfApplies(TobyTarget target, TobyReadingState? state) =>
+    target.request != null &&
+    switch (state?.status) {
+      TobyStatus.notApplicable ||
+      TobyStatus.premiumUnconfirmed ||
+      TobyStatus.premiumRequired ||
+      TobyStatus.signInRequired => false,
+      _ => true,
+    };
+
+/// Set by the engine pane over a compact [WhatTobyThinks] whose name sits in
+/// the engine header ([TobyHeaderLabel]), beside "Stockfish" in the split:
+/// the view then draws no reading line at rest, so its first row starts
+/// level with Stockfish's first line.
+class TobyLeadHosted extends InheritedWidget {
+  const TobyLeadHosted({super.key, required this.hosted, required super.child});
+
+  final bool hosted;
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<TobyLeadHosted>()?.hosted ??
+      false;
+
+  @override
+  bool updateShouldNotify(TobyLeadHosted oldWidget) =>
+      hosted != oldWidget.hosted;
+}
+
+/// "Toby Predicts" in the engine header, over Toby's half of the split
+/// (the left one, "Stockfish" over the right), in the same type. A click
+/// opens Toby's card: the inputs Toby reads with (they open the what-if
+/// choices), what Toby is, and its attribution. It reads the board's
+/// [controller] and [target], the same ones the view below is given, so it
+/// never asks Toby anything of its own.
+class TobyHeaderLabel extends StatelessWidget {
+  const TobyHeaderLabel({
+    super.key,
+    required this.target,
+    required this.controller,
+  });
+
+  final TobyTarget target;
+  final TobyPanelController controller;
+
+  /// The label's type: the engine header's "Stockfish".
+  static const TextStyle style = TextStyle(
+    color: kWhiteColor,
+    fontSize: 13,
+    fontWeight: FontWeight.w600,
+  );
+
+  /// Toby's name adds a dashed underline, because unlike "Stockfish" it
+  /// opens Toby's card.
+  static const TextStyle tappable = TextStyle(
+    decoration: TextDecoration.underline,
+    decorationStyle: TextDecorationStyle.dashed,
+    decorationColor: kSecondaryTextColor,
+  );
+
+  @override
+  Widget build(BuildContext context) =>
+      _TobyAbout(target: target, controller: controller, header: true);
+}
+
+/// Toby's name as the anchor of its card. In the compact reading line it is
+/// a strong underlined text action; in the engine header ([header]) it is
+/// header type with a dashed underline.
+class _TobyAbout extends StatefulWidget {
+  const _TobyAbout({
+    required this.target,
+    required this.controller,
+    this.header = false,
+  });
+
+  final TobyTarget target;
+  final TobyPanelController controller;
+  final bool header;
+
+  @override
+  State<_TobyAbout> createState() => _TobyAboutState();
+}
+
+class _TobyAboutState extends State<_TobyAbout> {
+  /// The card's focus scope. Focus moves into the card when it opens, so
+  /// the keyboard lands in its what-if choices and Esc closes it (forui's
+  /// shortcut) instead of reaching the board, where it closes the tab.
+  final FocusScopeNode _cardFocus = FocusScopeNode(
+    debugLabel: 'Toby about',
+    traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
+  );
+
+  @override
+  void dispose() {
+    _cardFocus.dispose();
+    super.dispose();
+  }
+
+  void _toggle(FPopoverController popover) {
+    final opening =
+        popover.status == AnimationStatus.dismissed ||
+        popover.status == AnimationStatus.forward;
+    unawaited(popover.toggle());
+    if (!opening) return;
+    // The card is built in the next frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && popover.status.isForwardOrCompleted) {
+        _cardFocus.requestFocus();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) => FPopover(
     popoverAnchor: Alignment.topLeft,
     childAnchor: Alignment.bottomLeft,
-    popoverBuilder: (context, _) => const SizedBox(
-      width: 260,
-      child: Padding(
-        padding: EdgeInsets.all(12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_aboutToby),
-            SizedBox(height: 8),
-            _TobyAttribution(),
-          ],
+    focusNode: _cardFocus,
+    popoverBuilder:
+        (context, _) => _TobyAboutCard(
+          target: widget.target,
+          controller: widget.controller,
         ),
-      ),
-    ),
-    builder: (context, popover, _) => DesktopTooltip(
-      message: _aboutTobyWithCredit,
-      child: _TobyTextAction(
-        label: kTobyFeatureLabel,
-        strong: true,
-        underlined: true,
-        onPress: () => unawaited(popover.toggle()),
-      ),
-    ),
+    builder:
+        (context, popover, _) => DesktopTooltip(
+          message: _aboutTobyWithCredit,
+          child:
+              widget.header
+                  ? _TobyHeaderName(
+                    // Resolved here, outside forui's own text defaults, so
+                    // the name is set exactly as the header's "Stockfish".
+                    style: DefaultTextStyle.of(this.context).style
+                        .merge(TobyHeaderLabel.style)
+                        .merge(TobyHeaderLabel.tappable),
+                    onPress: () => _toggle(popover),
+                  )
+                  : _TobyTextAction(
+                    label: kTobyFeatureLabel,
+                    strong: true,
+                    underlined: true,
+                    onPress: () => _toggle(popover),
+                  ),
+        ),
   );
+}
+
+/// "Toby Predicts" in the header's type, white at rest and under the
+/// pointer, with a click cursor.
+class _TobyHeaderName extends StatelessWidget {
+  const _TobyHeaderName({required this.style, required this.onPress});
+
+  final TextStyle style;
+  final VoidCallback onPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return FTappable.static(
+      semanticsLabel: kTobyFeatureLabel,
+      excludeSemantics: true,
+      behavior: HitTestBehavior.opaque,
+      onPress: onPress,
+      style:
+          (style) => style.copyWith(
+            cursor: const FWidgetStateMap({
+              WidgetState.any: SystemMouseCursors.click,
+            }),
+          ),
+      builder:
+          (context, _, _) => Text(
+            kTobyFeatureLabel,
+            maxLines: 1,
+            softWrap: false,
+            style: style,
+          ),
+    );
+  }
+}
+
+/// Toby's card: the inputs Toby reads with on top, a line that opens the
+/// what-if choices under it; then what Toby is, and its attribution.
+class _TobyAboutCard extends ConsumerStatefulWidget {
+  const _TobyAboutCard({required this.target, required this.controller});
+
+  final TobyTarget target;
+  final TobyPanelController controller;
+
+  @override
+  ConsumerState<_TobyAboutCard> createState() => _TobyAboutCardState();
+}
+
+class _TobyAboutCardState extends ConsumerState<_TobyAboutCard> {
+  bool _whatIfOpen = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final request = widget.target.request;
+        String? inputs;
+        if (request != null) {
+          // The query the view below watches: the same instance, so the
+          // card never sends a request of its own.
+          final query = tobyQueryFor(request, widget.controller);
+          final state = ref.watch(tobyReadingProvider(query));
+          if (_tobyWhatIfApplies(widget.target, state)) {
+            inputs =
+                (state.reading?.inputs ?? TobyInputs.expectedFor(query.request))
+                    .label;
+          }
+        }
+        return SizedBox(
+          width: 300,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (inputs != null) ...[
+                  DesktopTooltip(
+                    message: 'Read as other ratings or time controls',
+                    child: _TobyWhatIfLine(
+                      label: inputs,
+                      open: _whatIfOpen,
+                      emphasized: widget.controller.hasWhatIf,
+                      onPress: () => setState(() => _whatIfOpen = !_whatIfOpen),
+                    ),
+                  ),
+                  if (_whatIfOpen) ...[
+                    const SizedBox(height: 10),
+                    _TobyWhatIfMenu(
+                      controller: widget.controller,
+                      framed: false,
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                ],
+                const Text(_aboutToby),
+                const SizedBox(height: 8),
+                const _TobyAttribution(),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The inputs Toby reads with, as a control that opens and closes the
+/// what-if choices under it: the label, then a chevron that turns with it.
+class _TobyWhatIfLine extends StatelessWidget {
+  const _TobyWhatIfLine({
+    required this.label,
+    required this.open,
+    required this.emphasized,
+    required this.onPress,
+  });
+
+  final String label;
+  final bool open;
+  final bool emphasized;
+  final VoidCallback onPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return FTappable.static(
+      semanticsLabel: '$label. Read as other ratings or time controls',
+      excludeSemantics: true,
+      selected: open,
+      behavior: HitTestBehavior.opaque,
+      onPress: onPress,
+      style:
+          (style) => style.copyWith(
+            cursor: const FWidgetStateMap({
+              WidgetState.any: SystemMouseCursors.click,
+            }),
+          ),
+      builder: (context, states, _) {
+        // A what-if choice in effect reads white at rest, as the open line
+        // and the line under the pointer do.
+        final color =
+            states.contains(WidgetState.hovered) || open || emphasized
+                ? kWhiteColor
+                : kWhiteColor70;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _TobyTextAction.strongStyle.copyWith(color: color),
+              ),
+            ),
+            const SizedBox(width: 4),
+            AnimatedRotation(
+              turns: open ? 0.5 : 0,
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              child: Icon(Icons.expand_more_rounded, size: 16, color: color),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 /// Toby's licence attribution, verbatim, with its site linked.
@@ -1787,9 +2099,13 @@ class _TobyAttributionState extends State<_TobyAttribution> {
 /// What-if choices for this board: both players' rating and the time
 /// control. Kept for the board's lifetime, never saved.
 class _TobyWhatIfMenu extends StatelessWidget {
-  const _TobyWhatIfMenu({required this.controller});
+  const _TobyWhatIfMenu({required this.controller, this.framed = true});
 
   final TobyPanelController controller;
+
+  /// Its own surface and edge, as a popover of its own. Inside Toby's card
+  /// the card is the surface.
+  final bool framed;
 
   @override
   Widget build(BuildContext context) {
@@ -1797,6 +2113,52 @@ class _TobyWhatIfMenu extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         final whatIf = controller.whatIf;
+        final choices = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _WhatIfLabel('Both players rated'),
+            const SizedBox(height: 6),
+            DesktopSegmentedTabs<int?>(
+              wrap: true,
+              selected: whatIf.rating,
+              onChanged:
+                  (rating) => controller.setWhatIf((
+                    rating: rating,
+                    cadence: whatIf.cadence,
+                  )),
+              tabs: [
+                const DesktopSegmentedTab<int?>(value: null, label: 'Game'),
+                for (final rating in kTobyRatingOverrides)
+                  DesktopSegmentedTab<int?>(value: rating, label: '$rating'),
+              ],
+            ),
+            const SizedBox(height: 14),
+            const _WhatIfLabel('Time control'),
+            const SizedBox(height: 6),
+            DesktopSegmentedTabs<TobyCadence?>(
+              wrap: true,
+              selected: whatIf.cadence,
+              onChanged:
+                  (cadence) => controller.setWhatIf((
+                    rating: whatIf.rating,
+                    cadence: cadence,
+                  )),
+              tabs: [
+                const DesktopSegmentedTab<TobyCadence?>(
+                  value: null,
+                  label: 'Game',
+                ),
+                for (final cadence in TobyCadence.values)
+                  DesktopSegmentedTab<TobyCadence?>(
+                    value: cadence,
+                    label: cadence.label,
+                  ),
+              ],
+            ),
+          ],
+        );
+        if (!framed) return choices;
         return Container(
           width: 360,
           padding: const EdgeInsets.all(16),
@@ -1805,51 +2167,7 @@ class _TobyWhatIfMenu extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: kDividerColor),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _WhatIfLabel('Both players rated'),
-              const SizedBox(height: 6),
-              DesktopSegmentedTabs<int?>(
-                wrap: true,
-                selected: whatIf.rating,
-                onChanged:
-                    (rating) => controller.setWhatIf((
-                      rating: rating,
-                      cadence: whatIf.cadence,
-                    )),
-                tabs: [
-                  const DesktopSegmentedTab<int?>(value: null, label: 'Game'),
-                  for (final rating in kTobyRatingOverrides)
-                    DesktopSegmentedTab<int?>(value: rating, label: '$rating'),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const _WhatIfLabel('Time control'),
-              const SizedBox(height: 6),
-              DesktopSegmentedTabs<TobyCadence?>(
-                wrap: true,
-                selected: whatIf.cadence,
-                onChanged:
-                    (cadence) => controller.setWhatIf((
-                      rating: whatIf.rating,
-                      cadence: cadence,
-                    )),
-                tabs: [
-                  const DesktopSegmentedTab<TobyCadence?>(
-                    value: null,
-                    label: 'Game',
-                  ),
-                  for (final cadence in TobyCadence.values)
-                    DesktopSegmentedTab<TobyCadence?>(
-                      value: cadence,
-                      label: cadence.label,
-                    ),
-                ],
-              ),
-            ],
-          ),
+          child: choices,
         );
       },
     );
@@ -1948,7 +2266,10 @@ class _TobyViewTabsState extends ConsumerState<TobyViewTabs> {
       label: kTobyFeatureLabel,
       selected: toby,
       onPress: _chooseToby,
-      padding: EdgeInsets.only(right: widget.compact ? 0 : _kTabEdge, left: half),
+      padding: EdgeInsets.only(
+        right: widget.compact ? 0 : _kTabEdge,
+        left: half,
+      ),
     );
     return Semantics(
       container: true,
