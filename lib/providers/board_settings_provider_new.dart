@@ -40,7 +40,6 @@ class BoardSettingsNew {
         false, // Use letters (KQRBN) instead of chess piece symbols by default
     this.notationInline = true,
     this.showMoveNavigation = false,
-    this.showPlayLiveHelp = false,
   });
 
   /// DEPRECATED: Kept for backwards compatibility migration only
@@ -73,13 +72,6 @@ class BoardSettingsNew {
   /// the board can use the freed vertical space; keyboard and notation clicks
   /// remain the primary navigation path.
   final bool showMoveNavigation;
-
-  /// Desktop and web: live help while playing a bot. On, the Play board
-  /// carries the watching board's rail (engine, Toby Predicts, explorer),
-  /// the eval and Toby bars and live move marks. Off, a game is played as
-  /// in competition, with only the moves and the game controls. Off by
-  /// default so games stay help-free unless the player opts in.
-  final bool showPlayLiveHelp;
 
   /// Get the current piece set from chessground
   PieceSet get pieceSet => getPieceSetByIndex(pieceStyleIndex);
@@ -152,7 +144,6 @@ class BoardSettingsNew {
     bool? useFigurine,
     bool? notationInline,
     bool? showMoveNavigation,
-    bool? showPlayLiveHelp,
   }) {
     return BoardSettingsNew(
       boardColorIndex: boardColorIndex ?? this.boardColorIndex,
@@ -168,7 +159,6 @@ class BoardSettingsNew {
       useFigurine: useFigurine ?? this.useFigurine,
       notationInline: notationInline ?? this.notationInline,
       showMoveNavigation: showMoveNavigation ?? this.showMoveNavigation,
-      showPlayLiveHelp: showPlayLiveHelp ?? this.showPlayLiveHelp,
     );
   }
 }
@@ -357,15 +347,6 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
     await _persist(newSettings);
   }
 
-  /// Toggle live help (engine rail, bars, move marks) on the Play board.
-  Future<void> togglePlayLiveHelp(bool value) async {
-    final currentState = state.valueOrNull ?? const BoardSettingsNew();
-    if (currentState.showPlayLiveHelp == value) return;
-    final newSettings = currentState.copyWith(showPlayLiveHelp: value);
-    state = AsyncValue.data(newSettings);
-    await _persist(newSettings);
-  }
-
   /// Toggle figurine notation (chess piece symbols instead of letters)
   Future<void> toggleFigurine(bool value) async {
     final currentState = state.valueOrNull ?? const BoardSettingsNew();
@@ -435,7 +416,6 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
         'useFigurine': settings.useFigurine,
         'notationInline': settings.notationInline,
         'showMoveNavigation': settings.showMoveNavigation,
-        'showPlayLiveHelp': settings.showPlayLiveHelp,
       });
       await db.setString(_cacheKey, json);
       debugPrint('[BoardSettings] Cached settings locally');
@@ -495,11 +475,6 @@ class BoardSettingsNotifierNew extends AsyncNotifier<BoardSettingsNew> {
             map['notationInline'] as bool? ?? defaults.notationInline,
         showMoveNavigation:
             map['showMoveNavigation'] as bool? ?? defaults.showMoveNavigation,
-        // Players who turned on the old play eval bar keep their help.
-        showPlayLiveHelp:
-            map['showPlayLiveHelp'] as bool? ??
-            map['showPlayEvalBar'] as bool? ??
-            defaults.showPlayLiveHelp,
       );
       debugPrint('[BoardSettings] Loaded settings from cache');
       return settings;

@@ -14,8 +14,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:motor/motor.dart';
 
 import 'package:chessever/desktop/panes/board_pane.dart'
-    show shouldShowDesktopBoardEvalBar, shouldShowDesktopBoardTobyBar;
+    show boardEnginePvArrowShapes;
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
+import 'package:chessever/desktop/state/play_help_modules.dart';
+import 'package:chessever/desktop/widgets/arrow_move_eval_labels.dart';
+import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
 import 'package:chessever/desktop/widgets/toby/toby_bar.dart';
 import 'package:chessever/desktop/services/play/play_live_move_classifier.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
@@ -90,34 +93,15 @@ const _playEvalBarWidth = 22.0;
 const _playEvalBarGap = 10.0;
 const _playEvalBarReservedWidth = _playEvalBarWidth + _playEvalBarGap;
 
-/// Whether the player turned on live help (Settings > "Live help while
-/// playing", or the switch beside the game). Off, a game is played as in
-/// competition: moves and game controls, no engine, Toby or move marks.
-bool _playLiveHelp(BoardSettingsNew? settings) =>
-    settings?.showPlayLiveHelp ?? const BoardSettingsNew().showPlayLiveHelp;
-
-/// The bars beside the play board: none without live help, else the
-/// watching board's own rule for each (Stockfish's on the left, Toby's on
-/// the right).
-({bool eval, bool toby}) _playBars(
-  BoardSettingsNew? board,
-  EngineSettings? engine,
-  BoardAnalysisPreferences preferences,
-) {
-  if (!_playLiveHelp(board) || engine == null) {
-    return (eval: false, toby: false);
-  }
-  return (
-    eval: shouldShowDesktopBoardEvalBar(engine, preferences),
-    toby: shouldShowDesktopBoardTobyBar(engine, null, preferences),
-  );
-}
-
-({bool eval, bool toby}) _watchPlayBars(WidgetRef ref) => _playBars(
-  ref.watch(boardSettingsProviderNew).valueOrNull,
-  ref.watch(engineSettingsProviderNew).valueOrNull,
-  ref.watch(boardAnalysisPreferencesProvider),
+/// The bars beside the play board, each its own help module: Stockfish's
+/// on the left, Toby's on the right.
+({bool eval, bool toby}) _playBars(PlayHelpModules modules) => (
+  eval: modules.evalBar,
+  toby: modules.tobyBar,
 );
+
+({bool eval, bool toby}) _watchPlayBars(WidgetRef ref) =>
+    _playBars(ref.watch(playHelpModulesProvider));
 
 double _playBarsReservedWidth(({bool eval, bool toby}) bars) =>
     (bars.eval ? _playEvalBarReservedWidth : 0.0) +
@@ -199,11 +183,7 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     // A grow-drag is bounded by the column width until the column itself
     // grows, so hand the split view the width the board now needs. The side
     // panel surrenders the difference down to its own minimum.
-    final bars = _playBars(
-      ref.read(boardSettingsProviderNew).valueOrNull,
-      ref.read(engineSettingsProviderNew).valueOrNull,
-      ref.read(boardAnalysisPreferencesProvider),
-    );
+    final bars = _playBars(ref.read(playHelpModulesProvider));
     _splitController.setSize(
       0,
       clamped + _playBarsReservedWidth(bars) + (_playBoardPadding * 2) + 16,
@@ -271,8 +251,8 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
 
     final orientation = _flipped ? state.humanSide.opposite : state.humanSide;
     void flipBoard() => setState(() => _flipped = !_flipped);
-    final liveHelp = ref.watch(
-      boardSettingsProviderNew.select((s) => _playLiveHelp(s.valueOrNull)),
+    final showsRail = ref.watch(
+      playHelpModulesProvider.select((m) => m.showsRail),
     );
 
     return CallbackShortcuts(
@@ -309,7 +289,7 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
                 onBoardSizeReset: _resetBoardSize,
               ),
             ),
-            if (liveHelp)
+            if (showsRail)
               SplitChild(
                 // Wide enough for the engine header's controls, as on the
                 // watching board.
@@ -1458,11 +1438,9 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
     // The report's mark for the move that made the position on the board,
     // once the live classifier has judged it.
     final moveIndex = review.ply - 1;
-    final liveHelp = ref.watch(
-      boardSettingsProviderNew.select((s) => _playLiveHelp(s.valueOrNull)),
-    );
+    final modules = ref.watch(playHelpModulesProvider);
     final classification =
-        moveIndex < 0 || !liveHelp
+        moveIndex < 0 || !modules.moveMarks
             ? null
             : ref.watch(
               playLiveMoveJudgementsProvider(
@@ -1507,6 +1485,30 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
     final boardFen = virtualBoard.fen;
     // Once per build, not per resize frame inside the LayoutBuilder.
     final validMoves = makeLegalMoves(review.position);
+    // Stockfish's arrows, when the player chose them: the first move of each
+    // of its lines for the position on the board, as the watching board
+    // draws them.
+    final shownFen = review.position.fen;
+    final engineArrows =
+        modules.arrows != PlayHelpArrows.stockfish
+            ? const ISet<cg.Shape>.empty()
+            : ISet<cg.Shape>(
+              boardEnginePvArrowShapes(
+                fen: shownFen,
+                pvs: ref.watch(
+                  boardEvalProvider(shownFen).select((s) => s.pvs),
+                ),
+                settings:
+                    ref.watch(engineSettingsProviderNew).valueOrNull ??
+                    const EngineSettings(),
+              ),
+            );
+    // The player's own arrows that are legal moves here, for their evals.
+    final ownArrows = <cg.Arrow>[
+      if (modules.arrowEvals)
+        for (final shape in positionShapes)
+          if (shape is cg.Arrow) shape,
+    ];
     return LayoutBuilder(
       builder: (context, c) {
         final size = c.maxWidth < c.maxHeight ? c.maxWidth : c.maxHeight;
@@ -1580,14 +1582,20 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
                             setState(() => _promotionPending = null);
                             notifier.playHumanMove(promoted.uci);
                           },
-                          shapes:
-                              liveHelp
-                                  ? _withTobyArrows(
-                                    mergedShapes,
-                                    toby,
-                                    fen: review.position.fen,
-                                  )
-                                  : mergedShapes,
+                          // One arrow source at a time: Stockfish's lines
+                          // or Toby's guesses, as the player chose. A Toby
+                          // row under the pointer still shows its move.
+                          shapes: _withTobyArrows(
+                            engineArrows.isEmpty
+                                ? mergedShapes
+                                : mergedShapes.addAll(engineArrows),
+                            toby != null &&
+                                    (modules.arrows == PlayHelpArrows.toby ||
+                                        toby.exclusive)
+                                ? toby
+                                : null,
+                            fen: review.position.fen,
+                          ),
                           squareHighlights:
                               isLiveTip
                                   ? _premoveHeatMap(state.premoves)
@@ -1624,6 +1632,16 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
                             }
                           },
                         ),
+                        if (ownArrows.isNotEmpty)
+                          Positioned.fill(
+                            child: ArrowMoveEvalLabels(
+                              fen: shownFen,
+                              arrows: ownArrows,
+                              boardSize: size,
+                              orientation: orientation,
+                              liveLinesFen: shownFen,
+                            ),
+                          ),
                         if (badgeSquare != null && classification != null)
                           BoardMoveBadge.annotation(
                             boardSize: size,
@@ -1720,8 +1738,8 @@ NormalMove? _tryParseNormalMove(String uci) {
   }
 }
 
-/// The competition layout: the game, its moves and its controls, with no
-/// engine, Toby or move marks. Live help swaps in [_PlayAnalysisRail].
+/// The game, its moves and its controls, when no help needs the analysis
+/// rail ([PlayHelpModules.showsRail]); otherwise [_PlayAnalysisRail].
 class _GameSidePanel extends ConsumerWidget {
   const _GameSidePanel({
     required this.state,
@@ -1760,10 +1778,15 @@ class _GameSidePanel extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _GameHeader(state: state),
-          const SizedBox(height: 10),
-          const _LiveHelpToggle(),
-          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _GameHeader(state: state)),
+              // What help to show, mid-game: the setup screen's list.
+              const PlayHelpModulesButton(dimension: 32),
+            ],
+          ),
+          const SizedBox(height: 12),
           const Divider(height: 1, color: kDividerColor),
           const SizedBox(height: 12),
           Expanded(
@@ -1797,45 +1820,6 @@ class _GameSidePanel extends ConsumerWidget {
             _GameActions(state: state, tabId: tabId),
         ],
       ),
-    );
-  }
-}
-
-/// In-game shortcut for Settings > "Live help while playing": on, the
-/// watching board's rail, the eval and Toby bars and live move marks; off,
-/// a game played as in competition.
-class _LiveHelpToggle extends ConsumerWidget {
-  const _LiveHelpToggle();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final on = ref.watch(
-      boardSettingsProviderNew.select((s) => _playLiveHelp(s.valueOrNull)),
-    );
-    return Row(
-      children: [
-        const Expanded(
-          child: Text(
-            'Live help',
-            style: TextStyle(
-              color: kWhiteColor70,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        FTheme(
-          data: FThemes.zinc.dark,
-          child: FSwitch(
-            semanticsLabel: 'Live help',
-            value: on,
-            onChange:
-                (value) => ref
-                    .read(boardSettingsProviderNew.notifier)
-                    .togglePlayLiveHelp(value),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -1963,7 +1947,7 @@ class _PlayAnalysisRail extends ConsumerWidget {
 
     void goToPly(int ply) => onReviewPlyChanged(_clampPly(ply, total));
 
-    final prefs = ref.watch(boardAnalysisPreferencesProvider);
+    final modules = ref.watch(playHelpModulesProvider);
     final toby = WhatTobyThinks(
       target: _playTobyTarget(ref, state, review, tabId: tabId),
       controller: tobyPanel,
@@ -1997,71 +1981,96 @@ class _PlayAnalysisRail extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: NotationOpeningPanel(
-              tabId: tabId,
-              notationChild: notation,
-              currentFen: position.fen,
-              startingFen: game.startingFen,
-              lineUcis: lineUcis,
-              onPlayUciMove: playUci,
-              onNotationStep: (delta) {
-                final next = currentPly + delta;
-                if (next < 0 || next > total) return false;
-                goToPly(next);
-                return true;
-              },
-              onNotationJumpToHead: () => goToPly(0),
-              onNotationJumpToTip: () => goToPly(total),
-              canGoBack: currentPly > 0,
-              canGoForward: currentPly < total,
-              onFirstMove: () => goToPly(0),
-              onPreviousMove: () => goToPly(currentPly - 1),
-              onNextMove: () => goToPly(currentPly + 1),
-              onLastMove: () => goToPly(total),
-              // Moves are marked as they are played, so the whole-game report
-              // waits for the finished game on its Board tab.
-              showReport: false,
-              secondaryActions: _PlayRailSecondaryActions(
-                onFlipBoard: onFlipBoard,
-                onShare:
-                    () => unawaited(
-                      _sharePlayPosition(
-                        context,
-                        game: game,
-                        headers: headers,
-                        review: review,
-                        flipped: orientation == Side.black,
-                      ),
-                    ),
-              ),
-              trailingActions: FTheme(
-                data: FThemes.zinc.dark,
-                child: SizedBox.square(
-                  dimension: 40,
-                  child: EventInfoPopover(headers: headers),
+            // The engine pane reads the Board's analysis choices; here they
+            // are the player's help modules, so its own switches change
+            // those and never the Board's settings.
+            child: ProviderScope(
+              overrides: [
+                boardAnalysisPreferencesProvider.overrideWith(
+                  PlayAnalysisSettings.new,
                 ),
-              ),
-              // Stockfish and Toby share one pane, as on the watching board.
-              showEngine:
-                  !prefs.paused &&
-                  (prefs.stockfishAnalysis || prefs.tobyAnalysis),
-              onRestoreEngine:
-                  () => ref
-                      .read(boardAnalysisPreferencesProvider.notifier)
-                      .setStockfishAnalysis(true),
-              enginePanel: EnginePanel(
-                fen: position.fen,
-                sideToMove: position.turn == Side.white ? 'w' : 'b',
-                headers: headers,
-                activePly: currentPly,
-                onJumpToPly: goToPly,
-                reportVisible: false,
-                autoAnalysisAllowed: false,
-                isForegroundTab: foreground,
-                toby: prefs.tobyAnalysis ? toby : null,
-                tobyArrowsOnly: prefs.tobyAnalysis ? null : toby,
-                tobyTabSelected: tobyTab,
-                unifiedAnalysis: true,
+              ],
+              child: NotationOpeningPanel(
+                tabId: tabId,
+                notationChild: notation,
+                currentFen: position.fen,
+                startingFen: game.startingFen,
+                lineUcis: lineUcis,
+                onPlayUciMove: playUci,
+                onNotationStep: (delta) {
+                  final next = currentPly + delta;
+                  if (next < 0 || next > total) return false;
+                  goToPly(next);
+                  return true;
+                },
+                onNotationJumpToHead: () => goToPly(0),
+                onNotationJumpToTip: () => goToPly(total),
+                canGoBack: currentPly > 0,
+                canGoForward: currentPly < total,
+                onFirstMove: () => goToPly(0),
+                onPreviousMove: () => goToPly(currentPly - 1),
+                onNextMove: () => goToPly(currentPly + 1),
+                onLastMove: () => goToPly(total),
+                // Moves are marked as they are played, so the whole-game report
+                // waits for the finished game on its Board tab.
+                showReport: false,
+                secondaryActions: _PlayRailSecondaryActions(
+                  onFlipBoard: onFlipBoard,
+                  onShare:
+                      () => unawaited(
+                        _sharePlayPosition(
+                          context,
+                          game: game,
+                          headers: headers,
+                          review: review,
+                          flipped: orientation == Side.black,
+                        ),
+                      ),
+                ),
+                trailingActions: FTheme(
+                  data: FThemes.zinc.dark,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // What help to show, mid-game: the setup screen's list.
+                      const PlayHelpModulesButton(dimension: 40),
+                      SizedBox.square(
+                        dimension: 40,
+                        child: EventInfoPopover(headers: headers),
+                      ),
+                    ],
+                  ),
+                ),
+                showExplorer: modules.explorer,
+                // Stockfish and Toby share one pane, as on the watching board;
+                // it also carries Toby's reading when only his arrows are on.
+                showEngine:
+                    modules.engineLines ||
+                    modules.tobyPredictions ||
+                    modules.arrows == PlayHelpArrows.toby,
+                onRestoreEngine:
+                    () => ref
+                        .read(playHelpModulesProvider.notifier)
+                        .update((m) => m.copyWith(engineLines: true)),
+                enginePanel: EnginePanel(
+                  fen: position.fen,
+                  sideToMove: position.turn == Side.white ? 'w' : 'b',
+                  headers: headers,
+                  activePly: currentPly,
+                  onJumpToPly: goToPly,
+                  reportVisible: false,
+                  autoAnalysisAllowed: false,
+                  isForegroundTab: foreground,
+                  toby: modules.tobyPredictions ? toby : null,
+                  tobyArrowsOnly:
+                      !modules.tobyPredictions &&
+                              modules.arrows == PlayHelpArrows.toby
+                          ? toby
+                          : null,
+                  tobyTabSelected: tobyTab,
+                  unifiedAnalysis: true,
+                  settingsButton: const PlayHelpModulesButton(),
+                ),
               ),
             ),
           ),
@@ -2075,8 +2084,6 @@ class _PlayAnalysisRail extends ConsumerWidget {
                   _BotEngineStatus(state: state),
                   const SizedBox(height: 12),
                 ],
-                const _LiveHelpToggle(),
-                const SizedBox(height: 10),
                 if (state.premoves.isNotEmpty) ...[
                   _PremoveQueue(state: state, tabId: tabId),
                   const SizedBox(height: 12),

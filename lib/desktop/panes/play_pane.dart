@@ -27,6 +27,7 @@ import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
+import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
 import 'package:chessever/desktop/widgets/play_strength_control.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -666,9 +667,18 @@ class _SetupColumnLeft extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _SetupCard(
-      title: 'Time control',
-      child: _TimeControlSection(config: config, notifier: notifier),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SetupCard(
+          title: 'Time control',
+          child: _TimeControlSection(config: config, notifier: notifier),
+        ),
+        const SizedBox(height: 18),
+        // Each kind of help on its own switch; all off plays the game as
+        // in competition. The same list opens from the game itself.
+        const _SetupCard(title: 'Live help', child: PlayHelpModulesList()),
+      ],
     );
   }
 }

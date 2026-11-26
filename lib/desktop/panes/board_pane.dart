@@ -11075,6 +11075,18 @@ String _firstPvMove(String moves) {
   return separator < 0 ? trimmed : trimmed.substring(0, separator);
 }
 
+/// Stockfish's arrows for [fen] from its lines [pvs], drawn as the
+/// watching board draws them. Play's live help shares them.
+List<cg.Shape> boardEnginePvArrowShapes({
+  required String fen,
+  required List<BoardPv> pvs,
+  required EngineSettings settings,
+}) => _enginePvArrowShapes(
+  fen: fen,
+  pvs: pvs,
+  settings: settings.copyWith(showEngineAnalysis: true, showPvArrows: true),
+);
+
 @visibleForTesting
 List<cg.Shape> debugEnginePvArrowShapes({
   required String fen,

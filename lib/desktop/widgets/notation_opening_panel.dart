@@ -155,6 +155,7 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
     this.onToggleReport,
     this.enginePanel,
     this.showEngine = true,
+    this.showExplorer = true,
     this.onRestoreEngine,
   });
 
@@ -244,6 +245,10 @@ class NotationOpeningPanel extends ConsumerStatefulWidget {
   /// off). Drives collapse/restore of the engine pane so it reclaims space
   /// when both it and the report are off.
   final bool showEngine;
+
+  /// Whether the opening explorer (and its toolbar button and `O` key) is
+  /// offered. Play turns it off unless the player chose it as live help.
+  final bool showExplorer;
 
   /// Invoked when the collapsed engine rail is restored (turns the engine on).
   final VoidCallback? onRestoreEngine;
@@ -630,6 +635,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
   }
 
   void _toggleExplorerVisibility() {
+    if (!widget.showExplorer) return;
     final explorerVisible = _buildExplorerPage || _page > 0;
     if (explorerVisible) {
       setState(() {
@@ -709,7 +715,8 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
       final page = next.clamp(0, 2);
       if (page != _page) _go(page, persist: false);
     });
-    final explorerVisible = _buildExplorerPage || _page > 0;
+    final explorerVisible =
+        widget.showExplorer && (_buildExplorerPage || _page > 0);
     final buildExplorerPage = explorerVisible;
     final notationPane = FocusScope(
       node: _pageScopes[0],
@@ -847,6 +854,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                       ),
             ),
             _SegmentBar(
+              showExplorer: widget.showExplorer,
               explorerOpen: explorerVisible,
               onToggleExplorer: _toggleExplorerVisibility,
               reportSelected: widget.reportSelected,
@@ -1139,6 +1147,7 @@ class _ExplorerSourceButton extends StatelessWidget {
 
 class _SegmentBar extends ConsumerWidget {
   const _SegmentBar({
+    this.showExplorer = true,
     required this.explorerOpen,
     required this.onToggleExplorer,
     required this.reportSelected,
@@ -1173,6 +1182,7 @@ class _SegmentBar extends ConsumerWidget {
     this.hasUnseenLiveMove = false,
   });
 
+  final bool showExplorer;
   final bool explorerOpen;
   final VoidCallback onToggleExplorer;
   final bool reportSelected;
@@ -1257,15 +1267,16 @@ class _SegmentBar extends ConsumerWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       if (leadingActions != null) leadingActions!,
-                      _RailIconButton(
-                        icon: Icons.menu_book_outlined,
-                        tooltip: _tooltipWithShortcut(
-                          explorerOpen ? 'Hide Explorer' : 'Open Explorer',
-                          openExplorerShortcutLabel,
+                      if (showExplorer)
+                        _RailIconButton(
+                          icon: Icons.menu_book_outlined,
+                          tooltip: _tooltipWithShortcut(
+                            explorerOpen ? 'Hide Explorer' : 'Open Explorer',
+                            openExplorerShortcutLabel,
+                          ),
+                          selected: explorerOpen,
+                          onTap: onToggleExplorer,
                         ),
-                        selected: explorerOpen,
-                        onTap: onToggleExplorer,
-                      ),
                       if (showReport)
                         _RailIconButton(
                           icon: Icons.analytics_outlined,
