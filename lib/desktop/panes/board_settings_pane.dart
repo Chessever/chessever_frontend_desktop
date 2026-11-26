@@ -440,12 +440,12 @@ class _EngineCard extends StatelessWidget {
           ),
           const _RowDivider(),
           _SwitchRow(
-            label: 'Eval bar while playing',
+            label: 'Live help while playing',
             description:
-                'Show a live evaluation bar beside the board in Play games.',
-            value: board.showPlayEvalBar,
+                'Engine, Toby, eval bars and move marks during Play games.',
+            value: board.showPlayLiveHelp,
             onChange:
-                ref.read(boardSettingsProviderNew.notifier).togglePlayEvalBar,
+                ref.read(boardSettingsProviderNew.notifier).togglePlayLiveHelp,
           ),
           const _RowDivider(),
           _SwitchRow(
@@ -460,7 +460,9 @@ class _EngineCard extends StatelessWidget {
             helpText: 'Choose which analysis draws its moves on the Board.',
             options: const ['Stockfish', 'Toby', 'Off'],
             selectedIndex: prefs.arrows(settings).index,
-            onSelect: (index) => analysis.setArrows(BoardAnalysisArrows.values[index]),
+            onSelect:
+                (index) =>
+                    analysis.setArrows(BoardAnalysisArrows.values[index]),
           ),
           const SizedBox(height: 18),
           _SegmentedField(

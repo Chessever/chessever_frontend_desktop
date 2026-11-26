@@ -13,6 +13,26 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:motor/motor.dart';
 
+import 'package:chessever/desktop/panes/board_pane.dart'
+    show shouldShowDesktopBoardEvalBar, shouldShowDesktopBoardTobyBar;
+import 'package:chessever/desktop/state/board_analysis_preferences.dart';
+import 'package:chessever/desktop/widgets/toby/toby_bar.dart';
+import 'package:chessever/desktop/services/play/play_live_move_classifier.dart';
+import 'package:chessever/desktop/services/toby/toby_prediction.dart';
+import 'package:chessever/desktop/state/board_eval.dart';
+import 'package:chessever/desktop/state/play_live_move_judgements.dart';
+import 'package:chessever/desktop/state/toby_panel.dart';
+import 'package:chessever/desktop/widgets/board_move_badge.dart';
+import 'package:chessever/desktop/widgets/board_share_dialog.dart';
+import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
+import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/engine_panel.dart';
+import 'package:chessever/desktop/widgets/event_info_popover.dart';
+import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
+import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart';
+import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/screens/chessboard/game_review/classification_style.dart';
+import 'package:chessever/services/lichess_move_annotations_service.dart';
 import 'package:chessever/desktop/services/play/engine_installer.dart';
 import 'package:chessever/desktop/services/play/play_achievements.dart';
 import 'package:chessever/desktop/services/play/play_elo.dart';
@@ -35,7 +55,6 @@ import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
-import 'package:chessever/desktop/widgets/play_live_eval_bar.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -63,14 +82,46 @@ const _playHeaderGap = 10.0;
 const _playBoardPadding = 16.0;
 const _playResizeGripTarget = 16.0;
 
-/// Optional live eval bar to the left of the board ("Eval bar while playing"
-/// in Settings, off by default). The board gives up this width when shown.
+/// The eval bar left of the board. It follows the watching board's rule: it
+/// shows while the engine is on and its gauge is enabled, and reads the same
+/// search as the engine pane beside it. The board gives up this width when
+/// it shows.
 const _playEvalBarWidth = 22.0;
 const _playEvalBarGap = 10.0;
 const _playEvalBarReservedWidth = _playEvalBarWidth + _playEvalBarGap;
 
-bool _showPlayEvalBar(BoardSettingsNew? settings) =>
-    settings?.showPlayEvalBar ?? const BoardSettingsNew().showPlayEvalBar;
+/// Whether the player turned on live help (Settings > "Live help while
+/// playing", or the switch beside the game). Off, a game is played as in
+/// competition: moves and game controls, no engine, Toby or move marks.
+bool _playLiveHelp(BoardSettingsNew? settings) =>
+    settings?.showPlayLiveHelp ?? const BoardSettingsNew().showPlayLiveHelp;
+
+/// The bars beside the play board: none without live help, else the
+/// watching board's own rule for each (Stockfish's on the left, Toby's on
+/// the right).
+({bool eval, bool toby}) _playBars(
+  BoardSettingsNew? board,
+  EngineSettings? engine,
+  BoardAnalysisPreferences preferences,
+) {
+  if (!_playLiveHelp(board) || engine == null) {
+    return (eval: false, toby: false);
+  }
+  return (
+    eval: shouldShowDesktopBoardEvalBar(engine, preferences),
+    toby: shouldShowDesktopBoardTobyBar(engine, null, preferences),
+  );
+}
+
+({bool eval, bool toby}) _watchPlayBars(WidgetRef ref) => _playBars(
+  ref.watch(boardSettingsProviderNew).valueOrNull,
+  ref.watch(engineSettingsProviderNew).valueOrNull,
+  ref.watch(boardAnalysisPreferencesProvider),
+);
+
+double _playBarsReservedWidth(({bool eval, bool toby}) bars) =>
+    (bars.eval ? _playEvalBarReservedWidth : 0.0) +
+    (bars.toby ? _playEvalBarReservedWidth : 0.0);
 
 const _playSplitStorageKey = 'play_pane.active_game.v1';
 const _playBoardInitialWeight = 0.64;
@@ -95,15 +146,29 @@ class PlayActiveGameView extends ConsumerStatefulWidget {
 
 class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
   final _splitController = ResizableSplitViewController();
+
+  /// The Toby Predicts tab's state for this board: hover, pin and the
+  /// arrows they put on the board.
+  final _tobyPanel = TobyPanelController();
   int? _reviewPly;
   int? _lastHistoryLength;
   double? _boardSizePreference;
   int? _lastPersistedBoardSize;
 
+  /// The reader turned the board round. The board starts from their own
+  /// side, as the game does.
+  bool _flipped = false;
+
   @override
   void initState() {
     super.initState();
     unawaited(_loadBoardSizePreference());
+  }
+
+  @override
+  void dispose() {
+    _tobyPanel.dispose();
+    super.dispose();
   }
 
   Future<void> _loadBoardSizePreference() async {
@@ -134,13 +199,14 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     // A grow-drag is bounded by the column width until the column itself
     // grows, so hand the split view the width the board now needs. The side
     // panel surrenders the difference down to its own minimum.
-    final evalBarWidth =
-        _showPlayEvalBar(ref.read(boardSettingsProviderNew).valueOrNull)
-            ? _playEvalBarReservedWidth
-            : 0.0;
+    final bars = _playBars(
+      ref.read(boardSettingsProviderNew).valueOrNull,
+      ref.read(engineSettingsProviderNew).valueOrNull,
+      ref.read(boardAnalysisPreferencesProvider),
+    );
     _splitController.setSize(
       0,
-      clamped + evalBarWidth + (_playBoardPadding * 2) + 16,
+      clamped + _playBarsReservedWidth(bars) + (_playBoardPadding * 2) + 16,
     );
   }
 
@@ -203,6 +269,12 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
       if (currentPly < totalPlies) goToPly(totalPlies);
     }
 
+    final orientation = _flipped ? state.humanSide.opposite : state.humanSide;
+    void flipBoard() => setState(() => _flipped = !_flipped);
+    final liveHelp = ref.watch(
+      boardSettingsProviderNew.select((s) => _playLiveHelp(s.valueOrNull)),
+    );
+
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.home): goFirst,
@@ -226,34 +298,63 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
               child: _PlayBoardColumn(
                 state: state,
                 tabId: widget.tabId,
+                orientation: orientation,
+                tobyPanel: _tobyPanel,
                 reviewPly: reviewPly,
                 onReviewPlyChanged: goToPly,
+                onFlipBoard: flipBoard,
                 boardSizePreference: _boardSizePreference,
                 onBoardSizeChanged: _setBoardSize,
                 onBoardSizeChangeEnd: _persistBoardSize,
                 onBoardSizeReset: _resetBoardSize,
               ),
             ),
-            SplitChild(
-              minSize: 260,
-              initialWeight: _playPanelInitialWeight,
-              label: 'Game',
-              collapsedIcon: Icons.format_list_numbered_rounded,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  8,
-                  _playBoardPadding,
-                  _playBoardPadding,
-                  _playBoardPadding,
+            if (liveHelp)
+              SplitChild(
+                // Wide enough for the engine header's controls, as on the
+                // watching board.
+                minSize: math.max(
+                  280,
+                  EnginePanel.headerMinWidth(
+                    context,
+                    trailing: false,
+                    pictureInPicture: false,
+                  ),
                 ),
-                child: _GameSidePanel(
+                initialWeight: _playPanelInitialWeight,
+                label: 'Analysis',
+                collapsedIcon: Icons.analytics_outlined,
+                child: _PlayAnalysisRail(
                   state: state,
                   tabId: widget.tabId,
+                  orientation: orientation,
+                  tobyPanel: _tobyPanel,
                   reviewPly: reviewPly,
                   onReviewPlyChanged: goToPly,
+                  onFlipBoard: flipBoard,
+                ),
+              )
+            else
+              SplitChild(
+                minSize: 260,
+                initialWeight: _playPanelInitialWeight,
+                label: 'Game',
+                collapsedIcon: Icons.format_list_numbered_rounded,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    8,
+                    _playBoardPadding,
+                    _playBoardPadding,
+                    _playBoardPadding,
+                  ),
+                  child: _GameSidePanel(
+                    state: state,
+                    tabId: widget.tabId,
+                    reviewPly: reviewPly,
+                    onReviewPlyChanged: goToPly,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),
@@ -301,6 +402,12 @@ class PlaySessionLifecycleListener extends ConsumerWidget {
         _scheduleFinishPlaySession(container, next, tabId);
       }
     });
+    // With live help on, moves are judged from the first one, whether or
+    // not the board is on show yet.
+    ref.listen<PlayLiveMoveJudgements>(
+      playLiveMoveJudgementsProvider(tabId),
+      (_, _) {},
+    );
     return child;
   }
 
@@ -692,8 +799,11 @@ class _PlayBoardColumn extends ConsumerWidget {
   const _PlayBoardColumn({
     required this.state,
     required this.tabId,
+    required this.orientation,
+    required this.tobyPanel,
     required this.reviewPly,
     required this.onReviewPlyChanged,
+    required this.onFlipBoard,
     required this.boardSizePreference,
     required this.onBoardSizeChanged,
     required this.onBoardSizeChangeEnd,
@@ -702,8 +812,13 @@ class _PlayBoardColumn extends ConsumerWidget {
 
   final PlaySessionState state;
   final String tabId;
+
+  /// The side at the bottom of the board.
+  final Side orientation;
+  final TobyPanelController tobyPanel;
   final int? reviewPly;
   final ValueChanged<int> onReviewPlyChanged;
+  final VoidCallback onFlipBoard;
   final double? boardSizePreference;
   final ValueChanged<double> onBoardSizeChanged;
   final VoidCallback onBoardSizeChangeEnd;
@@ -711,7 +826,6 @@ class _PlayBoardColumn extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final orientation = state.humanSide;
     final topSide = orientation == Side.white ? Side.black : Side.white;
     final bottomSide = orientation;
     final totalPlies = state.history.length;
@@ -726,10 +840,10 @@ class _PlayBoardColumn extends ConsumerWidget {
             const BoardSettingsNew().showMoveNavigation,
       ),
     );
-    final showEvalBar = ref.watch(
-      boardSettingsProviderNew.select((s) => _showPlayEvalBar(s.valueOrNull)),
-    );
-    final evalBarReserved = showEvalBar ? _playEvalBarReservedWidth : 0.0;
+    final bars = _watchPlayBars(ref);
+    final showEvalBar = bars.eval;
+    final evalBarReserved = _playBarsReservedWidth(bars);
+    final review = _playReviewSnapshot(state, reviewPly);
 
     return Column(
       children: [
@@ -761,13 +875,8 @@ class _PlayBoardColumn extends ConsumerWidget {
                           padding: const EdgeInsets.only(
                             top: _playHeaderHeight + _playHeaderGap,
                           ),
-                          child: PlayLiveEvalBar(
-                            tabId: tabId,
-                            fen:
-                                _playReviewSnapshot(
-                                  state,
-                                  reviewPly,
-                                ).position.fen,
+                          child: _PlayEvalBar(
+                            fen: review.position.fen,
                             width: _playEvalBarWidth,
                             height: boardSize,
                             isFlipped: orientation == Side.black,
@@ -797,6 +906,8 @@ class _PlayBoardColumn extends ConsumerWidget {
                                   child: _BoardInteractive(
                                     state: state,
                                     tabId: tabId,
+                                    orientation: orientation,
+                                    tobyPanel: tobyPanel,
                                     reviewPly: reviewPly,
                                     onReviewPlyChanged: onReviewPlyChanged,
                                   ),
@@ -832,6 +943,32 @@ class _PlayBoardColumn extends ConsumerWidget {
                           ],
                         ),
                       ),
+                      if (bars.toby) ...[
+                        const SizedBox(width: _playEvalBarGap),
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            top: _playHeaderHeight + _playHeaderGap,
+                          ),
+                          child: SizedBox(
+                            width: _playEvalBarWidth,
+                            height: boardSize,
+                            child: TobyBarSurface(
+                              target: _playTobyTarget(
+                                ref,
+                                state,
+                                review,
+                                tabId: tabId,
+                              ),
+                              controller: tobyPanel,
+                              result: _playTobyResult(state, review),
+                              positionKey: review.position.fen,
+                              flipped: orientation == Side.black,
+                              width: _playEvalBarWidth,
+                              height: boardSize,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 );
@@ -847,12 +984,109 @@ class _PlayBoardColumn extends ConsumerWidget {
             onPrevious: () => onReviewPlyChanged(currentPly - 1),
             onNext: () => onReviewPlyChanged(currentPly + 1),
             onLast: () => onReviewPlyChanged(totalPlies),
-            showFlipBoard: false,
+            onFlipBoard: onFlipBoard,
             moveLabel: _playMoveLabel(_playNotationGame(state), currentPly),
           ),
       ],
     );
   }
+}
+
+/// What Toby reads for the position on the play board, shared by the Toby
+/// bar and the Toby rows so both ask once: the players as they are (the
+/// reader's rating on this game's ladder against the bot's strength) at
+/// this game's clock.
+TobyTarget _playTobyTarget(
+  WidgetRef ref,
+  PlaySessionState state,
+  _PlayReviewSnapshot review, {
+  required String tabId,
+}) {
+  final foreground = ref.watch(
+    desktopTabsProvider.select((tabs) => tabs.activeId == tabId),
+  );
+  final profile = ref.watch(playUserProfileProvider).valueOrNull;
+  final humanRating = _playHumanRating(state, profile);
+  final whiteIsHuman = state.humanSide == Side.white;
+  final position = review.position;
+  return resolveTobyTarget(
+    foreground: foreground,
+    previewing: false,
+    gameOver: position.isGameOver || (state.isGameOver && review.isLiveTip),
+    variant: null,
+    positionKey: position.fen,
+    request:
+        () => TobyRequest(
+          startFen: state.startingFen,
+          moves: List<String>.unmodifiable(state.history.take(review.ply)),
+          whiteRating: whiteIsHuman ? humanRating : state.botIdentity.elo,
+          blackRating: whiteIsHuman ? state.botIdentity.elo : humanRating,
+          timeControl:
+              '${state.config.baseSeconds}+${state.config.incrementSeconds}',
+          category: state.config.category.displayName,
+        ),
+  );
+}
+
+/// The game's result for the Toby bar: the finished game's result at its
+/// last move (a resignation, a flag), else the position's own outcome.
+TobyWdl? _playTobyResult(PlaySessionState state, _PlayReviewSnapshot review) {
+  final shown = review.position;
+  return tobyResultWdl(
+    pgnResult:
+        state.isGameOver && review.isLiveTip
+            ? _playResultForOutcome(state.outcome)
+            : null,
+    outcome: shown.isGameOver ? (shown.outcome ?? Outcome.draw) : null,
+  );
+}
+
+/// The eval bar beside the play board: the engine pane's own search of the
+/// position on the board, so bar and lines always agree. Same as the
+/// watching board's bar.
+class _PlayEvalBar extends ConsumerWidget {
+  const _PlayEvalBar({
+    required this.fen,
+    required this.width,
+    required this.height,
+    required this.isFlipped,
+  });
+
+  final String fen;
+  final double width;
+  final double height;
+  final bool isFlipped;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final snapshot = ref.watch(
+      boardEvalProvider(fen).select(
+        (state) => (
+          evaluation: state.evaluation,
+          mate: state.mate,
+          isEvaluating: state.isEvaluating,
+        ),
+      ),
+    );
+    return DesktopEvalBar(
+      width: width,
+      height: height,
+      isFlipped: isFlipped,
+      evaluation: snapshot.evaluation,
+      mate: snapshot.mate,
+      isEvaluating: snapshot.isEvaluating,
+      positionKey: _playEvalPositionKey(fen),
+      retainWhileRetargeting: true,
+    );
+  }
+}
+
+/// The key a FEN's search is known by: placement, side to move, castling
+/// and en passant, without the move counters.
+String _playEvalPositionKey(String fen) {
+  final parts = fen.trim().split(RegExp(r'\s+'));
+  if (parts.length < 4) return fen.trim();
+  return parts.take(4).join(' ');
 }
 
 class _PlayerRow extends ConsumerWidget {
@@ -1195,12 +1429,16 @@ class _BoardInteractive extends ConsumerStatefulWidget {
   const _BoardInteractive({
     required this.state,
     required this.tabId,
+    required this.orientation,
+    required this.tobyPanel,
     required this.reviewPly,
     required this.onReviewPlyChanged,
   });
 
   final PlaySessionState state;
   final String tabId;
+  final Side orientation;
+  final TobyPanelController tobyPanel;
   final int? reviewPly;
   final ValueChanged<int> onReviewPlyChanged;
 
@@ -1215,8 +1453,26 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
   Widget build(BuildContext context) {
     final state = widget.state;
     final notifier = ref.read(playSessionProviderFor(widget.tabId).notifier);
-    final orientation = state.humanSide;
+    final orientation = widget.orientation;
     final review = _playReviewSnapshot(state, widget.reviewPly);
+    // The report's mark for the move that made the position on the board,
+    // once the live classifier has judged it.
+    final moveIndex = review.ply - 1;
+    final liveHelp = ref.watch(
+      boardSettingsProviderNew.select((s) => _playLiveHelp(s.valueOrNull)),
+    );
+    final classification =
+        moveIndex < 0 || !liveHelp
+            ? null
+            : ref.watch(
+              playLiveMoveJudgementsProvider(
+                widget.tabId,
+              ).select((judgements) => judgements.classes[moveIndex]),
+            );
+    final badgeSquare =
+        classification == null
+            ? null
+            : boardMoveBadgeSquare(review.position, review.lastMove);
     final isLiveTip = review.isLiveTip;
     final playerSide =
         state.isGameOver || !isLiveTip
@@ -1280,71 +1536,105 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
               size: size,
               orientation: orientation,
               positionKey: positionKey,
-              child: DesktopChessBoard(
-                size: size,
-                fen: boardFen,
-                orientation: orientation,
-                playerSide: playerSide,
-                sideToMove: review.position.turn,
-                validMoves: validMoves,
-                lastMove: review.lastMove,
-                premove: isLiveTip ? _lastQueuedPremove(state.premoves) : null,
-                onSetPremove:
-                    isLiveTip
-                        ? (move) {
-                          if (move == null) {
-                            notifier.clearPremoves();
-                            return;
-                          }
-                          if (move is NormalMove) {
-                            notifier.queuePremove(move.uci);
-                          }
-                        }
-                        : null,
-                promotionMove: isLiveTip ? _promotionPending : null,
-                onPromotionSelection: (role) {
-                  final pending = _promotionPending;
-                  if (pending == null) return;
-                  if (role == null) {
-                    setState(() => _promotionPending = null);
-                    return;
-                  }
-                  final promoted = pending.withPromotion(role);
-                  setState(() => _promotionPending = null);
-                  notifier.playHumanMove(promoted.uci);
-                },
-                shapes: mergedShapes,
-                squareHighlights:
-                    isLiveTip
-                        ? _premoveHeatMap(state.premoves)
-                        : const IMapConst<Square, cg.SquareHighlight>({}),
-                isCheck: review.position.isCheck,
-                onMove: (move, {viaDragAndDrop}) {
-                  if (!isLiveTip) {
-                    widget.onReviewPlyChanged(state.history.length);
-                    return;
-                  }
-                  if (move is! NormalMove) return;
-                  final isHumansTurn = state.isHumanToMove;
-                  // If it's the human's turn the engine reply path applies the move
-                  // directly. Otherwise stack as a premove so chess.com-style
-                  // pre-input keeps working.
-                  if (isHumansTurn) {
-                    // Detect promotion: pawn reaching the last rank without a role.
-                    final piece = state.position.board.pieceAt(move.from);
-                    if (piece != null &&
-                        piece.role == Role.pawn &&
-                        move.promotion == null &&
-                        (move.to.rank == Rank.eighth ||
-                            move.to.rank == Rank.first)) {
-                      setState(() => _promotionPending = move);
-                      return;
-                    }
-                    notifier.playHumanMove(move.uci);
-                  } else {
-                    notifier.queuePremove(move.uci);
-                  }
-                },
+              // Toby's arrows are listened to here alone, so a hover over
+              // one of its rows repaints the board and nothing around it.
+              child: ValueListenableBuilder<TobyBoardArrows?>(
+                valueListenable: widget.tobyPanel.boardArrows,
+                builder:
+                    (context, toby, _) => Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        DesktopChessBoard(
+                          size: size,
+                          fen: boardFen,
+                          orientation: orientation,
+                          playerSide: playerSide,
+                          sideToMove: review.position.turn,
+                          validMoves: validMoves,
+                          lastMove: review.lastMove,
+                          premove:
+                              isLiveTip
+                                  ? _lastQueuedPremove(state.premoves)
+                                  : null,
+                          onSetPremove:
+                              isLiveTip
+                                  ? (move) {
+                                    if (move == null) {
+                                      notifier.clearPremoves();
+                                      return;
+                                    }
+                                    if (move is NormalMove) {
+                                      notifier.queuePremove(move.uci);
+                                    }
+                                  }
+                                  : null,
+                          promotionMove: isLiveTip ? _promotionPending : null,
+                          onPromotionSelection: (role) {
+                            final pending = _promotionPending;
+                            if (pending == null) return;
+                            if (role == null) {
+                              setState(() => _promotionPending = null);
+                              return;
+                            }
+                            final promoted = pending.withPromotion(role);
+                            setState(() => _promotionPending = null);
+                            notifier.playHumanMove(promoted.uci);
+                          },
+                          shapes:
+                              liveHelp
+                                  ? _withTobyArrows(
+                                    mergedShapes,
+                                    toby,
+                                    fen: review.position.fen,
+                                  )
+                                  : mergedShapes,
+                          squareHighlights:
+                              isLiveTip
+                                  ? _premoveHeatMap(state.premoves)
+                                  : const IMapConst<Square, cg.SquareHighlight>(
+                                    {},
+                                  ),
+                          isCheck: review.position.isCheck,
+                          onMove: (move, {viaDragAndDrop}) {
+                            if (!isLiveTip) {
+                              widget.onReviewPlyChanged(state.history.length);
+                              return;
+                            }
+                            if (move is! NormalMove) return;
+                            final isHumansTurn = state.isHumanToMove;
+                            // If it's the human's turn the engine reply path applies the move
+                            // directly. Otherwise stack as a premove so chess.com-style
+                            // pre-input keeps working.
+                            if (isHumansTurn) {
+                              // Detect promotion: pawn reaching the last rank without a role.
+                              final piece = state.position.board.pieceAt(
+                                move.from,
+                              );
+                              if (piece != null &&
+                                  piece.role == Role.pawn &&
+                                  move.promotion == null &&
+                                  (move.to.rank == Rank.eighth ||
+                                      move.to.rank == Rank.first)) {
+                                setState(() => _promotionPending = move);
+                                return;
+                              }
+                              notifier.playHumanMove(move.uci);
+                            } else {
+                              notifier.queuePremove(move.uci);
+                            }
+                          },
+                        ),
+                        if (badgeSquare != null && classification != null)
+                          BoardMoveBadge.annotation(
+                            boardSize: size,
+                            square: badgeSquare,
+                            flipped: orientation == Side.black,
+                            type: annotationTypeForClassification(
+                              classification,
+                            ),
+                          ),
+                      ],
+                    ),
               ),
             ),
           ),
@@ -1352,6 +1642,22 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
       },
     );
   }
+}
+
+/// [shapes] with Toby's arrows, the way the watching board draws them: only
+/// while the board shows the position they were read for ([fen]). A hovered
+/// candidate's arrow is then the only shape on the board; Toby's top three
+/// (or a pinned candidate) join the reader's own drawings.
+ISet<cg.Shape> _withTobyArrows(
+  ISet<cg.Shape> shapes,
+  TobyBoardArrows? toby, {
+  required String fen,
+}) {
+  if (toby == null || toby.positionKey != fen || toby.arrows.isEmpty) {
+    return shapes;
+  }
+  if (toby.exclusive) return ISet<cg.Shape>(toby.arrows);
+  return shapes.addAll(toby.arrows);
 }
 
 NormalMove? _lastQueuedPremove(List<String> premoves) {
@@ -1414,6 +1720,8 @@ NormalMove? _tryParseNormalMove(String uci) {
   }
 }
 
+/// The competition layout: the game, its moves and its controls, with no
+/// engine, Toby or move marks. Live help swaps in [_PlayAnalysisRail].
 class _GameSidePanel extends ConsumerWidget {
   const _GameSidePanel({
     required this.state,
@@ -1454,17 +1762,28 @@ class _GameSidePanel extends ConsumerWidget {
         children: [
           _GameHeader(state: state),
           const SizedBox(height: 10),
-          const _EvalBarToggle(),
+          const _LiveHelpToggle(),
           const SizedBox(height: 10),
           const Divider(height: 1, color: kDividerColor),
           const SizedBox(height: 12),
           Expanded(
-            child: _PlayNotationPanel(
-              state: state,
-              reviewPly: reviewPly,
-              onReviewPlyChanged: onReviewPlyChanged,
-              useFigurine: notationUseFigurine,
-              pieceAssets: notationPieceAssets,
+            child: Builder(
+              builder: (context) {
+                final game = _playNotationGame(state);
+                final activePly = reviewPly ?? game.mainline.length;
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: NotationLadderView(
+                    game: game,
+                    activePointer: _playNotationPointerForPly(game, activePly),
+                    onJump:
+                        (pointer) =>
+                            onReviewPlyChanged(_playPlyForPointer(pointer)),
+                    useFigurine: notationUseFigurine,
+                    pieceAssets: notationPieceAssets,
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(height: 12),
@@ -1482,21 +1801,22 @@ class _GameSidePanel extends ConsumerWidget {
   }
 }
 
-/// In-game shortcut for Settings > "Eval bar while playing", so the player
-/// can show or hide the live eval mid-game without leaving the board.
-class _EvalBarToggle extends ConsumerWidget {
-  const _EvalBarToggle();
+/// In-game shortcut for Settings > "Live help while playing": on, the
+/// watching board's rail, the eval and Toby bars and live move marks; off,
+/// a game played as in competition.
+class _LiveHelpToggle extends ConsumerWidget {
+  const _LiveHelpToggle();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final show = ref.watch(
-      boardSettingsProviderNew.select((s) => _showPlayEvalBar(s.valueOrNull)),
+    final on = ref.watch(
+      boardSettingsProviderNew.select((s) => _playLiveHelp(s.valueOrNull)),
     );
     return Row(
       children: [
         const Expanded(
           child: Text(
-            'Live eval bar',
+            'Live help',
             style: TextStyle(
               color: kWhiteColor70,
               fontSize: 12,
@@ -1507,12 +1827,12 @@ class _EvalBarToggle extends ConsumerWidget {
         FTheme(
           data: FThemes.zinc.dark,
           child: FSwitch(
-            semanticsLabel: 'Live eval bar',
-            value: show,
+            semanticsLabel: 'Live help',
+            value: on,
             onChange:
                 (value) => ref
                     .read(boardSettingsProviderNew.notifier)
-                    .togglePlayEvalBar(value),
+                    .togglePlayLiveHelp(value),
           ),
         ),
       ],
@@ -1575,34 +1895,336 @@ class _GameHeader extends StatelessWidget {
   }
 }
 
-class _PlayNotationPanel extends StatelessWidget {
-  const _PlayNotationPanel({
+/// The right rail of a game in play: the same rail as the watching board.
+/// It holds the engine pane with its Stockfish and Toby Predicts tabs, the
+/// opening explorer, the move list carrying each move's report mark, the
+/// move controls and the board actions. Below it are the game's own controls.
+///
+/// There is no Like here: liked games are listed publicly, and a game
+/// against a bot is the player's own.
+class _PlayAnalysisRail extends ConsumerWidget {
+  const _PlayAnalysisRail({
     required this.state,
+    required this.tabId,
+    required this.orientation,
+    required this.tobyPanel,
     required this.reviewPly,
     required this.onReviewPlyChanged,
-    required this.useFigurine,
-    required this.pieceAssets,
+    required this.onFlipBoard,
   });
 
   final PlaySessionState state;
+  final String tabId;
+  final Side orientation;
+  final TobyPanelController tobyPanel;
   final int? reviewPly;
   final ValueChanged<int> onReviewPlyChanged;
-  final bool useFigurine;
-  final cg.PieceAssets? pieceAssets;
+  final VoidCallback onFlipBoard;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final game = _playNotationGame(state);
-    final activePly = reviewPly ?? game.mainline.length;
-    return ClipRRect(
+    final total = game.mainline.length;
+    final currentPly = reviewPly ?? total;
+    final review = _playReviewSnapshot(state, reviewPly);
+    final position = review.position;
+    final lineUcis = List<String>.unmodifiable(state.history.take(review.ply));
+    final notationUseFigurine = ref.watch(
+      boardSettingsProviderNew.select(
+        (s) =>
+            s.valueOrNull?.useFigurine ?? const BoardSettingsNew().useFigurine,
+      ),
+    );
+    final notationPieceAssets = ref.watch(
+      boardSettingsProviderNew.select(
+        (s) =>
+            s.valueOrNull?.pieceAssets ?? const BoardSettingsNew().pieceAssets,
+      ),
+    );
+    final classes = ref.watch(
+      playLiveMoveJudgementsProvider(tabId).select((j) => j.classes),
+    );
+    final profile = ref.watch(playUserProfileProvider).valueOrNull;
+    final foreground = ref.watch(
+      desktopTabsProvider.select((tabs) => tabs.activeId == tabId),
+    );
+    final tobyTab = ref.watch(tobyTabSelectedProvider);
+    final humanRating = _playHumanRating(state, profile);
+    final headers = _playRailHeaders(state, game, humanRating: humanRating);
+
+    // A move chosen from the explorer or Toby's rows is played only on the
+    // player's turn at the live position, like a move made on the board.
+    void playUci(String uci) {
+      if (!review.isLiveTip || state.isGameOver || !state.isHumanToMove) {
+        return;
+      }
+      ref.read(playSessionProviderFor(tabId).notifier).playHumanMove(uci);
+    }
+
+    void goToPly(int ply) => onReviewPlyChanged(_clampPly(ply, total));
+
+    final prefs = ref.watch(boardAnalysisPreferencesProvider);
+    final toby = WhatTobyThinks(
+      target: _playTobyTarget(ref, state, review, tabId: tabId),
+      controller: tobyPanel,
+      compactPredictions: true,
+      onPlayUci: playUci,
+    );
+
+    final notation = ClipRRect(
       borderRadius: BorderRadius.circular(8),
       child: NotationLadderView(
         game: game,
-        activePointer: _playNotationPointerForPly(game, activePly),
-        onJump: (pointer) => onReviewPlyChanged(_playPlyForPointer(pointer)),
-        useFigurine: useFigurine,
-        pieceAssets: pieceAssets,
+        activePointer: _playNotationPointerForPly(game, currentPly),
+        onJump: (pointer) => goToPly(_playPlyForPointer(pointer)),
+        useFigurine: notationUseFigurine,
+        pieceAssets: notationPieceAssets,
+        lichessAnnotations: <int, LichessMoveAnnotation>{
+          for (final entry in classes.entries)
+            entry.key: LichessMoveAnnotation(
+              type: annotationTypeForClassification(entry.value),
+              comment: '',
+              useClassificationIcon: true,
+              reportOwnsMoveQuality: true,
+            ),
+        },
       ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: _playBoardPadding),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: NotationOpeningPanel(
+              tabId: tabId,
+              notationChild: notation,
+              currentFen: position.fen,
+              startingFen: game.startingFen,
+              lineUcis: lineUcis,
+              onPlayUciMove: playUci,
+              onNotationStep: (delta) {
+                final next = currentPly + delta;
+                if (next < 0 || next > total) return false;
+                goToPly(next);
+                return true;
+              },
+              onNotationJumpToHead: () => goToPly(0),
+              onNotationJumpToTip: () => goToPly(total),
+              canGoBack: currentPly > 0,
+              canGoForward: currentPly < total,
+              onFirstMove: () => goToPly(0),
+              onPreviousMove: () => goToPly(currentPly - 1),
+              onNextMove: () => goToPly(currentPly + 1),
+              onLastMove: () => goToPly(total),
+              // Moves are marked as they are played, so the whole-game report
+              // waits for the finished game on its Board tab.
+              showReport: false,
+              secondaryActions: _PlayRailSecondaryActions(
+                onFlipBoard: onFlipBoard,
+                onShare:
+                    () => unawaited(
+                      _sharePlayPosition(
+                        context,
+                        game: game,
+                        headers: headers,
+                        review: review,
+                        flipped: orientation == Side.black,
+                      ),
+                    ),
+              ),
+              trailingActions: FTheme(
+                data: FThemes.zinc.dark,
+                child: SizedBox.square(
+                  dimension: 40,
+                  child: EventInfoPopover(headers: headers),
+                ),
+              ),
+              // Stockfish and Toby share one pane, as on the watching board.
+              showEngine:
+                  !prefs.paused &&
+                  (prefs.stockfishAnalysis || prefs.tobyAnalysis),
+              onRestoreEngine:
+                  () => ref
+                      .read(boardAnalysisPreferencesProvider.notifier)
+                      .setStockfishAnalysis(true),
+              enginePanel: EnginePanel(
+                fen: position.fen,
+                sideToMove: position.turn == Side.white ? 'w' : 'b',
+                headers: headers,
+                activePly: currentPly,
+                onJumpToPly: goToPly,
+                reportVisible: false,
+                autoAnalysisAllowed: false,
+                isForegroundTab: foreground,
+                toby: prefs.tobyAnalysis ? toby : null,
+                tobyArrowsOnly: prefs.tobyAnalysis ? null : toby,
+                tobyTabSelected: tobyTab,
+                unifiedAnalysis: true,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 12, _playBoardPadding, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!state.engineReady) ...[
+                  _BotEngineStatus(state: state),
+                  const SizedBox(height: 12),
+                ],
+                const _LiveHelpToggle(),
+                const SizedBox(height: 10),
+                if (state.premoves.isNotEmpty) ...[
+                  _PremoveQueue(state: state, tabId: tabId),
+                  const SizedBox(height: 12),
+                ],
+                if (state.isGameOver)
+                  _ResultBanner(state: state, tabId: tabId)
+                else
+                  _GameActions(state: state, tabId: tabId),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The reader's rating on this game's ladder (their headline rating for an
+/// unrated custom clock), as their player row shows it.
+int _playHumanRating(PlaySessionState state, PlayUserProfile? profile) {
+  final ratedTc = toRatedTimeControl(state.config.category);
+  return ratedTc != null
+      ? (profile?.statsFor(ratedTc).rating ?? 1200)
+      : (profile?.headlineRating ?? 1200);
+}
+
+/// The game's PGN headers for the rail's info popover and Toby: the
+/// notation game's tags plus both players' ratings.
+Map<String, String> _playRailHeaders(
+  PlaySessionState state,
+  ChessGame game, {
+  required int humanRating,
+}) {
+  final whiteIsHuman = state.humanSide == Side.white;
+  return <String, String>{
+    for (final entry in game.metadata.entries)
+      if (entry.value is String || entry.value is num)
+        entry.key: '${entry.value}',
+    'WhiteElo': '${whiteIsHuman ? humanRating : state.botIdentity.elo}',
+    'BlackElo': '${whiteIsHuman ? state.botIdentity.elo : humanRating}',
+  };
+}
+
+/// Shares the position on the board as an image or GIF of the game so far,
+/// through the watching board's share dialog.
+Future<void> _sharePlayPosition(
+  BuildContext context, {
+  required ChessGame game,
+  required Map<String, String> headers,
+  required _PlayReviewSnapshot review,
+  required bool flipped,
+}) {
+  return showBoardShareDialog(
+    context,
+    chessGame: game,
+    headers: headers,
+    position: review.position,
+    lastMove: review.lastMove,
+    pointer: review.ply <= 0 ? const <int>[] : <int>[review.ply - 1],
+    flipped: flipped,
+  );
+}
+
+/// Flip and Share, as on the watching board's rail.
+class _PlayRailSecondaryActions extends StatelessWidget {
+  const _PlayRailSecondaryActions({
+    required this.onFlipBoard,
+    required this.onShare,
+  });
+
+  final VoidCallback onFlipBoard;
+  final VoidCallback onShare;
+
+  @override
+  Widget build(BuildContext context) => FTheme(
+    data: FThemes.zinc.dark,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _PlayRailIconAction(
+          tooltip: 'Flip board',
+          icon: Icons.flip_camera_android_rounded,
+          onPress: onFlipBoard,
+        ),
+        const SizedBox(width: 4),
+        _PlayRailIconAction(
+          tooltip: 'Share position',
+          icon: Icons.share_rounded,
+          onPress: onShare,
+        ),
+      ],
+    ),
+  );
+}
+
+class _PlayRailIconAction extends StatelessWidget {
+  const _PlayRailIconAction({
+    required this.tooltip,
+    required this.icon,
+    required this.onPress,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPress;
+
+  @override
+  Widget build(BuildContext context) => DesktopTooltip(
+    message: tooltip,
+    child: SizedBox.square(
+      dimension: 40,
+      child: FButton.icon(
+        style: FButtonStyle.ghost(
+          (style) => style.copyWith(
+            contentStyle:
+                (content) => content.copyWith(padding: EdgeInsets.zero),
+          ),
+        ),
+        onPress: onPress,
+        child: Icon(icon, size: 21, color: kWhiteColor70),
+      ),
+    ),
+  );
+}
+
+/// The bot's engine while it is not ready to play: starting, or failed.
+class _BotEngineStatus extends StatelessWidget {
+  const _BotEngineStatus({required this.state});
+
+  final PlaySessionState state;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const SizedBox(
+          width: 12,
+          height: 12,
+          child: DesktopSpinner(strokeWidth: 1.5, color: kPrimaryColor),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            state.engineStatus,
+            style: const TextStyle(color: kSecondaryTextColor, fontSize: 12),
+          ),
+        ),
+      ],
     );
   }
 }

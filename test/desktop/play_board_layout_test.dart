@@ -9,7 +9,6 @@ import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
-import 'package:chessever/providers/board_settings_provider_new.dart';
 
 /// Space a tall window hands the Play pane's board column at the default
 /// 64/36 split, after the shell chrome and the column's own 16px padding.
@@ -40,10 +39,6 @@ void main() {
       );
       expect(without.boardSize, 500);
       expect(withBar.boardSize, 468);
-    });
-
-    test('the Play eval bar setting is off by default', () {
-      expect(const BoardSettingsNew().showPlayEvalBar, isFalse);
     });
 
     test('spends every spare pixel of height on the board', () {
