@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
+import 'package:chessever/desktop/state/play_help_modules.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/providers/live_stream_lifecycle_provider.dart';
 import 'package:chessever/repository/lichess/cloud_eval/cloud_eval.dart';
@@ -549,9 +550,14 @@ final _boardEvalConfigProvider = Provider<BoardEvalConfig>((ref) {
   final snapshot = ref.watch(engineSettingsProviderNew);
   final settings = snapshot.valueOrNull ?? const EngineSettings();
   final preferences = ref.watch(boardAnalysisPreferencesProvider);
+  // A Play game's help is chosen apart from the Board's analysis.
+  final playDemand = ref.watch(playStockfishDemandProvider);
   return BoardEvalConfig(
-    enabled: snapshot.hasValue && !preferences.paused &&
-        (preferences.stockfishAnalysis || preferences.stockfishBar(settings)),
+    enabled: snapshot.hasValue &&
+        (playDemand ||
+            (!preferences.paused &&
+                (preferences.stockfishAnalysis ||
+                    preferences.stockfishBar(settings)))),
     searchTimeIndex: settings.searchTimeIndex,
     principalVariationIndex: preferences.stockfishLineIndex,
   );

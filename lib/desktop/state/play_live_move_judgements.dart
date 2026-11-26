@@ -5,7 +5,7 @@ import 'package:chessever/desktop/services/play/engine_installer.dart';
 import 'package:chessever/desktop/services/play/play_live_move_classifier.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/state/play_session.dart';
-import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/desktop/state/play_help_modules.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 
 /// The report's verdict on every move of one Play tab's game, judged while
@@ -17,14 +17,10 @@ final playLiveMoveJudgementsProvider = StateNotifierProvider.autoDispose.family<
   PlayLiveMoveJudgements,
   String
 >((ref, tabId) {
-  // Judging is live help: off, nothing is searched and no mark is shown.
-  // Turning it on mid-game judges the game so far, then follows it.
+  // Move marks are a help module: off, nothing is searched and no mark is
+  // shown. Turning them on mid-game judges the game so far, then follows it.
   final liveHelp = ref.watch(
-    boardSettingsProviderNew.select(
-      (s) =>
-          s.valueOrNull?.showPlayLiveHelp ??
-          const BoardSettingsNew().showPlayLiveHelp,
-    ),
+    playHelpModulesProvider.select((m) => m.moveMarks),
   );
   PlayLiveUciEvaluator? engine;
   final classifier = PlayLiveMoveClassifier(

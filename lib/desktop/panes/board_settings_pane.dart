@@ -440,15 +440,6 @@ class _EngineCard extends StatelessWidget {
           ),
           const _RowDivider(),
           _SwitchRow(
-            label: 'Live help while playing',
-            description:
-                'Engine, Toby, eval bars and move marks during Play games.',
-            value: board.showPlayLiveHelp,
-            onChange:
-                ref.read(boardSettingsProviderNew.notifier).togglePlayLiveHelp,
-          ),
-          const _RowDivider(),
-          _SwitchRow(
             label: 'Depth indicator',
             description: 'Display the current Stockfish search depth.',
             value: settings.showDepthOverlay,

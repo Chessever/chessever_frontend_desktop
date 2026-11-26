@@ -13,15 +13,14 @@ import 'package:chessever/desktop/widgets/board_like_button.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
-import 'package:chessever/providers/board_settings_provider_new.dart';
+import 'package:chessever/desktop/state/play_help_modules.dart';
+import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
 
 const _tabId = 'play-rail-test';
 
-Widget _harness({required bool liveHelp}) => ProviderScope(
+Widget _harness(PlayHelpModules modules) => ProviderScope(
   overrides: [
-    boardSettingsProviderNew.overrideWith(
-      () => _FixedBoardSettings(BoardSettingsNew(showPlayLiveHelp: liveHelp)),
-    ),
+    playHelpModulesProvider.overrideWith(() => _FixedModules(modules)),
     playSessionBootEngineProvider.overrideWithValue(false),
     playSessionArgsByTabIdProvider.overrideWith(
       (ref) => const <String, PlaySessionArgs>{
@@ -56,13 +55,13 @@ Widget _harness({required bool liveHelp}) => ProviderScope(
   ),
 );
 
-class _FixedBoardSettings extends BoardSettingsNotifierNew {
-  _FixedBoardSettings(this.settings);
+class _FixedModules extends PlayHelpModulesNotifier {
+  _FixedModules(this.modules);
 
-  final BoardSettingsNew settings;
+  final PlayHelpModules modules;
 
   @override
-  Future<BoardSettingsNew> build() async => settings;
+  PlayHelpModules build() => modules;
 }
 
 Position _after(String fen, String uci) =>
@@ -70,41 +69,60 @@ Position _after(String fen, String uci) =>
 
 void main() {
   group('play analysis rail', () {
-    testWidgets('live help carries the watching rail, without Like', (
+    testWidgets('engine lines bring the watching rail, without Like', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(1440, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(_harness(liveHelp: true));
+      await tester.pumpWidget(
+        _harness(const PlayHelpModules(engineLines: true)),
+      );
       // Drain the board-size preference read's timeout timer.
       await tester.pump(const Duration(seconds: 5));
 
-      // The watching board's rail: the Stockfish and Toby pane, explorer,
-      // notation and the move controls.
-      expect(find.byType(NotationOpeningPanel), findsOneWidget);
+      final rail = tester.widget<NotationOpeningPanel>(
+        find.byType(NotationOpeningPanel),
+      );
+      expect(rail.showEngine, isTrue);
+      // The explorer is its own module, off here.
+      expect(rail.showExplorer, isFalse);
       expect(find.byType(EnginePanel), findsOneWidget);
       // Liked games are listed publicly; a game against a bot is private.
       expect(find.byType(DesktopBoardLikeButton), findsNothing);
-      // The switch stays, so the player can go back to competition.
-      expect(find.bySemanticsLabel('Live help'), findsOneWidget);
+      // The modules stay one click away during the game.
+      expect(find.byType(PlayHelpModulesButton), findsWidgets);
       expect(find.text('Resign'), findsOneWidget);
       expect(find.text('Abort'), findsOneWidget);
     });
 
-    testWidgets('without live help the game is played as in competition', (
+    testWidgets('the explorer alone opens the rail without the engine', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(1440, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(_harness(liveHelp: false));
+      await tester.pumpWidget(_harness(const PlayHelpModules(explorer: true)));
+      await tester.pump(const Duration(seconds: 5));
+
+      final rail = tester.widget<NotationOpeningPanel>(
+        find.byType(NotationOpeningPanel),
+      );
+      expect(rail.showExplorer, isTrue);
+      expect(rail.showEngine, isFalse);
+    });
+
+    testWidgets('with no help the game is played as in competition', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_harness(const PlayHelpModules()));
       await tester.pump(const Duration(seconds: 5));
 
       // Moves and game controls only: no engine, Toby or explorer.
       expect(find.byType(NotationOpeningPanel), findsNothing);
       expect(find.byType(EnginePanel), findsNothing);
       expect(find.byType(NotationLadderView), findsOneWidget);
-      expect(find.byType(FSwitch), findsOneWidget);
-      expect(find.text('Live help'), findsOneWidget);
+      expect(find.byType(PlayHelpModulesButton), findsOneWidget);
       expect(find.text('Resign'), findsOneWidget);
       expect(find.text('Abort'), findsOneWidget);
     });
