@@ -30,6 +30,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_analysis_report_store.dart';
 import 'package:chessever/desktop/services/toby/toby_access.dart';
+import 'package:chessever/desktop/state/toby_enabled.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 
@@ -663,6 +664,10 @@ class TobyPerformanceNotifier
   @override
   TobyPerformanceState build(TobyPerformanceQuery query) {
     ref.onDispose(_halt);
+    // Toby off (the account's switch): no request, and the row is hidden.
+    if (!ref.watch(tobyEnabledProvider)) {
+      return TobyPerformanceState.unavailable;
+    }
     final known = tobyPerformanceMemory.lookup(query);
     if (known != null) {
       // The Worker's report carried it, or another view fetched it: keep it

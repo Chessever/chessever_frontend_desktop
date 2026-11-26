@@ -571,16 +571,20 @@ bool shouldShowDesktopBoardEvalBar(
   BoardAnalysisPreferences preferences = const BoardAnalysisPreferences(),
 ]) => !preferences.paused && preferences.stockfishBar(settings);
 
-/// Whether a board shows the Toby bar on its right: the reader's setting
-/// (on by default, for everyone) and a game Toby can read ([variant]).
-/// Independent of the engine: Toby is not Stockfish. Decided from settings
-/// and the game alone, never from whether a reading has arrived, so a
-/// reading never moves the board.
+/// Whether a board shows the Toby bar on its right: Toby on (the account's
+/// switch), the reader's bar setting (both on by default, for everyone) and
+/// a game Toby can read ([variant]). Independent of the engine: Toby is not
+/// Stockfish. Decided from settings and the game alone, never from whether
+/// a reading has arrived, so a reading never moves the board.
 bool shouldShowDesktopBoardTobyBar(
   EngineSettings settings,
   String? variant, [
   BoardAnalysisPreferences preferences = const BoardAnalysisPreferences(),
-]) => !preferences.paused && settings.showTobyBar && tobyReadsVariant(variant);
+]) =>
+    !preferences.paused &&
+    preferences.tobyEnabled &&
+    settings.showTobyBar &&
+    tobyReadsVariant(variant);
 
 @visibleForTesting
 class GameReportRevealState {

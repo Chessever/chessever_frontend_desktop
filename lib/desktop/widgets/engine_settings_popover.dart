@@ -3,6 +3,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
+import 'package:chessever/desktop/state/toby_enabled.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -69,6 +70,9 @@ class _PopoverBody extends ConsumerWidget {
     final preferences = unified ? ref.watch(boardAnalysisPreferencesProvider) : const BoardAnalysisPreferences();
     final boardSettings = unified ? ref.read(boardAnalysisPreferencesProvider.notifier) : null;
     final source = preferences.arrows(settings);
+    // Toby off hides his bar switch and his arrows (the account's switch).
+    final tobyOn = ref.watch(tobyEnabledProvider);
+    final arrowSources = boardArrowSources(tobyEnabled: tobyOn);
 
     return Container(
       constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.75),
@@ -108,20 +112,22 @@ class _PopoverBody extends ConsumerWidget {
           const SizedBox(height: 10),
           if (boardSettings != null) ...[
             _SwitchRow(
-              label: 'Toby analysis',
-              description: 'Show the moves Toby thinks the player will choose.',
+              label: 'Toby',
+              description: kTobySwitchDescription,
               value: preferences.tobyAnalysis,
               onChange: boardSettings.setTobyAnalysis,
             ),
             const SizedBox(height: 10),
           ],
-          _SwitchRow(
-            label: 'Toby bar',
-            description: 'Show Toby\'s chances beside the board.',
-            value: settings.showTobyBar,
-            onChange: notifier.toggleTobyBar,
-          ),
-          const SizedBox(height: 10),
+          if (tobyOn) ...[
+            _SwitchRow(
+              label: 'Toby bar',
+              description: 'Show Toby\'s chances beside the board.',
+              value: settings.showTobyBar,
+              onChange: notifier.toggleTobyBar,
+            ),
+            const SizedBox(height: 10),
+          ],
           if (boardSettings == null)
             _SwitchRow(
               label: 'PV arrows',
@@ -132,9 +138,9 @@ class _PopoverBody extends ConsumerWidget {
           else
             _SegmentedRow(
               label: 'Board arrows',
-              options: const ['Stockfish', 'Toby', 'Off'],
-              selectedIndex: source.index,
-              onSelect: (index) => boardSettings.setArrows(BoardAnalysisArrows.values[index]),
+              options: [for (final s in arrowSources) boardArrowSourceLabel(s)],
+              selectedIndex: arrowSources.indexOf(source),
+              onSelect: (index) => boardSettings.setArrows(arrowSources[index]),
             ),
           const Divider(height: 24, color: kDividerColor),
           _SegmentedRow(

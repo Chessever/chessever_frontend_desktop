@@ -3,6 +3,7 @@ import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/state/play_help_modules.dart';
+import 'package:chessever/desktop/state/toby_enabled.dart';
 import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/theme/app_theme.dart';
 
@@ -16,6 +17,8 @@ class PlayHelpModulesList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final modules = ref.watch(playHelpModulesProvider);
     final notifier = ref.read(playHelpModulesProvider.notifier);
+    // Toby off (the account's switch): none of his help is offered.
+    final tobyOn = ref.watch(tobyEnabledProvider);
     Widget row(
       String label,
       String description,
@@ -46,18 +49,20 @@ class PlayHelpModulesList extends ConsumerWidget {
             modules.evalBar,
             (on) => modules.copyWith(evalBar: on),
           ),
-          row(
-            'Toby Predicts',
-            'The moves Toby expects players like you to choose.',
-            modules.tobyPredictions,
-            (on) => modules.copyWith(tobyPredictions: on),
-          ),
-          row(
-            'Toby bar',
-            'Toby’s win, draw and loss chances right of the board.',
-            modules.tobyBar,
-            (on) => modules.copyWith(tobyBar: on),
-          ),
+          if (tobyOn) ...[
+            row(
+              'Toby Predicts',
+              'The moves Toby expects players like you to choose.',
+              modules.tobyPredictions,
+              (on) => modules.copyWith(tobyPredictions: on),
+            ),
+            row(
+              'Toby bar',
+              'Toby’s win, draw and loss chances right of the board.',
+              modules.tobyBar,
+              (on) => modules.copyWith(tobyBar: on),
+            ),
+          ],
           row(
             'Move marks',
             'Book, !!, ?? and the rest on each move as it is played.',
@@ -93,13 +98,20 @@ class PlayHelpModulesList extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           DesktopSegmentedTabs<PlayHelpArrows>(
-            tabs: const [
-              DesktopSegmentedTab(value: PlayHelpArrows.off, label: 'Off'),
-              DesktopSegmentedTab(
+            tabs: [
+              const DesktopSegmentedTab(
+                value: PlayHelpArrows.off,
+                label: 'Off',
+              ),
+              const DesktopSegmentedTab(
                 value: PlayHelpArrows.stockfish,
                 label: 'Stockfish',
               ),
-              DesktopSegmentedTab(value: PlayHelpArrows.toby, label: 'Toby'),
+              if (tobyOn)
+                const DesktopSegmentedTab(
+                  value: PlayHelpArrows.toby,
+                  label: 'Toby',
+                ),
             ],
             selected: modules.arrows,
             onChanged:

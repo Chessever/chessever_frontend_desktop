@@ -4,16 +4,29 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:chessever/desktop/state/toby_enabled.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 
 const _stockfishKey = 'desktop.analysis.stockfish.v1';
 const _stockfishLinesKey = 'desktop.analysis.stockfishLines.v1';
 const _defaultStockfishLineIndex = 2;
-const _tobyKey = 'desktop.analysis.toby.v1';
 const _stockfishBarKey = 'desktop.analysis.stockfishBar.v1';
 const _arrowSourceKey = 'desktop.analysis.arrows.v1';
 
 enum BoardAnalysisArrows { stockfish, toby, off }
+
+/// The "Board arrows" choices in settings, in order. Toby's is offered only
+/// while Toby is on.
+List<BoardAnalysisArrows> boardArrowSources({required bool tobyEnabled}) =>
+    tobyEnabled
+        ? BoardAnalysisArrows.values
+        : const [BoardAnalysisArrows.stockfish, BoardAnalysisArrows.off];
+
+String boardArrowSourceLabel(BoardAnalysisArrows source) => switch (source) {
+  BoardAnalysisArrows.stockfish => 'Stockfish',
+  BoardAnalysisArrows.toby => 'Toby',
+  BoardAnalysisArrows.off => 'Off',
+};
 
 @immutable
 class BoardAnalysisPreferences {
@@ -22,6 +35,7 @@ class BoardAnalysisPreferences {
     this.stockfishAnalysis = true,
     this.stockfishLineIndex = _defaultStockfishLineIndex,
     this.tobyAnalysis = true,
+    this.tobyEnabled = true,
     this.stockfishBarChoice,
     this.arrowChoice,
   });
@@ -29,16 +43,49 @@ class BoardAnalysisPreferences {
   final bool paused;
   final bool stockfishAnalysis;
   final int stockfishLineIndex;
+
+  /// Toby Predicts in the engine pane. On the Board this is the account's
+  /// Toby switch ([tobyEnabledProvider]); in a Play game it is the player's
+  /// Toby Predicts help module.
   final bool tobyAnalysis;
+
+  /// The account's Toby switch ([tobyEnabledProvider]). Off, nothing of
+  /// Toby shows: no Toby bar, and Toby arrows fall back to Stockfish's.
+  final bool tobyEnabled;
   final bool? stockfishBarChoice;
   final BoardAnalysisArrows? arrowChoice;
 
   bool stockfishBar(EngineSettings engine) =>
       stockfishBarChoice ?? engine.showEngineGauge;
 
-  BoardAnalysisArrows arrows(EngineSettings engine) =>
-      arrowChoice ??
-      (engine.showPvArrows ? BoardAnalysisArrows.stockfish : BoardAnalysisArrows.off);
+  BoardAnalysisArrows arrows(EngineSettings engine) {
+    final choice =
+        arrowChoice ??
+        (engine.showPvArrows
+            ? BoardAnalysisArrows.stockfish
+            : BoardAnalysisArrows.off);
+    return choice == BoardAnalysisArrows.toby && !tobyEnabled
+        ? BoardAnalysisArrows.stockfish
+        : choice;
+  }
+
+  BoardAnalysisPreferences copyWith({
+    bool? paused,
+    bool? stockfishAnalysis,
+    int? stockfishLineIndex,
+    bool? tobyAnalysis,
+    bool? tobyEnabled,
+    bool? stockfishBarChoice,
+    BoardAnalysisArrows? arrowChoice,
+  }) => BoardAnalysisPreferences(
+    paused: paused ?? this.paused,
+    stockfishAnalysis: stockfishAnalysis ?? this.stockfishAnalysis,
+    stockfishLineIndex: stockfishLineIndex ?? this.stockfishLineIndex,
+    tobyAnalysis: tobyAnalysis ?? this.tobyAnalysis,
+    tobyEnabled: tobyEnabled ?? this.tobyEnabled,
+    stockfishBarChoice: stockfishBarChoice ?? this.stockfishBarChoice,
+    arrowChoice: arrowChoice ?? this.arrowChoice,
+  );
 }
 
 final boardAnalysisPreferencesProvider =
@@ -57,8 +104,14 @@ class BoardAnalysisSettings extends Notifier<BoardAnalysisPreferences> {
   @override
   BoardAnalysisPreferences build() {
     ref.onDispose(() => _disposed = true);
+    // Toby Predicts on the Board is the account's Toby switch itself.
+    ref.listen<bool>(tobyEnabledProvider, (_, on) {
+      if (state.tobyEnabled == on && state.tobyAnalysis == on) return;
+      state = state.copyWith(tobyAnalysis: on, tobyEnabled: on);
+    });
+    final toby = ref.read(tobyEnabledProvider);
     unawaited(_restore());
-    return const BoardAnalysisPreferences();
+    return BoardAnalysisPreferences(tobyAnalysis: toby, tobyEnabled: toby);
   }
 
   Future<void> _restore() async {
@@ -66,24 +119,28 @@ class BoardAnalysisSettings extends Notifier<BoardAnalysisPreferences> {
       final preferences = await SharedPreferences.getInstance();
       if (_disposed) return;
       final arrow = preferences.getString(_arrowSourceKey);
-      final lineIndex = _edited.contains(_stockfishLinesKey)
-          ? state.stockfishLineIndex
-          : preferences.getInt(_stockfishLinesKey) ?? _defaultStockfishLineIndex;
+      final lineIndex =
+          _edited.contains(_stockfishLinesKey)
+              ? state.stockfishLineIndex
+              : preferences.getInt(_stockfishLinesKey) ??
+                  _defaultStockfishLineIndex;
       state = BoardAnalysisPreferences(
         paused: state.paused,
         stockfishLineIndex: _clampLineIndex(lineIndex),
-        stockfishAnalysis: _edited.contains(_stockfishKey)
-            ? state.stockfishAnalysis
-            : preferences.getBool(_stockfishKey) ?? true,
-        tobyAnalysis: _edited.contains(_tobyKey)
-            ? state.tobyAnalysis
-            : preferences.getBool(_tobyKey) ?? true,
-        stockfishBarChoice: _edited.contains(_stockfishBarKey)
-            ? state.stockfishBarChoice
-            : preferences.getBool(_stockfishBarKey),
-        arrowChoice: _edited.contains(_arrowSourceKey)
-            ? state.arrowChoice
-            : BoardAnalysisArrows.values.asNameMap()[arrow],
+        stockfishAnalysis:
+            _edited.contains(_stockfishKey)
+                ? state.stockfishAnalysis
+                : preferences.getBool(_stockfishKey) ?? true,
+        tobyAnalysis: state.tobyAnalysis,
+        tobyEnabled: state.tobyEnabled,
+        stockfishBarChoice:
+            _edited.contains(_stockfishBarKey)
+                ? state.stockfishBarChoice
+                : preferences.getBool(_stockfishBarKey),
+        arrowChoice:
+            _edited.contains(_arrowSourceKey)
+                ? state.arrowChoice
+                : BoardAnalysisArrows.values.asNameMap()[arrow],
       );
     } catch (error) {
       debugPrint('Board analysis preferences could not be restored: $error');
@@ -91,39 +148,18 @@ class BoardAnalysisSettings extends Notifier<BoardAnalysisPreferences> {
   }
 
   void setPaused(bool value) {
-    state = BoardAnalysisPreferences(
-      paused: value,
-      stockfishLineIndex: state.stockfishLineIndex,
-      stockfishAnalysis: state.stockfishAnalysis,
-      tobyAnalysis: state.tobyAnalysis,
-      stockfishBarChoice: state.stockfishBarChoice,
-      arrowChoice: state.arrowChoice,
-    );
+    state = state.copyWith(paused: value);
   }
 
+  /// The Board's Toby switch: the account's, for every Toby surface.
   void setTobyAnalysis(bool value) {
-    _edited.add(_tobyKey);
-    state = BoardAnalysisPreferences(
-      paused: state.paused,
-      stockfishLineIndex: state.stockfishLineIndex,
-      stockfishAnalysis: state.stockfishAnalysis,
-      tobyAnalysis: value,
-      stockfishBarChoice: state.stockfishBarChoice,
-      arrowChoice: state.arrowChoice,
-    );
-    _save((p) => p.setBool(_tobyKey, value));
+    ref.read(tobyEnabledProvider.notifier).set(value);
+    state = state.copyWith(tobyAnalysis: value, tobyEnabled: value);
   }
 
   void setStockfishAnalysis(bool value) {
     _edited.add(_stockfishKey);
-    state = BoardAnalysisPreferences(
-      paused: state.paused,
-      stockfishLineIndex: state.stockfishLineIndex,
-      stockfishAnalysis: value,
-      tobyAnalysis: state.tobyAnalysis,
-      stockfishBarChoice: state.stockfishBarChoice,
-      arrowChoice: state.arrowChoice,
-    );
+    state = state.copyWith(stockfishAnalysis: value);
     _save((p) => p.setBool(_stockfishKey, value));
   }
 
@@ -133,48 +169,29 @@ class BoardAnalysisSettings extends Notifier<BoardAnalysisPreferences> {
   void setStockfishLineIndex(int index) {
     final value = _clampLineIndex(index);
     _edited.add(_stockfishLinesKey);
-    state = BoardAnalysisPreferences(
-      paused: state.paused,
-      stockfishAnalysis: state.stockfishAnalysis,
-      stockfishLineIndex: value,
-      tobyAnalysis: state.tobyAnalysis,
-      stockfishBarChoice: state.stockfishBarChoice,
-      arrowChoice: state.arrowChoice,
-    );
+    state = state.copyWith(stockfishLineIndex: value);
     _save((p) => p.setInt(_stockfishLinesKey, value));
   }
 
   void setStockfishBar(bool value) {
     _edited.add(_stockfishBarKey);
-    state = BoardAnalysisPreferences(
-      paused: state.paused,
-      stockfishLineIndex: state.stockfishLineIndex,
-      stockfishAnalysis: state.stockfishAnalysis,
-      tobyAnalysis: state.tobyAnalysis,
-      stockfishBarChoice: value,
-      arrowChoice: state.arrowChoice,
-    );
+    state = state.copyWith(stockfishBarChoice: value);
     _save((p) => p.setBool(_stockfishBarKey, value));
   }
 
   void setArrows(BoardAnalysisArrows value) {
     _edited.add(_arrowSourceKey);
-    state = BoardAnalysisPreferences(
-      paused: state.paused,
-      stockfishLineIndex: state.stockfishLineIndex,
-      stockfishAnalysis: state.stockfishAnalysis,
-      tobyAnalysis: state.tobyAnalysis,
-      stockfishBarChoice: state.stockfishBarChoice,
-      arrowChoice: value,
-    );
+    state = state.copyWith(arrowChoice: value);
     _save((p) => p.setString(_arrowSourceKey, value.name));
   }
 
   void _save(Future<bool> Function(SharedPreferences) write) {
-    _writes = _writes.then((_) async {
-      await write(await SharedPreferences.getInstance());
-    }).catchError((Object error) {
-      debugPrint('Board analysis preferences could not be saved: $error');
-    });
+    _writes = _writes
+        .then((_) async {
+          await write(await SharedPreferences.getInstance());
+        })
+        .catchError((Object error) {
+          debugPrint('Board analysis preferences could not be saved: $error');
+        });
   }
 }

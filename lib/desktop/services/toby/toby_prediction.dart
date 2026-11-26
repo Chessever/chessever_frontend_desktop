@@ -21,6 +21,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/services/toby/toby_access.dart';
+import 'package:chessever/desktop/state/toby_enabled.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 
 /// Quiet time after the last position change before the first request.
@@ -991,6 +992,10 @@ class TobyReadingNotifier
   @override
   TobyReadingState build(TobyQuery query) {
     ref.onDispose(_halt);
+    // Toby off (the account's switch): nothing is asked, nothing is shown.
+    if (!ref.watch(tobyEnabledProvider)) {
+      return const TobyReadingState(TobyStatus.notApplicable);
+    }
     final cached = tobyReadingCache.lookup(query.request.cacheKey);
     if (cached != null) return TobyReadingState.ready(cached);
     if (!query.request.isSupported) {

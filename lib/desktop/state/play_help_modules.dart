@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
+import 'package:chessever/desktop/state/toby_enabled.dart';
 
 const _storageKey = 'desktop.play.helpModules.v1';
 
@@ -162,17 +163,43 @@ final playHelpModulesProvider =
       PlayHelpModulesNotifier.new,
     );
 
-/// The player's chosen help, saved on this device.
+/// [modules] as a game shows them: with Toby off (the account's switch)
+/// none of Toby's help is on, and his arrows are none rather than
+/// Stockfish's, so turning Toby off never adds engine help to a game.
+PlayHelpModules playHelpModulesShown(
+  PlayHelpModules modules, {
+  required bool tobyEnabled,
+}) =>
+    tobyEnabled
+        ? modules
+        : modules.copyWith(
+          tobyPredictions: false,
+          tobyBar: false,
+          arrows:
+              modules.arrows == PlayHelpArrows.toby
+                  ? PlayHelpArrows.off
+                  : modules.arrows,
+        );
+
+/// The player's chosen help, saved on this device. Its state is the help
+/// as shown ([playHelpModulesShown]); Toby's modules are kept in the saved
+/// choice while Toby is off, and come back with him.
 class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
   bool _edited = false;
   bool _disposed = false;
   Future<void> _writes = Future<void>.value();
+  PlayHelpModules _chosen = const PlayHelpModules();
+
+  bool get _tobyOn => ref.read(tobyEnabledProvider);
 
   @override
   PlayHelpModules build() {
     ref.onDispose(() => _disposed = true);
+    ref.listen<bool>(tobyEnabledProvider, (_, on) {
+      state = playHelpModulesShown(_chosen, tobyEnabled: on);
+    });
     unawaited(_restore());
-    return const PlayHelpModules();
+    return playHelpModulesShown(_chosen, tobyEnabled: _tobyOn);
   }
 
   Future<void> _restore() async {
@@ -182,7 +209,8 @@ class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
       if (_disposed || _edited || raw == null) return;
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, Object?>) {
-        state = PlayHelpModules.fromJson(decoded);
+        _chosen = PlayHelpModules.fromJson(decoded);
+        state = playHelpModulesShown(_chosen, tobyEnabled: _tobyOn);
       }
     } catch (error) {
       debugPrint('Play help modules could not be restored: $error');
@@ -192,7 +220,17 @@ class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
   void set(PlayHelpModules value) {
     _edited = true;
     if (value == state) return;
-    state = value;
+    if (!_tobyOn) {
+      // Toby's switches are hidden: keep his saved choices for later.
+      value = value.copyWith(
+        tobyPredictions: _chosen.tobyPredictions,
+        tobyBar: _chosen.tobyBar,
+        arrows:
+            value.arrows == state.arrows ? _chosen.arrows : value.arrows,
+      );
+    }
+    _chosen = value;
+    state = playHelpModulesShown(value, tobyEnabled: _tobyOn);
     final json = jsonEncode(value.toJson());
     _writes = _writes
         .then((_) async {

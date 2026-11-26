@@ -10,6 +10,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/providers/auto_pin_preferences_provider.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
+import 'package:chessever/desktop/state/toby_enabled.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/local_storage/auto_pin_preferences/auto_pin_preferences_repository.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -403,6 +404,10 @@ class _EngineCard extends StatelessWidget {
     final notifier = ref.read(engineSettingsProviderNew.notifier);
     final prefs = ref.watch(boardAnalysisPreferencesProvider);
     final analysis = ref.read(boardAnalysisPreferencesProvider.notifier);
+    // Toby off hides his bar switch and his arrows (the account's switch).
+    final tobyOn = ref.watch(tobyEnabledProvider);
+    final arrowSources = boardArrowSources(tobyEnabled: tobyOn);
+    final arrowSource = prefs.arrows(settings);
     return _SectionCard(
       icon: Icons.memory_rounded,
       title: 'Engine experience',
@@ -425,20 +430,22 @@ class _EngineCard extends StatelessWidget {
           ),
           const _RowDivider(),
           _SwitchRow(
-            label: 'Toby analysis',
-            description: 'Show the moves Toby thinks the player will choose.',
+            label: 'Toby',
+            description: kTobySwitchDescription,
             value: prefs.tobyAnalysis,
             onChange: analysis.setTobyAnalysis,
           ),
           const _RowDivider(),
-          _SwitchRow(
-            label: 'Toby bar',
-            description:
-                'Show Toby\'s win, draw and loss chances beside the board.',
-            value: settings.showTobyBar,
-            onChange: notifier.toggleTobyBar,
-          ),
-          const _RowDivider(),
+          if (tobyOn) ...[
+            _SwitchRow(
+              label: 'Toby bar',
+              description:
+                  'Show Toby\'s win, draw and loss chances beside the board.',
+              value: settings.showTobyBar,
+              onChange: notifier.toggleTobyBar,
+            ),
+            const _RowDivider(),
+          ],
           _SwitchRow(
             label: 'Depth indicator',
             description: 'Display the current Stockfish search depth.',
@@ -449,11 +456,9 @@ class _EngineCard extends StatelessWidget {
           _SegmentedField(
             label: 'Board arrows',
             helpText: 'Choose which analysis draws its moves on the Board.',
-            options: const ['Stockfish', 'Toby', 'Off'],
-            selectedIndex: prefs.arrows(settings).index,
-            onSelect:
-                (index) =>
-                    analysis.setArrows(BoardAnalysisArrows.values[index]),
+            options: [for (final s in arrowSources) boardArrowSourceLabel(s)],
+            selectedIndex: arrowSources.indexOf(arrowSource),
+            onSelect: (index) => analysis.setArrows(arrowSources[index]),
           ),
           const SizedBox(height: 18),
           _SegmentedField(
