@@ -6454,8 +6454,9 @@ class _BoardPaneContent extends HookConsumerWidget {
                               final showToby =
                                   prefs.tobyAnalysis &&
                                   tobyReadsVariant(pgnHeaders.value['Variant']);
+                              final tobyTarget = tobyTargetAt(previewStep);
                               final toby = WhatTobyThinks(
-                                target: tobyTargetAt(previewStep),
+                                target: tobyTarget,
                                 controller: tobyPanel,
                                 compactPredictions: true,
                                 onPlayUci: playUci,
@@ -6702,6 +6703,10 @@ class _BoardPaneContent extends HookConsumerWidget {
                                     onPressed: openBoardContextMenu,
                                   ),
                                   toby: showToby ? toby : null,
+                                  tobyHeaderLabel: TobyHeaderLabel(
+                                    target: tobyTarget,
+                                    controller: tobyPanel,
+                                  ),
                                   tobyArrowsOnly:
                                       !showToby &&
                                               tobyReadsVariant(

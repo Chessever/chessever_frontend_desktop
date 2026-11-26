@@ -43,7 +43,7 @@ import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/widgets/toby/what_toby_thinks.dart'
-    show TobyViewTabs, WhatTobyThinks;
+    show TobyHeaderLabel, TobyLeadHosted, TobyViewTabs, WhatTobyThinks;
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/gamebase/gamebase_repository.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
@@ -98,6 +98,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.headerTrailing,
     this.toby,
     this.tobyFacts,
+    this.tobyHeaderLabel,
     this.tobyTabSelected = false,
     this.unifiedAnalysis = false,
     this.tobyArrowsOnly,
@@ -176,6 +177,11 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// (ratings and speed category). The Game Report's Toby rating sends the
   /// same; without them it reads the PGN headers alone.
   final TobyGameFacts? tobyFacts;
+  /// "Toby Predicts" for the header of the split ([dualAnalysisMinWidth]
+  /// and wider, Stockfish and Toby side by side): a [TobyHeaderLabel] built
+  /// from the same target and controller as [toby], so its card's what-if
+  /// inputs read Toby's one request. Null draws the name as plain text.
+  final Widget? tobyHeaderLabel;
 
   /// Whether the reader chose the Toby Predicts tab. Its view then takes
   /// the list area in place of Stockfish's lines, with
@@ -244,6 +250,10 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// whole rows and the attribution ([WhatTobyThinks.comfortableHeight]),
   /// with the game report's least share under them while the report is
   /// open. On the Stockfish tab: none, the rail's split alone decides.
+  /// A wide unified pane may show the split instead, where the header
+  /// carries Toby's name and the view has no reading line: whether the
+  /// engine is on is not known here, so this keeps the reading line and
+  /// errs a line tall rather than cut the third row.
   /// It changes with the tab, never with the position, so moving through a
   /// game never resizes the rail. The rail applies it once, as the tab is
   /// chosen ([SplitChild.comfortableOnArrival]); the reader's drags and the
@@ -267,6 +277,9 @@ class EnginePanel extends ConsumerStatefulWidget {
 
   /// A fresh Board rail starts tall enough for three compact engine rows.
   /// This seeds the split's initial weights only, never a saved height.
+  /// Wide enough for the split, Toby's half (the left one) is counted
+  /// without its reading line: the header carries its name, so its rows
+  /// start level with Stockfish's.
   double? railInitialAnalysisHeight(BuildContext context, {required double width}) {
     if (!unifiedAnalysis || reportVisible) return null;
     final rowHeight = 14 + math.max(
@@ -277,8 +290,9 @@ class EnginePanel extends ConsumerStatefulWidget {
     final tobyHeight = toby != null && width >= dualAnalysisMinWidth
         ? WhatTobyThinks.comfortableHeight(
             context,
-            width: width / 2 - 1,
+            width: width / 2,
             compactPredictions: true,
+            leadHosted: true,
           )
         : 0.0;
     return _kHeaderPadding.vertical +
@@ -301,6 +315,11 @@ const double _kHeaderTrailingGap = 4;
 const double _kHeaderNameGap = 8;
 const double _kHeaderPowerGap = 6;
 const double _kHeaderEndGap = 4;
+
+/// Where an engine line's text starts in its pane: the list's 16 px inset,
+/// the row's 1 px border and its 8 px padding. The split puts "Stockfish"
+/// over it.
+const double _kLineTextInset = 16 + 1 + 8;
 
 /// A pane shorter than the right rail's least engine pane (120 px, which
 /// only a rail too short for every pane's minimum hands out) closes its
@@ -804,18 +823,23 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                     final Widget? listContent = !hasLiveBody ? null : Stack(
                       fit: StackFit.expand,
                       children: [
+                        // In the split Stockfish takes the right half, under
+                        // its score; Toby the left. The divider runs through
+                        // the header too (drawn over the whole pane below).
                         if (stockfishVisible)
-                          Positioned.fill(right: split ? width / 2 : 0, child: engineContent),
-                        if (split)
-                          Positioned(top: 0, bottom: 0, left: width / 2,
-                            child: const VerticalDivider(width: 1, thickness: 1, color: kDividerColor)),
+                          Positioned.fill(left: split ? width / 2 + 1 : 0, child: engineContent),
                         if (keepToby)
                           Positioned.fill(
                             key: const ValueKey('toby-analysis-slot'),
-                            left: split ? width / 2 + 1 : 0,
+                            right: split ? width / 2 : 0,
                             child: Offstage(
                               offstage: !tobyVisible,
-                              child: ExcludeFocus(excluding: !tobyVisible, child: tobyView),
+                              child: ExcludeFocus(
+                                excluding: !tobyVisible,
+                                // In the split the header carries Toby's
+                                // name, so the view drops its reading line.
+                                child: TobyLeadHosted(hosted: split, child: tobyView),
+                              ),
                             ),
                           ),
                       ],
@@ -833,23 +857,43 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                           tobyOnly: widget.unifiedAnalysis && tobyVisible && !engineOn,
                           analysisPaused: prefs.paused,
                           compact: constraints.maxHeight < _kCompactHeaderBelow,
+                          splitWidth: split ? width : null,
                         ),
                         if (body != null) Expanded(child: body),
                       ],
                     );
-                    if (!keepToby || hasLiveBody) {
-                      return content;
-                    }
-                    // Arrow source is independent of the selected panel. An
-                    // offstage driver shares the exact same keyed reading as
-                    // the visible Toby view and board bar, without another request.
-                    return Stack(children: [
-                      content,
-                      Positioned(
-                        left: 0, top: 0, width: 240, height: 100,
-                        child: Offstage(child: ExcludeFocus(child: tobyView)),
-                      ),
-                    ]);
+                    // One Stack in every mode, so the content keeps its
+                    // place (and Toby's view its state) as the pane crosses
+                    // into and out of the split. Passthrough: the content is
+                    // laid out exactly as if it were returned alone.
+                    return Stack(
+                      fit: StackFit.passthrough,
+                      children: [
+                        content,
+                        // The split's two equal panes: one divider from the
+                        // header's top to the pane's bottom.
+                        if (split)
+                          Positioned(
+                            top: 0,
+                            bottom: 0,
+                            left: width / 2,
+                            child: const VerticalDivider(
+                              width: 1,
+                              thickness: 1,
+                              color: kDividerColor,
+                            ),
+                          ),
+                        // Arrow source is independent of the selected panel.
+                        // An offstage driver shares the exact same keyed
+                        // reading as the visible Toby view and board bar,
+                        // without another request.
+                        if (keepToby && !hasLiveBody)
+                          Positioned(
+                            left: 0, top: 0, width: 240, height: 100,
+                            child: Offstage(child: ExcludeFocus(child: tobyView)),
+                          ),
+                      ],
+                    );
                   },
                 ),
               );
@@ -874,23 +918,22 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     required bool tobyOnly,
     required bool analysisPaused,
     bool compact = false,
+    double? splitWidth,
   }) {
+    if (splitWidth != null) {
+      return _buildSplitHeader(
+        width: splitWidth,
+        engineOn: engineOn,
+        reading: engineActive ? reading : null,
+        analysisPaused: analysisPaused,
+        compact: compact,
+      );
+    }
     return Padding(
       padding: compact ? _kCompactHeaderPadding : _kHeaderPadding,
       child: Row(
         children: [
-          if (widget.headerTrailing != null) ...[
-            SizedBox.square(
-              dimension: _kHeaderControl,
-              child: widget.headerTrailing!,
-            ),
-            const SizedBox(width: _kHeaderTrailingGap),
-          ],
-          if (widget.showSettings)
-            EngineSettingsPopover(
-              dimension: _kHeaderControl,
-              unifiedAnalysis: widget.unifiedAnalysis,
-            ),
+          ..._headerLeadingControls(),
           // The first tab's label lands where the engine's name stood.
           SizedBox(
             width:
@@ -946,6 +989,124 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             const SizedBox(width: _kHeaderEndGap),
           ],
         ],
+      ),
+    );
+  }
+
+  /// The header's leading controls: the more-actions button and the gear.
+  List<Widget> _headerLeadingControls() => [
+    if (widget.headerTrailing != null) ...[
+      SizedBox.square(
+        dimension: _kHeaderControl,
+        child: widget.headerTrailing!,
+      ),
+      const SizedBox(width: _kHeaderTrailingGap),
+    ],
+    if (widget.showSettings)
+      EngineSettingsPopover(
+        dimension: _kHeaderControl,
+        unifiedAnalysis: widget.unifiedAnalysis,
+      ),
+  ];
+
+  /// The header of the split, [width] wide, Toby's rows on the left half
+  /// and Stockfish's lines on the right, under the engine's score: the two
+  /// names on one line, each over its own pane ("Toby Predicts" after the
+  /// leading controls, "Stockfish" where its lines' text starts), and the
+  /// readout, the power toggle and picture in picture at the right end,
+  /// where they are in every header. The names are never cut: as room runs
+  /// out the depth goes first, then the score (the eval bar beside the
+  /// board still shows it); the controls stay.
+  Widget _buildSplitHeader({
+    required double width,
+    required bool engineOn,
+    required BoardEvalState? reading,
+    required bool analysisPaused,
+    required bool compact,
+  }) {
+    final padding = compact ? _kCompactHeaderPadding : _kHeaderPadding;
+    final stockfishLeft = width / 2 + 1 + _kLineTextInset;
+    final score =
+        reading == null
+            ? null
+            : _EngineScoreDepthReadout.scoreSize(context, reading);
+    final depth =
+        reading == null
+            ? 0.0
+            : _DepthChip.widthOf(
+              context,
+              depth: reading.depth,
+              isEvaluating: reading.isEvaluating,
+            );
+    const gap = _TabsAndReadout._gap;
+    return Padding(
+      padding: padding,
+      child: ConstrainedBox(
+        // The row keeps the score's height whether it shows or not, so the
+        // lines under the header never jump.
+        constraints: BoxConstraints(minHeight: score?.height ?? 0),
+        child: Row(
+          children: [
+            SizedBox(
+              width: math.max(0, stockfishLeft - padding.left),
+              child: Row(
+                children: [
+                  ..._headerLeadingControls(),
+                  const SizedBox(width: _kHeaderNameGap),
+                  widget.tobyHeaderLabel ??
+                      const Text(
+                        kTobyFeatureLabel,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: TobyHeaderLabel.style,
+                      ),
+                ],
+              ),
+            ),
+            Text(
+              TobyViewTabs.stockfishLabel,
+              maxLines: 1,
+              softWrap: false,
+              style: TobyHeaderLabel.style.copyWith(
+                color: engineOn ? kWhiteColor : kWhiteColor70,
+              ),
+            ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final room = constraints.maxWidth;
+                  final showScore =
+                      score != null && gap + score.width <= room;
+                  final showDepth =
+                      showScore &&
+                      depth > 0 &&
+                      gap + score.width + gap + depth <= room;
+                  if (!showScore) return const SizedBox.shrink();
+                  return Align(
+                    alignment: Alignment.centerRight,
+                    child: _EngineScoreDepthReadout(
+                      snapshot: reading!,
+                      showDepth: showDepth,
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: _kHeaderPowerGap),
+            _EngineQuickToggle(
+              enabled: widget.unifiedAnalysis ? !analysisPaused : engineOn,
+              master: widget.unifiedAnalysis,
+            ),
+            const SizedBox(width: _kHeaderEndGap),
+            if (widget.onPictureInPicture != null) ...[
+              _EnginePictureInPictureButton(
+                selected: widget.pictureInPictureSelected,
+                onPress: widget.onPictureInPicture!,
+              ),
+              const SizedBox(width: _kHeaderEndGap),
+            ],
+          ],
+        ),
       ),
     );
   }

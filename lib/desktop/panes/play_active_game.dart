@@ -2035,8 +2035,9 @@ class _PlayAnalysisRail extends ConsumerWidget {
     void goToPly(int ply) => onReviewPlyChanged(_clampPly(ply, total));
 
     final modules = ref.watch(playHelpModulesProvider);
+    final tobyTarget = _playTobyTarget(ref, state, review, tabId: tabId);
     final toby = WhatTobyThinks(
-      target: _playTobyTarget(ref, state, review, tabId: tabId),
+      target: tobyTarget,
       controller: tobyPanel,
       compactPredictions: true,
       onPlayUci: playUci,
@@ -2147,6 +2148,10 @@ class _PlayAnalysisRail extends ConsumerWidget {
                   autoAnalysisAllowed: false,
                   isForegroundTab: foreground,
                   toby: modules.tobyPredictions ? toby : null,
+                  tobyHeaderLabel: TobyHeaderLabel(
+                    target: tobyTarget,
+                    controller: tobyPanel,
+                  ),
                   tobyArrowsOnly:
                       !modules.tobyPredictions &&
                               modules.arrows == PlayHelpArrows.toby
