@@ -46,8 +46,8 @@ final boardAnalysisPreferencesProvider =
       BoardAnalysisSettings.new,
     );
 
-/// UI preferences shared by the Board surfaces of this app, not by Play or
-/// the mobile shell. Pause is temporary; the individual choices are saved.
+/// UI preferences shared by the Board surfaces of this app and Play's live
+/// help, not by the mobile shell. Pause is temporary; the individual choices are saved.
 class BoardAnalysisSettings extends Notifier<BoardAnalysisPreferences> {
   final Set<String> _edited = {};
   bool _disposed = false;

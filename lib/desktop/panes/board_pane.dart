@@ -563,7 +563,8 @@ final _desktopBoardPlayerPhotoProvider = FutureProvider.autoDispose
       (ref, fideId) => FidePhotoService.getPhotoUrlOrNull('$fideId'),
     );
 
-@visibleForTesting
+/// Whether a board shows its Stockfish eval bar. The watching board and the
+/// play board share this rule.
 bool shouldShowDesktopBoardEvalBar(
   EngineSettings settings, [
   BoardAnalysisPreferences preferences = const BoardAnalysisPreferences(),
@@ -574,7 +575,6 @@ bool shouldShowDesktopBoardEvalBar(
 /// Independent of the engine: Toby is not Stockfish. Decided from settings
 /// and the game alone, never from whether a reading has arrived, so a
 /// reading never moves the board.
-@visibleForTesting
 bool shouldShowDesktopBoardTobyBar(
   EngineSettings settings,
   String? variant, [
