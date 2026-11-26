@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/desktop/widgets/desktop_header_icon_button.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -14,9 +15,10 @@ import 'package:chessever/theme/app_theme.dart';
 /// CLAUDE.md §3, but render text with our own theme tokens so the popover
 /// blends with the surrounding desktop pane.
 class EngineSettingsPopover extends ConsumerStatefulWidget {
-  const EngineSettingsPopover({super.key, this.dimension});
+  const EngineSettingsPopover({super.key, this.dimension, this.unifiedAnalysis = false});
 
   final double? dimension;
+  final bool unifiedAnalysis;
 
   @override
   ConsumerState<EngineSettingsPopover> createState() =>
@@ -45,7 +47,7 @@ class _EngineSettingsPopoverState extends ConsumerState<EngineSettingsPopover>
       data: FThemes.zinc.dark,
       child: FPopover(
         controller: _controller,
-        popoverBuilder: (context, _) => _PopoverBody(),
+        popoverBuilder: (context, _) => _PopoverBody(unified: widget.unifiedAnalysis),
         child: button,
       ),
     );
@@ -55,13 +57,21 @@ class _EngineSettingsPopoverState extends ConsumerState<EngineSettingsPopover>
 }
 
 class _PopoverBody extends ConsumerWidget {
+  const _PopoverBody({required this.unified});
+
+  final bool unified;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final asyncSettings = ref.watch(engineSettingsProviderNew);
     final notifier = ref.read(engineSettingsProviderNew.notifier);
     final settings = asyncSettings.valueOrNull ?? const EngineSettings();
+    final preferences = unified ? ref.watch(boardAnalysisPreferencesProvider) : const BoardAnalysisPreferences();
+    final boardSettings = unified ? ref.read(boardAnalysisPreferencesProvider.notifier) : null;
+    final source = preferences.arrows(settings);
 
     return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.75),
       width: 320,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -69,7 +79,7 @@ class _PopoverBody extends ConsumerWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: kDividerColor),
       ),
-      child: Column(
+      child: SingleChildScrollView(child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -83,19 +93,28 @@ class _PopoverBody extends ConsumerWidget {
           ),
           const SizedBox(height: 14),
           _SwitchRow(
-            label: 'Engine analysis',
-            description: 'Run Stockfish on the active position.',
-            value: settings.showEngineAnalysis,
-            onChange: notifier.toggleEngineAnalysis,
+            label: unified ? 'Stockfish analysis' : 'Engine analysis',
+            description: unified ? 'Show Stockfish’s suggested lines.' : 'Run Stockfish on the active position.',
+            value: unified ? preferences.stockfishAnalysis : settings.showEngineAnalysis,
+            onChange: boardSettings?.setStockfishAnalysis ?? notifier.toggleEngineAnalysis,
           ),
           const SizedBox(height: 10),
           _SwitchRow(
-            label: 'Evaluation gauge',
-            description: 'Show the bar beside the board.',
-            value: settings.showEngineGauge,
-            onChange: notifier.toggleEngineGauge,
+            label: unified ? 'Stockfish bar' : 'Evaluation gauge',
+            description: 'Show Stockfish’s evaluation beside the board.',
+            value: unified ? preferences.stockfishBar(settings) : settings.showEngineGauge,
+            onChange: boardSettings?.setStockfishBar ?? notifier.toggleEngineGauge,
           ),
           const SizedBox(height: 10),
+          if (boardSettings != null) ...[
+            _SwitchRow(
+              label: 'Toby analysis',
+              description: 'Show the moves Toby thinks the player will choose.',
+              value: preferences.tobyAnalysis,
+              onChange: boardSettings.setTobyAnalysis,
+            ),
+            const SizedBox(height: 10),
+          ],
           _SwitchRow(
             label: 'Toby bar',
             description: 'Show Toby\'s chances beside the board.',
@@ -103,18 +122,29 @@ class _PopoverBody extends ConsumerWidget {
             onChange: notifier.toggleTobyBar,
           ),
           const SizedBox(height: 10),
-          _SwitchRow(
-            label: 'PV arrows',
-            description: 'Draw arrows for the top engine lines.',
-            value: settings.showPvArrows,
-            onChange: notifier.togglePvArrows,
-          ),
+          if (boardSettings == null)
+            _SwitchRow(
+              label: 'PV arrows',
+              description: 'Draw arrows for the top engine lines.',
+              value: settings.showPvArrows,
+              onChange: notifier.togglePvArrows,
+            )
+          else
+            _SegmentedRow(
+              label: 'Board arrows',
+              options: const ['Stockfish', 'Toby', 'Off'],
+              selectedIndex: source.index,
+              onSelect: (index) => boardSettings.setArrows(BoardAnalysisArrows.values[index]),
+            ),
           const Divider(height: 24, color: kDividerColor),
           _SegmentedRow(
             label: 'Engine lines',
             options: EngineSettings.principalVariationLabels,
-            selectedIndex: settings.principalVariationIndex,
-            onSelect: notifier.setPrincipalVariationIndex,
+            selectedIndex: unified
+                ? preferences.stockfishLineIndex
+                : settings.principalVariationIndex,
+            onSelect: boardSettings?.setStockfishLineIndex ??
+                notifier.setPrincipalVariationIndex,
           ),
           const SizedBox(height: 12),
           _SegmentedRow(
@@ -125,13 +155,13 @@ class _PopoverBody extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           _SegmentedRow(
-            label: 'Board arrows',
+            label: unified ? 'Stockfish arrow count' : 'Board arrows',
             options: EngineSettings.maxArrowsLabels,
             selectedIndex: settings.maxArrowsOnBoard,
             onSelect: notifier.setMaxArrowsOnBoard,
           ),
         ],
-      ),
+      )),
     );
   }
 }

@@ -295,8 +295,8 @@ void main() {
         ),
         isFalse,
       );
-      // The eval bar's own rule is untouched.
-      expect(shouldShowDesktopBoardEvalBar(off), isFalse);
+      // Hiding Stockfish lines does not hide its independent board bar.
+      expect(shouldShowDesktopBoardEvalBar(off), isTrue);
     });
 
     test(

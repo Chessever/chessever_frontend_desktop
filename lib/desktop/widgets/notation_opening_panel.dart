@@ -431,10 +431,20 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
         }
       }
     }
+    final engine = widget.enginePanel;
+    final defaultHeight = engine is EnginePanel
+        ? engine.railInitialAnalysisHeight(context, width: width)
+        : null;
+    final engineWeight = defaultHeight != null && track.isFinite && track > 0
+        ? math.max(
+            desktopEngineRightRailInitialWeight,
+            math.min(defaultHeight, math.max(0, track - notationMinimum)) / track,
+          )
+        : desktopEngineRightRailInitialWeight;
     return [
       SplitChild(
         minSize: engineMinimum,
-        initialWeight: desktopEngineRightRailInitialWeight,
+        initialWeight: engineWeight,
         label: 'Engine',
         collapsedIcon: Icons.memory_rounded,
         onRestore: _resumeEngineFromRail,
@@ -454,7 +464,7 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
         // Compact floor so the report and notation can both be resized
         // meaningfully on short windows.
         minSize: notationMinimum,
-        initialWeight: 1 - desktopEngineRightRailInitialWeight,
+        initialWeight: 1 - engineWeight,
         label: 'Notation',
         collapsedIcon: Icons.format_list_numbered_rounded,
         child: notationContent,
@@ -822,12 +832,11 @@ class _NotationOpeningPanelState extends ConsumerState<NotationOpeningPanel> {
                               axis: Axis.vertical,
                               controller: _railController,
                               storageKey: desktopEngineRightRailSplitStorageKey,
-                              // Use the standard divider treatment so resizing
-                              // stays discoverable without an accent line
-                              // through content.
+                              // A visible neutral line marks the existing
+                              // drag target for revealing more analysis rows.
                               gutterThickness:
                                   desktopEngineRightRailGutterThickness,
-                              gutterColor: kDividerColor,
+                              gutterColor: kLightGreyColor,
                               children: _railSplitChildren(
                                 constraints.maxHeight,
                                 width: constraints.maxWidth,

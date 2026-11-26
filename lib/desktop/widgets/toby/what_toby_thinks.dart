@@ -17,6 +17,7 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:dartchess/dartchess.dart' show Side;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -333,8 +334,10 @@ class WhatTobyThinks extends ConsumerStatefulWidget {
     required this.controller,
     this.onPlayUci,
     this.bookAccess,
+    this.compactPredictions = false,
   });
 
+  final bool compactPredictions;
   final TobyTarget target;
   final TobyPanelController controller;
 
@@ -362,18 +365,20 @@ class WhatTobyThinks extends ConsumerStatefulWidget {
   static double comfortableHeight(
     BuildContext context, {
     required double width,
+    bool compactPredictions = false,
   }) {
     final rowExtent = _tobyRowExtent(
       context,
-      showBars: width >= kTobyWdlMinPanelWidth,
+      showBars: !compactPredictions && width >= kTobyWdlMinPanelWidth,
     );
     return _kLeadHeight +
         _kLeadGap +
         _kComfortableRows * rowExtent +
         (_kComfortableRows - 1) * _kRowGap +
-        _kAttributionScrolledGap +
-        _tobyCreditLineHeight(context) +
-        _kListBottomPadding;
+        _kListBottomPadding +
+        (compactPredictions
+            ? 0
+            : _kAttributionScrolledGap + _tobyCreditLineHeight(context));
   }
 
   /// Plays a candidate on the board, through the same path as a Stockfish
@@ -418,7 +423,6 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
 
   /// The what-if menu keeps its state while the reading line rearranges
   /// around it (a reading arriving, a busy notice).
-  final GlobalKey _whatIfKey = GlobalKey(debugLabel: 'Toby what-if');
 
   TobyPanelController get _controller => widget.controller;
 
@@ -488,9 +492,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     if (!identical(oldWidget.controller, widget.controller)) {
       oldWidget.controller
         ..removeListener(_onControllerChanged)
-        ..holdBoardSoon(false)
-        ..showReadingSoon(null, null)
-        ..clearMarksSoon();
+        ..detachView(this);
       widget.controller.addListener(_onControllerChanged);
     }
     if (oldWidget.target.positionKey != widget.target.positionKey) {
@@ -507,10 +509,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     // Leaving the tab (or the pane: picture-in-picture, a closed board)
     // gives the board back its engine arrows, and no Toby arrow outlives
     // the view that drew it.
-    _controller
-      ..holdBoardSoon(false)
-      ..showReadingSoon(null, null)
-      ..clearMarksSoon();
+    _controller.detachView(this);
     _rowsFocus
       ..removeListener(_onRowsFocusChanged)
       ..dispose();
@@ -550,7 +549,8 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
       _keyboard = true;
       _focusedRow = row;
     });
-    _controller.hover(positionKey, listed[row].uci);
+    _controller.hover(positionKey, listed[row].uci,
+        previewOnBoard: !widget.compactPredictions);
   }
 
   void _toggleWhatIf(FPopoverController popover) {
@@ -577,7 +577,8 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
 
   void _hoverRow(String positionKey, String uci) {
     if (_keyboard) setState(() => _keyboard = false);
-    _controller.hover(positionKey, uci);
+    _controller.hover(positionKey, uci,
+        previewOnBoard: !widget.compactPredictions);
   }
 
   void _pressRow(int index, String uci) {
@@ -648,7 +649,8 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
         _keyboard = true;
         _focusedRow = next;
       });
-      _controller.hover(positionKey, listed[next].uci);
+      _controller.hover(positionKey, listed[next].uci,
+          previewOnBoard: !widget.compactPredictions);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.enter ||
@@ -674,7 +676,8 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
   Widget build(BuildContext context) {
     // While the view is on screen in place of Stockfish's lines, the
     // engine's arrows leave the board; leaving gives them back (dispose).
-    _controller.holdBoardSoon(true);
+    _controller.attachView(this);
+    if (!widget.compactPredictions) _controller.holdBoardSoon(true);
     final request = widget.target.request;
     TobyQuery? query;
     TobyReadingState? state;
@@ -707,13 +710,15 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
         builder: (context, constraints) {
           final width = constraints.maxWidth;
           final height = constraints.maxHeight;
-          final showBars = width >= kTobyWdlMinPanelWidth;
+          final showBars = !widget.compactPredictions && width >= kTobyWdlMinPanelWidth;
           final rowExtent = _tobyRowExtent(context, showBars: showBars);
-          final creditLine = _tobyCreditLineHeight(context);
-          final scrolledCredit =
-              _kAttributionScrolledGap + creditLine + _kListBottomPadding;
+          final showCredit = !widget.compactPredictions;
+          final bottomReserve = _kListBottomPadding +
+              (showCredit
+                  ? _kAttributionScrolledGap + _tobyCreditLineHeight(context)
+                  : 0);
           const leadExtent = _kLeadHeight + _kLeadGap;
-          final roomForLead = height >= leadExtent + rowExtent + scrolledCredit;
+          final roomForLead = height >= leadExtent + rowExtent + bottomReserve;
           final busy =
               state?.status == TobyStatus.busy &&
               reading != null &&
@@ -751,13 +756,9 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
               ),
             );
           }
-          // The attribution stays on screen under the rows at any height:
-          // the rows scroll above it. A short pane gives way in fixed steps,
-          // so one whole row and the attribution always fit together:
-          //  1. everything (the reading line, the rows, the attribution);
-          //  2. the reading line steps aside;
-          //  3. the attribution closes up under the one row.
-          final tight = height < rowExtent + scrolledCredit;
+          // Keep one whole move in short panes. The non-compact view also
+          // keeps its inline credit; the compact title's help owns that credit.
+          final tight = height < rowExtent + bottomReserve;
           final lead =
               roomForLead
                   ? _lead(context, state, query, reading, width: width)
@@ -782,7 +783,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
           // on a whole row when the next one would barely show (it is the
           // row under the edge that dissolves into the pane only when most
           // of it is on screen), and the attribution keeps more air from it.
-          var room = height - scrolledCredit;
+          var room = height - bottomReserve;
           final scrolls = items.last.$2 > room + 0.5;
           if (scrolls) {
             for (var i = 1; i < items.length; i++) {
@@ -832,7 +833,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
                 )
               else
                 list,
-              Padding(
+              if (showCredit) Padding(
                 padding: EdgeInsets.fromLTRB(
                   _kContentInset,
                   tight
@@ -941,7 +942,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
       child: MouseRegion(
         // Off the rows, the board shows the pin (or the engine's view)
         // again.
-        onExit: (_) => _controller.hover(positionKey, null),
+        onExit: (_) => _controller.clearHover(),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: _kListInset),
           child: CutFadeItems(
@@ -971,6 +972,9 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
                         child: _TobyRow(
                           key: ValueKey<String>(listed[i].uci),
                           candidate: listed[i],
+                          numberedSan: widget.compactPredictions
+                              ? _numberedTobyMove(listed[i].san, positionKey, reading.sideToMove)
+                              : null,
                           classification: classes[listed[i].uci],
                           muted: !reading.isFinal,
                           showBar: showBars,
@@ -1050,8 +1054,8 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
             ? null
             : (reading?.inputs ?? TobyInputs.expectedFor(query.request)).label;
     final wdl = reading?.positionWdl;
-    final verdict = wdl == null ? null : tobyVerdictLabel(wdl);
-    if (!busy && inputs == null && verdict == null) return null;
+    final verdict = widget.compactPredictions || wdl == null ? null : tobyVerdictLabel(wdl);
+    if (!widget.compactPredictions && !busy && inputs == null && verdict == null) return null;
 
     final room = width - 2 * _kContentInset;
     final leftWidth =
@@ -1091,7 +1095,6 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
     );
 
     Widget whatIf(String label) => FPopover(
-      key: _whatIfKey,
       popoverAnchor: Alignment.topLeft,
       childAnchor: Alignment.bottomLeft,
       focusNode: _whatIfFocus,
@@ -1102,6 +1105,7 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
             child: _TobyTextAction(
               label: label,
               emphasized: _controller.hasWhatIf,
+              underlined: widget.compactPredictions,
               onPress: () => _toggleWhatIf(popover),
             ),
           ),
@@ -1118,9 +1122,14 @@ class _WhatTobyThinksState extends ConsumerState<WhatTobyThinks> {
         height: _kLeadHeight,
         child: Row(
           children: [
+            if (widget.compactPredictions && !busy) ...[
+              const _TobyAbout(),
+              const SizedBox(width: _kMetaGap),
+            ],
             Expanded(
               child: Align(
-                alignment: Alignment.centerLeft,
+                alignment: widget.compactPredictions && !busy
+                    ? Alignment.centerRight : Alignment.centerLeft,
                 child:
                     busy
                         ? busyNotice()
@@ -1206,6 +1215,7 @@ class _TobyRow extends StatelessWidget {
   const _TobyRow({
     super.key,
     required this.candidate,
+    this.numberedSan,
     required this.classification,
     required this.muted,
     required this.showBar,
@@ -1215,6 +1225,7 @@ class _TobyRow extends StatelessWidget {
   });
 
   final TobyCandidate candidate;
+  final String? numberedSan;
   final GameMoveClassification? classification;
 
   /// The quick network stage: fills and text are muted until the final
@@ -1231,7 +1242,33 @@ class _TobyRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final prior = candidate.prior;
     final tone = tobyRowTone(classification);
-    final content = Row(
+    final move = numberedSan;
+    final chance = '${candidate.percentage} chance this player plays ${move ?? candidate.san}.';
+    final detail = <String>[
+      chance,
+      if (!muted && prior != null && candidate.priorDiffers)
+        'First instinct ${_wholePercent(prior)}.',
+      if (candidate.wdl case final wdl? when !muted)
+        'After the move: ${tobyVerdictLabel(wdl)}.',
+    ].join(' ');
+    final content = move != null ? Row(
+      children: [
+        Expanded(child: DesktopTooltip(
+          message: detail,
+          child: _RowLine(
+            san: move,
+            sanColor: muted ? kWhiteColor70 : kWhiteColor,
+            classification: classification,
+            instinct: null,
+          ),
+        )),
+        const SizedBox(width: _kScoreGap),
+        DesktopTooltip(message: chance, child: Text(
+          candidate.percentage,
+          style: _kChanceStyle.copyWith(color: muted ? tone.withValues(alpha: 0.6) : tone),
+        )),
+      ],
+    ) : Row(
       children: [
         _Chance(
           candidate.percentage,
@@ -1258,10 +1295,10 @@ class _TobyRow extends StatelessWidget {
     return Semantics(
       button: true,
       selected: pinned,
-      label: tobyCandidateSemanticsLabel(
+      label: '${move == null ? '' : '$move. '}${tobyCandidateSemanticsLabel(
         candidate,
         classification: classification,
-      ),
+      )}',
       excludeSemantics: true,
       onTap: onActivate,
       child: SingleMotionBuilder(
@@ -1586,8 +1623,10 @@ class _TobyTextAction extends StatelessWidget {
     required this.onPress,
     this.emphasized = false,
     this.strong = false,
+    this.underlined = false,
   });
 
+  final bool underlined;
   final String label;
   final VoidCallback onPress;
 
@@ -1626,6 +1665,8 @@ class _TobyTextAction extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: (strong ? strongStyle : style).copyWith(
+            decoration: underlined ? TextDecoration.underline : null,
+            decorationColor: kSecondaryTextColor,
             color:
                 strong
                     ? (hovered ? kTobyAccent : kWhiteColor)
@@ -1639,6 +1680,51 @@ class _TobyTextAction extends StatelessWidget {
       },
     );
   }
+}
+
+String _numberedTobyMove(String san, String fen, Side side) {
+  final fields = fen.split(' ');
+  final number = fields.length == 6 ? int.tryParse(fields.last) : null;
+  if (number == null || number < 1) return san;
+  return side == Side.white ? '$number.$san' : '$number…$san';
+}
+
+const _aboutToby = 'Toby predicts the human’s next move from the position, '
+    'ratings and time control. Stockfish looks for the strongest move.';
+const _aboutTobyWithCredit = '$_aboutToby\n\n$kTobyAttribution';
+
+class _TobyAbout extends StatelessWidget {
+  const _TobyAbout();
+
+  @override
+  Widget build(BuildContext context) => FPopover(
+    popoverAnchor: Alignment.topLeft,
+    childAnchor: Alignment.bottomLeft,
+    popoverBuilder: (context, _) => const SizedBox(
+      width: 260,
+      child: Padding(
+        padding: EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_aboutToby),
+            SizedBox(height: 8),
+            _TobyAttribution(),
+          ],
+        ),
+      ),
+    ),
+    builder: (context, popover, _) => DesktopTooltip(
+      message: _aboutTobyWithCredit,
+      child: _TobyTextAction(
+        label: kTobyFeatureLabel,
+        strong: true,
+        underlined: true,
+        onPress: () => unawaited(popover.toggle()),
+      ),
+    ),
+  );
 }
 
 /// Toby's licence attribution, verbatim, with its site linked.
@@ -1799,7 +1885,13 @@ class _WhatIfLabel extends StatelessWidget {
 /// decides who may read Toby. Tabs take focus with Tab and switch with Enter
 /// or Space; arrows, Esc and modifier chords pass on to the board.
 class TobyViewTabs extends ConsumerStatefulWidget {
-  const TobyViewTabs({super.key, this.compact = false});
+  const TobyViewTabs({
+    super.key,
+    this.compact = false,
+    this.showAboutOnHover = false,
+  });
+
+  final bool showAboutOnHover;
 
   /// A narrow header's tabs: the labels 10 px apart instead of 16, and no
   /// room after the last one. The labels keep their size.
@@ -1852,6 +1944,12 @@ class _TobyViewTabsState extends ConsumerState<TobyViewTabs> {
   Widget build(BuildContext context) {
     final toby = ref.watch(tobyTabSelectedProvider);
     final half = (widget.compact ? _kCompactTabGap : _kTabGap) / 2;
+    final tobyTab = _TobyTab(
+      label: kTobyFeatureLabel,
+      selected: toby,
+      onPress: _chooseToby,
+      padding: EdgeInsets.only(right: widget.compact ? 0 : _kTabEdge, left: half),
+    );
     return Semantics(
       container: true,
       explicitChildNodes: true,
@@ -1864,15 +1962,10 @@ class _TobyViewTabsState extends ConsumerState<TobyViewTabs> {
             onPress: _chooseStockfish,
             padding: EdgeInsets.only(left: _kTabEdge, right: half),
           ),
-          _TobyTab(
-            label: kTobyFeatureLabel,
-            selected: toby,
-            onPress: _chooseToby,
-            padding: EdgeInsets.only(
-              left: half,
-              right: widget.compact ? 0 : _kTabEdge,
-            ),
-          ),
+          if (widget.showAboutOnHover)
+            DesktopTooltip(message: _aboutTobyWithCredit, child: tobyTab)
+          else
+            tobyTab,
         ],
       ),
     );

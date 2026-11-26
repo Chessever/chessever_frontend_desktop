@@ -4,10 +4,7 @@ import 'package:chessever/desktop/widgets/cut_item_fade.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/utils/text_line_metrics.dart';
 import 'package:chessever/desktop/state/engine_formatted_display.dart';
-import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_policy.dart';
-import 'package:chessever/desktop/auth/desktop_access_context.dart';
-import 'package:chessever/desktop/services/engine/engine_played.dart';
 import 'package:chessever/desktop/auth/desktop_access_decision.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
@@ -27,6 +24,7 @@ import 'package:chessever/desktop/services/engine/game_analysis_report.dart';
 import 'package:chessever/desktop/services/engine/game_report_request_coordinator.dart';
 import 'package:chessever/desktop/services/engine/game_report_book_lookup.dart';
 import 'package:chessever/desktop/services/engine/server_game_report.dart';
+import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/services/toby/toby_label.dart'
     show kTobyFeatureLabel;
@@ -75,8 +73,6 @@ class EnginePanel extends ConsumerStatefulWidget {
     super.key,
     required this.fen,
     required this.sideToMove,
-    this.playedPosition,
-    this.playedContext,
     this.onPlayUci,
     this.pvPlayOwner,
     this.game,
@@ -99,11 +95,11 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.headerTrailing,
     this.toby,
     this.tobyTabSelected = false,
+    this.unifiedAnalysis = false,
+    this.tobyArrowsOnly,
   });
 
   final String fen;
-  final EnginePlayedPosition? playedPosition;
-  final DesktopAccessContext? playedContext;
 
   /// `'w'` or `'b'`. Unused now that the singleton normalizes evaluations to
   /// white-perspective; kept on the API to avoid touching every call site.
@@ -177,6 +173,10 @@ class EnginePanel extends ConsumerStatefulWidget {
   /// report is open. The engine keeps analysing: its score stays in the
   /// header.
   final bool tobyTabSelected;
+  final bool unifiedAnalysis;
+  final Widget? tobyArrowsOnly;
+
+  static const double dualAnalysisMinWidth = 480;
 
   /// Test seam for driving report lifecycle transitions without spawning a
   /// real Stockfish process. The controller must remain stable for this
@@ -241,10 +241,35 @@ class EnginePanel extends ConsumerStatefulWidget {
           _kHeaderControl,
           _EngineScoreDepthReadout.lineHeight(context),
         ) +
-        WhatTobyThinks.comfortableHeight(context, width: width) +
+        WhatTobyThinks.comfortableHeight(
+          context,
+          width: width,
+          compactPredictions: unifiedAnalysis,
+        ) +
         (reportVisible
             ? desktopEngineReportGutterThickness + _kReportMinHeight
             : 0);
+  }
+
+  /// A fresh Board rail starts tall enough for three compact engine rows.
+  /// This seeds the split's initial weights only, never a saved height.
+  double? railInitialAnalysisHeight(BuildContext context, {required double width}) {
+    if (!unifiedAnalysis || reportVisible) return null;
+    final rowHeight = 14 + math.max(
+      16.0,
+      desktopTextLineSize(context, '1…Nf6', _PvTokensLine._style).height,
+    );
+    final stockfishHeight = 3 * rowHeight + 2 * _kLineGap + 12;
+    final tobyHeight = toby != null && width >= dualAnalysisMinWidth
+        ? WhatTobyThinks.comfortableHeight(
+            context,
+            width: width / 2 - 1,
+            compactPredictions: true,
+          )
+        : 0.0;
+    return _kHeaderPadding.vertical +
+        math.max(_kHeaderControl, _EngineScoreDepthReadout.lineHeight(context)) +
+        math.max(stockfishHeight, tobyHeight);
   }
 
   @override
@@ -294,10 +319,6 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
   GameReportRequestResult? _requestNotice;
   bool _requesting = false;
   bool Function()? _reportOwnerIsCurrent;
-
-  /// Keeps the Toby view's state (focus, the what-if menu) as it moves
-  /// between the list area and the live half of the report split.
-  final GlobalKey _tobyKey = GlobalKey(debugLabel: 'Toby view');
 
   @override
   void initState() {
@@ -525,9 +546,19 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     }
     final asyncSettings = ref.watch(engineSettingsProviderNew);
     final settings = asyncSettings.valueOrNull;
-    final engineOn =
-        settings?.showEngineAnalysis ??
-        const EngineSettings().showEngineAnalysis;
+    final prefs = widget.unifiedAnalysis
+        ? ref.watch(boardAnalysisPreferencesProvider)
+        : const BoardAnalysisPreferences();
+    final engineSettings = settings ?? const EngineSettings();
+    final stockfishOn = widget.unifiedAnalysis
+        ? prefs.stockfishAnalysis
+        : engineSettings.showEngineAnalysis;
+    final engineOn = !prefs.paused && stockfishOn;
+    final tobyReady = !widget.unifiedAnalysis || asyncSettings.hasValue;
+    final toby = prefs.paused || !tobyReady ? null : widget.toby;
+    final wantsTobyArrows = widget.unifiedAnalysis && tobyReady && !prefs.paused &&
+        widget.isForegroundTab &&
+        prefs.arrows(engineSettings) == BoardAnalysisArrows.toby;
     final reportOn = widget.reportVisible;
     final reportState =
         reportAccess && (_reportOwnerIsCurrent?.call() ?? true)
@@ -542,20 +573,8 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 
     // A position starts the bundled engine on demand. An idle panel says
     // nothing about engine availability; keep its controls reachable.
-    final engineActive =
-        engineOn && runLiveBoardAnalysis && widget.fen.isNotEmpty;
-
-    final playedContext = widget.playedContext;
-    final playedPosition = widget.playedPosition;
-    final played =
-        engineActive &&
-                playedContext != null &&
-                playedPosition != null &&
-                playedPosition.fen == widget.fen &&
-                // One rule with the Book class on Toby's rows.
-                desktopPlayedCountsAllowed(ref.watch, playedContext)
-            ? ref.watch(enginePlayedProvider(playedPosition)).valueOrNull
-            : null;
+    final engineActive = engineOn && asyncSettings.hasValue &&
+        runLiveBoardAnalysis && widget.fen.isNotEmpty;
 
     final reportContent = GameReportView(
       state: reportState,
@@ -570,13 +589,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     );
     // Built once per panel build, outside the engine-tick builder below, so a
     // Stockfish update reuses this exact widget and never rebuilds Toby.
-    final tobyView =
-        widget.toby != null && widget.tobyTabSelected
-            ? KeyedSubtree(
-              key: _tobyKey,
-              child: RepaintBoundary(child: widget.toby),
-            )
-            : null;
+    final tobyDriver = toby ?? (wantsTobyArrows ? widget.tobyArrowsOnly : null);
+    final tobyView = tobyDriver == null ? null : KeyedSubtree(
+      key: const ValueKey('toby-live-analysis'),
+      child: RepaintBoundary(child: tobyDriver),
+    );
     // Engine ticks do not rebuild the report or schedule automatic analysis.
     return ListenableBuilder(
       listenable: _display,
@@ -603,14 +620,14 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
               void playCurrent(String uci) {
                 if (!mounted ||
                     !widget.isForegroundTab ||
+                    (widget.unifiedAnalysis &&
+                        ref.read(boardAnalysisPreferencesProvider).paused) ||
                     widget.fen != targetFen ||
                     generation != _targetGeneration ||
                     !identical(_display.reading, sourceReading) ||
-                    ref
-                            .read(engineSettingsProviderNew)
-                            .valueOrNull
-                            ?.showEngineAnalysis !=
-                        true ||
+                    !(widget.unifiedAnalysis
+                        ? ref.read(boardAnalysisPreferencesProvider).stockfishAnalysis
+                        : ref.read(engineSettingsProviderNew).valueOrNull?.showEngineAnalysis == true) ||
                     !identical(
                       ref.read(boardEvalProvider(targetFen)),
                       sourceReading,
@@ -631,7 +648,6 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                         state: reading,
                         sanLines: _display.snapshot?.sanLines ?? const [],
                         interactive: linesCurrent,
-                        played: _display.fen == widget.fen ? played : null,
                         // Scope presentation to the target position, even while
                         // the previous formatted reading is retained briefly.
                         playOwner: (
@@ -649,15 +665,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                             : 'Live analysis resumes when this tab is active.',
                       );
 
-              // The list area shows the chosen tab: Toby's view, or the live
-              // Stockfish lines while the engine is on.
-              final Widget? listContent =
-                  tobyView ?? (engineOn ? engineContent : null);
-
-              // [width] is the pane's: with the report open under Toby's
-              // view, the view grows toward its three whole rows from the
-              // report's share, as the pane does from the notation's.
-              Widget? bodyFor(double width) =>
+              Widget? bodyFor(double width, Widget? listContent, bool tobyVisible) =>
                   listContent != null && reportOn
                       ? ResizableSplitView(
                         axis: Axis.vertical,
@@ -669,7 +677,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                             minSize: _kReportListMinHeight,
                             initialWeight: 0.40,
                             label:
-                                tobyView != null
+                                tobyVisible
                                     ? kTobyFeatureLabel
                                     : 'Live engine',
                             dismissible: false,
@@ -677,10 +685,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                             // drags and resizes like Stockfish's half.
                             comfortableOnArrival: true,
                             comfortableSize:
-                                tobyView != null
+                                tobyVisible
                                     ? WhatTobyThinks.comfortableHeight(
                                       context,
                                       width: width,
+                                      compactPredictions: widget.unifiedAnalysis,
                                     )
                                     : null,
                             child: listContent,
@@ -702,19 +711,63 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                 color: kBlack2Color,
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final body = bodyFor(constraints.maxWidth);
-                    return Column(
+                    final width = constraints.maxWidth;
+                    final split = widget.unifiedAnalysis && engineOn &&
+                        toby != null && !reportOn && width >= EnginePanel.dualAnalysisMinWidth;
+                    final tobyVisible = toby != null &&
+                        (split || widget.tobyTabSelected || (widget.unifiedAnalysis && !engineOn));
+                    final stockfishVisible = engineOn && (!tobyVisible || split);
+                    final keepToby = tobyView != null && (tobyVisible || wantsTobyArrows);
+                    final hasLiveBody = stockfishVisible || tobyVisible;
+                    final Widget? listContent = !hasLiveBody ? null : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (stockfishVisible)
+                          Positioned.fill(right: split ? width / 2 : 0, child: engineContent),
+                        if (split)
+                          Positioned(top: 0, bottom: 0, left: width / 2,
+                            child: const VerticalDivider(width: 1, thickness: 1, color: kDividerColor)),
+                        if (keepToby)
+                          Positioned.fill(
+                            key: const ValueKey('toby-analysis-slot'),
+                            left: split ? width / 2 + 1 : 0,
+                            child: Offstage(
+                              offstage: !tobyVisible,
+                              child: ExcludeFocus(excluding: !tobyVisible, child: tobyView),
+                            ),
+                          ),
+                      ],
+                    );
+                    final body = bodyFor(width, listContent, tobyVisible);
+                    final content = Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _buildHeader(
                           engineOn: engineOn,
                           engineActive: engineActive,
                           reading: reading,
+                          withToby: toby != null && !split &&
+                              (!widget.unifiedAnalysis || engineOn),
+                          tobyOnly: widget.unifiedAnalysis && tobyVisible && !engineOn,
+                          analysisPaused: prefs.paused,
                           compact: constraints.maxHeight < _kCompactHeaderBelow,
                         ),
                         if (body != null) Expanded(child: body),
                       ],
                     );
+                    if (!keepToby || hasLiveBody) {
+                      return content;
+                    }
+                    // Arrow source is independent of the selected panel. An
+                    // offstage driver shares the exact same keyed reading as
+                    // the visible Toby view and board bar, without another request.
+                    return Stack(children: [
+                      content,
+                      Positioned(
+                        left: 0, top: 0, width: 240, height: 100,
+                        child: Offstage(child: ExcludeFocus(child: tobyView)),
+                      ),
+                    ]);
                   },
                 ),
               );
@@ -735,9 +788,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
     required bool engineOn,
     required bool engineActive,
     required BoardEvalState reading,
+    required bool withToby,
+    required bool tobyOnly,
+    required bool analysisPaused,
     bool compact = false,
   }) {
-    final withToby = widget.toby != null;
     return Padding(
       padding: compact ? _kCompactHeaderPadding : _kHeaderPadding,
       child: Row(
@@ -749,7 +804,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             ),
             const SizedBox(width: _kHeaderTrailingGap),
           ],
-          const EngineSettingsPopover(dimension: _kHeaderControl),
+          EngineSettingsPopover(
+            dimension: _kHeaderControl,
+            unifiedAnalysis: widget.unifiedAnalysis,
+          ),
           // The first tab's label lands where the engine's name stood.
           SizedBox(
             width:
@@ -760,7 +818,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
           Expanded(
             child:
                 withToby
-                    ? _TabsAndReadout(reading: engineActive ? reading : null)
+                    ? _TabsAndReadout(
+                      reading: engineActive ? reading : null,
+                      showTobyAboutOnHover: widget.unifiedAnalysis,
+                    )
                     // A clipped "St…" reads as broken; in a narrow rail the
                     // score and controls say enough, so the name steps aside
                     // instead.
@@ -770,7 +831,7 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                               constraints.maxWidth < 64
                                   ? const SizedBox.shrink()
                                   : Text(
-                                    'Stockfish',
+                                    tobyOnly || analysisPaused ? 'Analysis' : 'Stockfish',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
@@ -789,7 +850,10 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             _EngineScoreDepthReadout(snapshot: reading),
           ],
           const SizedBox(width: _kHeaderPowerGap),
-          _EngineQuickToggle(enabled: engineOn),
+          _EngineQuickToggle(
+            enabled: widget.unifiedAnalysis ? !analysisPaused : engineOn,
+            master: widget.unifiedAnalysis,
+          ),
           const SizedBox(width: _kHeaderEndGap),
           if (widget.onPictureInPicture != null) ...[
             _EnginePictureInPictureButton(
@@ -816,7 +880,12 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
 /// cannot honour its minimums) scales the labels below
 /// [kEngineHeaderTabsMinScale]; they still shrink whole rather than clip.
 class _TabsAndReadout extends StatelessWidget {
-  const _TabsAndReadout({required this.reading});
+  const _TabsAndReadout({
+    required this.reading,
+    required this.showTobyAboutOnHover,
+  });
+
+  final bool showTobyAboutOnHover;
 
   /// The engine's reading, or null when it shows none (engine off, paused).
   final BoardEvalState? reading;
@@ -871,10 +940,16 @@ class _TabsAndReadout extends StatelessWidget {
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
-                      child: const TobyViewTabs(compact: true),
+                      child: TobyViewTabs(
+                        compact: true,
+                        showAboutOnHover: showTobyAboutOnHover,
+                      ),
                     ),
                   )
-                  : TobyViewTabs(compact: compactTabs);
+                  : TobyViewTabs(
+                      compact: compactTabs,
+                      showAboutOnHover: showTobyAboutOnHover,
+                    );
           return Row(
             children: [
               tabs,
@@ -987,8 +1062,6 @@ class _EngineLinesSnapshot {
       Object.hash(isEvaluating, statusText, Object.hashAll(pvs));
 }
 
-const double _enginePlayedWidth = 52;
-
 /// Between two engine lines.
 const double _kLineGap = 6;
 
@@ -1000,12 +1073,10 @@ class _EngineLinesSurface extends StatefulWidget {
     required this.state,
     required this.interactive,
     required this.sanLines,
-    required this.played,
   });
 
   final BoardEvalState state;
   final List<List<String>> sanLines;
-  final EnginePlayed? played;
   final bool interactive;
 
   final String fen;
@@ -1032,7 +1103,6 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
         old.fen == widget.fen &&
         old.playOwner == widget.playOwner &&
         old.interactive == widget.interactive &&
-        old.played == widget.played &&
         (old.onPlayUci != null) == (widget.onPlayUci != null) &&
         listEquals(old.formattedSan, san)) {
       return old;
@@ -1045,7 +1115,6 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
       playOwner: widget.playOwner,
       interactive: widget.interactive,
       formattedSan: san,
-      played: widget.played,
     );
   }
 
@@ -1071,15 +1140,6 @@ class _EngineLinesSurfaceState extends State<_EngineLinesSurface> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (widget.played != null)
-          const Padding(
-            padding: EdgeInsets.only(right: 45, bottom: 6),
-            child: Text(
-              'Played',
-              textAlign: TextAlign.end,
-              style: TextStyle(color: kWhiteColor70, fontSize: 12),
-            ),
-          ),
         Expanded(
           // A line the pane's bottom edge cuts dissolves into the pane, as
           // in the Toby Predicts tab, instead of losing its glyphs'
@@ -2063,7 +2123,6 @@ class _PvLine extends StatefulWidget {
     this.playOwner,
     this.formatSan,
     this.formattedSan,
-    this.played,
   });
 
   final int rank;
@@ -2074,7 +2133,6 @@ class _PvLine extends StatefulWidget {
   final Object? playOwner;
   final Future<List<String>> Function(Map<String, String>)? formatSan;
   final List<String>? formattedSan;
-  final EnginePlayed? played;
 
   @override
   State<_PvLine> createState() => _PvLineState();
@@ -2403,33 +2461,9 @@ class _PvLineState extends State<_PvLine> {
                       : _PvTokensLine(
                         tokens: _cachedTokens,
                         expanded: _expanded,
-                        fadeOverflow: widget.played != null,
                         onPreviewToken: _previewToken,
                       ),
             ),
-            if (widget.played != null) ...[
-              const SizedBox(width: 8),
-              SizedBox(
-                width: _enginePlayedWidth,
-                child: Text(
-                  widget.played?.labelFor(
-                        _firstUci,
-                        isCastling:
-                            _cachedTokens.isNotEmpty &&
-                            _cachedTokens.first.san.contains('O-O'),
-                      ) ??
-                      '',
-                  textAlign: TextAlign.end,
-                  maxLines: 1,
-                  style: const TextStyle(
-                    color: kWhiteColor,
-                    fontSize: 12,
-                    height: 1.4,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-            ],
             const SizedBox(width: 4),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -2629,14 +2663,17 @@ class _MenuRow extends StatelessWidget {
 /// out. Single global Stockfish process; toggling here pauses/resumes the
 /// search for whichever board tab is focused (#461).
 class _EngineQuickToggle extends ConsumerWidget {
-  const _EngineQuickToggle({required this.enabled});
+  const _EngineQuickToggle({required this.enabled, required this.master});
 
   final bool enabled;
+  final bool master;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DesktopHeaderIconButton(
-      message: enabled ? 'Pause engine' : 'Resume engine',
+      message: master
+          ? (enabled ? 'Pause all analysis' : 'Resume analysis')
+          : (enabled ? 'Pause engine' : 'Resume engine'),
       icon:
           enabled
               ? Icons.power_settings_new_rounded
@@ -2644,9 +2681,11 @@ class _EngineQuickToggle extends ConsumerWidget {
       selected: enabled,
       unboxed: true,
       onPress: () {
-        ref
-            .read(engineSettingsProviderNew.notifier)
-            .toggleEngineAnalysis(!enabled);
+        if (master) {
+          ref.read(boardAnalysisPreferencesProvider.notifier).setPaused(enabled);
+        } else {
+          ref.read(engineSettingsProviderNew.notifier).toggleEngineAnalysis(!enabled);
+        }
       },
     );
   }
@@ -2692,13 +2731,11 @@ class _PvTokensLine extends StatelessWidget {
   const _PvTokensLine({
     required this.tokens,
     required this.expanded,
-    required this.fadeOverflow,
     required this.onPreviewToken,
   });
 
   final List<_PvToken> tokens;
   final bool expanded;
-  final bool fadeOverflow;
   final ValueChanged<int> onPreviewToken;
 
   static const _spacing = 5.0;
@@ -2726,54 +2763,7 @@ class _PvTokensLine extends StatelessWidget {
     );
 
     if (expanded) return line;
-    if (!fadeOverflow)
-      return SizedBox(height: 18, child: ClipRect(child: line));
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final direction = Directionality.of(context);
-        final painter = TextPainter(
-          textDirection: direction,
-          textScaler: MediaQuery.textScalerOf(context),
-        );
-        final style = DefaultTextStyle.of(context).style.merge(_style);
-        var width = -_spacing;
-        for (final token in tokens) {
-          painter.text = TextSpan(text: token.san, style: style);
-          painter.layout();
-          width += painter.width + _spacing;
-          if (width > constraints.maxWidth) break;
-        }
-        painter.dispose();
-
-        final visible = SizedBox(
-          height: 18,
-          child: ClipRect(
-            child: OverflowBox(
-              maxWidth: double.infinity,
-              alignment: AlignmentDirectional.centerStart,
-              child: Row(
-                textDirection: direction,
-                mainAxisSize: MainAxisSize.min,
-                spacing: _spacing,
-                children: children,
-              ),
-            ),
-          ),
-        );
-        if (width <= constraints.maxWidth) return visible;
-        return ShaderMask(
-          blendMode: BlendMode.dstIn,
-          shaderCallback:
-              (bounds) => LinearGradient(
-                begin: AlignmentDirectional.centerStart,
-                end: AlignmentDirectional.centerEnd,
-                colors: const [Colors.white, Colors.transparent],
-                stops: [(1 - 22 / bounds.width).clamp(0.0, 1.0), 1.0],
-              ).createShader(bounds, textDirection: direction),
-          child: visible,
-        );
-      },
-    );
+    return SizedBox(height: 18, child: ClipRect(child: line));
   }
 }
 
