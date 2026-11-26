@@ -97,7 +97,7 @@ class EnginePanel extends ConsumerStatefulWidget {
     this.tobyTabSelected = false,
     this.unifiedAnalysis = false,
     this.tobyArrowsOnly,
-    this.settingsButton,
+    this.showSettings = true,
   });
 
   final String fen;
@@ -177,9 +177,9 @@ class EnginePanel extends ConsumerStatefulWidget {
   final bool unifiedAnalysis;
   final Widget? tobyArrowsOnly;
 
-  /// Stands in for the engine & board settings gear, for a surface that
-  /// keeps its own choices (Play's live help).
-  final Widget? settingsButton;
+  /// Whether the header carries the engine & board settings gear. Play
+  /// keeps its own choices (its Live help section) and hides it.
+  final bool showSettings;
 
   static const double dualAnalysisMinWidth = 480;
 
@@ -809,15 +809,11 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
             ),
             const SizedBox(width: _kHeaderTrailingGap),
           ],
-          widget.settingsButton != null
-              ? SizedBox.square(
-                dimension: _kHeaderControl,
-                child: widget.settingsButton,
-              )
-              : EngineSettingsPopover(
-                dimension: _kHeaderControl,
-                unifiedAnalysis: widget.unifiedAnalysis,
-              ),
+          if (widget.showSettings)
+            EngineSettingsPopover(
+              dimension: _kHeaderControl,
+              unifiedAnalysis: widget.unifiedAnalysis,
+            ),
           // The first tab's label lands where the engine's name stood.
           SizedBox(
             width:
