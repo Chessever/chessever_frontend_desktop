@@ -26,7 +26,7 @@ import 'package:chessever/desktop/widgets/desktop_segmented_tabs.dart';
 import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_achievement_badge.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
-import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
+import 'package:chessever/desktop/widgets/play_setup_help_card.dart';
 import 'package:chessever/desktop/widgets/play_setup_layout.dart';
 import 'package:chessever/desktop/widgets/play_strength_control.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -92,11 +92,20 @@ class PlayPane extends ConsumerWidget {
     }
     return Container(
       color: kBackgroundColor,
+      // Stretch, so every face gets the pane's full width: a face that
+      // shrink-wrapped would sit centred, carry its scrollbar mid-pane and
+      // change width when the tab changes.
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (!sessionActive)
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+              padding: const EdgeInsets.fromLTRB(
+                kPlayPaneGutter,
+                20,
+                kPlayPaneGutter,
+                0,
+              ),
               child: _PlayTopTabs(
                 selected: tab,
                 onChanged:
@@ -588,26 +597,26 @@ class _PlaySetupScreen extends ConsumerWidget {
     final notifier = ref.read(playSetupProvider.notifier);
     return PlaySetupPage(
       title: 'Play vs bot',
-      subtitle:
-          'Pick a time control, bot, and matching strength mode. Stockfish '
-          'uses exact ELO; Leela and Maia use engine-specific profiles.',
+      subtitle: 'Choose a clock, a bot and its strength, and your color.',
       left: [
         PlaySetupCard(
           title: 'Time control',
           child: _TimeControlSection(config: config, notifier: notifier),
         ),
+        PlaySetupCard(
+          title: 'Color',
+          child: _ColorSection(config: config, notifier: notifier),
+        ),
         // Each kind of help on its own switch; all off plays the game as
         // in competition. The same list opens from the game itself.
-        const PlaySetupCard(title: 'Live help', child: PlayHelpModulesList()),
+        const PlaySetupHelpCard(),
       ],
+      // The bot card is the tallest, so it gets the column the start bar
+      // docks under; the clock, color and help balance it on the left.
       right: [
         PlaySetupCard(
           title: 'Bot',
           child: _EngineSection(config: config, notifier: notifier),
-        ),
-        PlaySetupCard(
-          title: 'Color',
-          child: _ColorSection(config: config, notifier: notifier),
         ),
       ],
       startBar: _StartBar(config: config, notifier: notifier, tabId: tabId),
@@ -1128,27 +1137,35 @@ class _StartBar extends ConsumerWidget {
     final install = ref.watch(engineInstallProvider(config.engine));
     final canStart = engineReady(install);
     return PlaySetupStartBar(
-      summary:
-          '${config.engine.displayName} • '
-          '${playStrengthStartSummary(config.engine, config.elo)} • '
-          '${config.timeControlShorthand} '
-          '(${config.category.displayName})',
-      detail:
-          'Playing as ${config.color.displayName}'
-          '${config.hasStartingPositionSeed ? ' • from position' : ''}',
-      actions: [
-        FButton(
-          style: playPrimaryActionButtonStyle(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-          ),
-          prefix: const Icon(Icons.play_arrow_rounded),
-          onPress:
-              canStart
-                  ? () => _startGame(ref, config, install.binaryPath!, tabId)
-                  : null,
-          child: Text(canStart ? 'Play now' : 'Prepare bot first'),
+      facts: [
+        PlaySetupFact(
+          value: config.timeControlShorthand,
+          label: config.category.displayName,
         ),
+        PlaySetupFact(
+          value: playStrengthStartSummary(config.engine, config.elo),
+          label: config.engine.displayName,
+        ),
+        PlaySetupFact(value: config.color.displayName, label: 'Your color'),
       ],
+      detail:
+          !canStart
+              ? 'Prepare ${config.engine.displayName} above to play it.'
+              : config.hasStartingPositionSeed
+              ? 'Starts from the position you chose.'
+              : null,
+      primaryAction: FButton(
+        style: playPrimaryActionButtonStyle(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+        ),
+        mainAxisSize: MainAxisSize.min,
+        prefix: const Icon(Icons.play_arrow_rounded),
+        onPress:
+            canStart
+                ? () => _startGame(ref, config, install.binaryPath!, tabId)
+                : null,
+        child: Text(canStart ? 'Play now' : 'Prepare bot first'),
+      ),
     );
   }
 }

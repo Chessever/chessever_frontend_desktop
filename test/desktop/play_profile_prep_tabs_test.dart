@@ -81,14 +81,32 @@ void main() {
     return myPrep;
   }
 
-  testWidgets('Prep is the primary tab and asks for the user\'s own profile', (
+  testWidgets('Stats is the default tab and leads with ratings and record', (
     tester,
   ) async {
     await pumpProfile(tester);
 
+    expect(find.text('Stats'), findsOneWidget);
+    expect(find.text('Prep'), findsOneWidget);
+    expect(find.text('Record'), findsOneWidget);
+    expect(find.text('Openings as White'), findsOneWidget);
+    expect(find.text('Score by bot strength'), findsOneWidget);
+    // Few games: the bullet rating is provisional, shown with a "?".
+    expect(find.text('1157?'), findsWidgets);
+    expect(find.text('Attach your own usernames'), findsNothing);
+    expect(find.textContaining('Joined May 13, 2026'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Prep asks for the user\'s own profile', (tester) async {
+    await pumpProfile(tester);
+
+    await tester.tap(find.text('Prep'));
+    await tester.pump();
+
     expect(find.text('Attach your own usernames'), findsOneWidget);
     expect(find.text('Attach your username'), findsOneWidget);
-    expect(find.text('Record'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 700));
     expect(tester.takeException(), isNull);
   });
 
@@ -97,6 +115,8 @@ void main() {
   ) async {
     await pumpProfile(tester, premium: true);
 
+    await tester.tap(find.text('Prep'));
+    await tester.pump();
     await tester.tap(find.text('Attach your username'));
     await tester.pumpAndSettle();
 
@@ -116,38 +136,52 @@ void main() {
   ) async {
     final myPrep = await pumpProfile(tester);
 
+    await tester.tap(find.text('Prep'));
+    await tester.pump();
     await tester.tap(find.text('This is me').first);
     await tester.pump();
 
     expect(myPrep.linked, ['p1']);
+    await tester.pump(const Duration(milliseconds: 700));
   });
 
-  testWidgets(
-    'Play stats keeps the record and badges without personal ratings',
-    (tester) async {
-      await pumpProfile(tester);
+  testWidgets('Stats views switch between overview, badges and games', (
+    tester,
+  ) async {
+    await pumpProfile(tester);
 
-      await tester.tap(find.text('Play stats'));
-      await tester.pump();
+    await tester.tap(find.text('Achievements'));
+    await tester.pump();
+    expect(find.text('Closest next'), findsOneWidget);
+    expect(find.text('Games Played'), findsWidgets);
+    expect(find.text('Record'), findsNothing);
 
-      expect(find.text('Record'), findsOneWidget);
-      expect(find.text('1157'), findsNothing);
-      expect(find.textContaining('rating'), findsNothing);
-      expect(find.text('ChessEver player'), findsNothing);
-      expect(find.text('Joined May 13, 2026'), findsOneWidget);
+    await tester.tap(find.text('Games'));
+    await tester.pump();
+    expect(find.text('Closest next'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(tester.takeException(), isNull);
+  });
 
-      await tester.tap(find.text('Achievements'));
-      await tester.pump();
-      expect(find.text('Record'), findsNothing);
+  testWidgets('a rating in the header opens that clock\'s chart', (
+    tester,
+  ) async {
+    await pumpProfile(tester);
 
-      await tester.tap(find.text('Games'));
-      await tester.pump();
-      expect(find.text('Highest'), findsNothing);
-      expect(find.text('Lowest'), findsNothing);
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(tester.takeException(), isNull);
-    },
-  );
+    await tester.tap(find.text('Prep'));
+    await tester.pump();
+    expect(find.text('Record'), findsNothing);
+
+    await tester.tap(find.text('1187?').first);
+    await tester.pump();
+    expect(find.text('Record'), findsOneWidget);
+    expect(
+      find.text('Finish a rated blitz game to start this chart.'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 final _profile = PlayUserProfile(

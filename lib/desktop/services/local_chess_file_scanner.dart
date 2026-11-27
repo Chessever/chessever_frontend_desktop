@@ -7,7 +7,7 @@ import 'local_pgn_position.dart';
 import 'package:chessever/web/page_yield.dart';
 import 'package:chessever/web/shims/isolate.dart';
 
-import 'package:archive/archive.dart';
+import 'package:archive/archive.dart' hide ZstdCodec;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;

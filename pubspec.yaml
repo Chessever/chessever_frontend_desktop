@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 22.55.3+701
+version: 22.56.0+703
 environment:
   sdk: ^3.7.2
 
@@ -200,6 +200,7 @@ dependencies:
   # Local chess database driver (native FFI on desktop, WASM on web).
   # web/sqlite/sqlite3-<version>.wasm must match the locked version.
   sqlite3: 3.8.0
+  fastlottie: ^1.0.0
 
 dev_dependencies:
   fake_async: ^1.3.3
@@ -276,6 +277,7 @@ flutter:
     - assets/svgs/hamburger/
     - assets/pngs/
     - assets/play/achievements/
+    - assets/play/lottie/
     - assets/sfx/
     - assets/sounds/
     - assets/sounds/standard/

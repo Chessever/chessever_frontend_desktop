@@ -5,7 +5,11 @@ import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:chessever/desktop/services/play/play_cloud_signals.dart';
+import 'package:chessever/desktop/services/play/play_elo.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
+import 'package:chessever/desktop/services/play/play_profile_repository.dart';
+import 'package:chessever/desktop/services/play/play_rewards.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/services/play/play_local_store.dart';
@@ -151,6 +155,11 @@ class PlayAchievementStats {
     this.tournamentsCompleted = 0,
     this.fullHouseTournaments = 0,
     this.badgeCounters = const <String, int>{},
+    this.xp = 0,
+    this.currentWinStreak = 0,
+    this.bestWinStreak = 0,
+    this.currentUnbeaten = 0,
+    this.lastGameDay,
   });
 
   final int gamesPlayed;
@@ -170,6 +179,17 @@ class PlayAchievementStats {
   final int tournamentsCompleted;
   final int fullHouseTournaments;
   final Map<String, int> badgeCounters;
+
+  /// Experience points earned so far; drives the player level.
+  final int xp;
+  final int currentWinStreak;
+  final int bestWinStreak;
+
+  /// Games in a row without a loss.
+  final int currentUnbeaten;
+
+  /// Local calendar day of the last finished game, `yyyy-mm-dd`.
+  final String? lastGameDay;
 
   int progressFor(PlayAchievementId id) {
     final contributionProgress = badgeCounters[id.name] ?? 0;
@@ -236,6 +256,11 @@ class PlayAchievementStats {
     'tournamentsCompleted': tournamentsCompleted,
     'fullHouseTournaments': fullHouseTournaments,
     'badgeCounters': badgeCounters,
+    'xp': xp,
+    'currentWinStreak': currentWinStreak,
+    'bestWinStreak': bestWinStreak,
+    'currentUnbeaten': currentUnbeaten,
+    if (lastGameDay != null) 'lastGameDay': lastGameDay,
   };
 
   static PlayAchievementStats fromJson(Map<String, dynamic> json) {
@@ -260,6 +285,11 @@ class PlayAchievementStats {
       badgeCounters: (json['badgeCounters'] as Map<String, dynamic>? ??
               const {})
           .map((key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0)),
+      xp: read('xp'),
+      currentWinStreak: read('currentWinStreak'),
+      bestWinStreak: read('bestWinStreak'),
+      currentUnbeaten: read('currentUnbeaten'),
+      lastGameDay: json['lastGameDay']?.toString(),
     );
   }
 
@@ -281,6 +311,11 @@ class PlayAchievementStats {
     int? tournamentsCompleted,
     int? fullHouseTournaments,
     Map<String, int>? badgeCounters,
+    int? xp,
+    int? currentWinStreak,
+    int? bestWinStreak,
+    int? currentUnbeaten,
+    String? lastGameDay,
   }) {
     return PlayAchievementStats(
       gamesPlayed: gamesPlayed ?? this.gamesPlayed,
@@ -300,6 +335,11 @@ class PlayAchievementStats {
       tournamentsCompleted: tournamentsCompleted ?? this.tournamentsCompleted,
       fullHouseTournaments: fullHouseTournaments ?? this.fullHouseTournaments,
       badgeCounters: badgeCounters ?? this.badgeCounters,
+      xp: xp ?? this.xp,
+      currentWinStreak: currentWinStreak ?? this.currentWinStreak,
+      bestWinStreak: bestWinStreak ?? this.bestWinStreak,
+      currentUnbeaten: currentUnbeaten ?? this.currentUnbeaten,
+      lastGameDay: lastGameDay ?? this.lastGameDay,
     );
   }
 }
@@ -313,6 +353,10 @@ class PlayAchievementsState {
     this.lastUnlock,
     this.lastEarned = const <PlayAchievementId>[],
     this.lastContributions = const <PlayBadgeContribution>[],
+    this.recentUnlocks = const <PlayBadgeTierUp>[],
+    this.lastRewards,
+    this.earnedAt = const <PlayAchievementId, DateTime>{},
+    this.updatedAt,
   });
 
   final PlayAchievementStats stats;
@@ -326,6 +370,27 @@ class PlayAchievementsState {
   final List<PlayAchievementId> lastEarned;
   final List<PlayBadgeContribution> lastContributions;
 
+  /// Badge tiers reached most recently, newest first (up to 24).
+  final List<PlayBadgeTierUp> recentUnlocks;
+
+  /// What the last recorded game earned; null until one is recorded in
+  /// this session.
+  final PlayGameRewards? lastRewards;
+
+  /// When each badge was first earned (became claimable). Kept so the
+  /// server's `user_play_achievements.unlocked_at` is the first unlock,
+  /// not the time of the latest sync.
+  final Map<PlayAchievementId, DateTime> earnedAt;
+
+  /// When this rewards state last changed on the device that wrote it.
+  /// Two devices merge their states by the newer one
+  /// (`user_play_profiles.rewards_updated_at`). Null on states saved
+  /// before the cloud sync existed.
+  final DateTime? updatedAt;
+
+  int get xp => stats.xp;
+  PlayLevel get level => PlayLevel.fromXp(stats.xp);
+
   PlayAchievementsState copyWith({
     PlayAchievementStats? stats,
     Set<PlayAchievementId>? unlocked,
@@ -333,6 +398,10 @@ class PlayAchievementsState {
     PlayAchievementId? lastUnlock,
     List<PlayAchievementId>? lastEarned,
     List<PlayBadgeContribution>? lastContributions,
+    List<PlayBadgeTierUp>? recentUnlocks,
+    PlayGameRewards? lastRewards,
+    Map<PlayAchievementId, DateTime>? earnedAt,
+    DateTime? updatedAt,
     bool clearLastUnlock = false,
     bool clearLastContributions = false,
   }) {
@@ -349,12 +418,105 @@ class PlayAchievementsState {
           clearLastContributions
               ? const <PlayBadgeContribution>[]
               : (lastContributions ?? this.lastContributions),
+      recentUnlocks: recentUnlocks ?? this.recentUnlocks,
+      lastRewards: lastRewards ?? this.lastRewards,
+      earnedAt: earnedAt ?? this.earnedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 }
 
+/// Version of the rewards JSON below. Readers ignore keys they do not know.
+const int kPlayRewardsSchema = 1;
+
+/// Where [PlayAchievementsNotifier] keeps the rewards state on this device.
+const String kPlayAchievementsStatePath = 'play_achievements/achievements.json';
+
+/// The whole rewards state as JSON: what the device saves locally and what
+/// the cloud sync stores in `user_play_profiles.rewards`, so another app can
+/// show the same XP, level, badge tracks and tiers, claims and recent
+/// unlocks. `level`, `xp` and `tiers` are derived for readers that do not
+/// carry the track rules; [decodePlayRewardsState] ignores them.
+Map<String, dynamic> encodePlayRewardsState(PlayAchievementsState state) {
+  return {
+    'schema': kPlayRewardsSchema,
+    if (state.updatedAt != null)
+      'updatedAt': state.updatedAt!.toUtc().toIso8601String(),
+    'stats': state.stats.toJson(),
+    'unlocked': [for (final id in state.unlocked) id.name]..sort(),
+    'claimable': [for (final id in state.claimable) id.name]..sort(),
+    'earnedAt': {
+      for (final entry in state.earnedAt.entries)
+        entry.key.name: entry.value.toUtc().toIso8601String(),
+    },
+    'recentUnlocks': [for (final up in state.recentUnlocks) up.toJson()],
+    'xp': state.stats.xp,
+    'level': PlayLevel.fromXp(state.stats.xp).level,
+    'tiers': {
+      for (final track in kPlayBadgeTracks)
+        if (track.tierFor(track.progress(state.stats)) > 0)
+          track.key: track.tierFor(track.progress(state.stats)),
+    },
+  };
+}
+
+/// Reads [encodePlayRewardsState]'s JSON (and the older local file, which
+/// had no `updatedAt` or `earnedAt`). Null when [json] holds no state.
+PlayAchievementsState? decodePlayRewardsState(Map<dynamic, dynamic>? json) {
+  if (json == null || json.isEmpty) return null;
+  final unlocked = <PlayAchievementId>{};
+  for (final name in (json['unlocked'] as List<dynamic>? ?? const [])) {
+    final id = _achievementIdOrNull(name);
+    if (id != null) unlocked.add(id);
+  }
+  final claimable = <PlayAchievementId>{};
+  for (final name in (json['claimable'] as List<dynamic>? ?? const [])) {
+    final id = _achievementIdOrNull(name);
+    if (id != null && !unlocked.contains(id)) claimable.add(id);
+  }
+  final statsJson = json['stats'];
+  var stats =
+      statsJson is Map
+          ? PlayAchievementStats.fromJson(statsJson.cast<String, dynamic>())
+          : const PlayAchievementStats();
+  // Saved before XP existed: credit the games and badges already earned.
+  if (statsJson is! Map || statsJson['xp'] == null) {
+    stats = stats.copyWith(xp: playBackfillXp(stats));
+  }
+  final recent = (json['recentUnlocks'] as List<dynamic>? ?? const [])
+      .map(PlayBadgeTierUp.fromJson)
+      .whereType<PlayBadgeTierUp>()
+      .toList(growable: false);
+  final earnedAt = <PlayAchievementId, DateTime>{};
+  final earnedRaw = json['earnedAt'];
+  if (earnedRaw is Map) {
+    for (final entry in earnedRaw.entries) {
+      final id = _achievementIdOrNull(entry.key);
+      final at = DateTime.tryParse(entry.value?.toString() ?? '');
+      if (id != null && at != null) earnedAt[id] = at.toLocal();
+    }
+  }
+  return PlayAchievementsState(
+    stats: stats,
+    unlocked: unlocked,
+    claimable: claimable,
+    recentUnlocks: recent,
+    earnedAt: earnedAt,
+    updatedAt:
+        DateTime.tryParse(json['updatedAt']?.toString() ?? '')?.toLocal(),
+  );
+}
+
+PlayAchievementId? _achievementIdOrNull(Object? name) {
+  if (name is! String) return null;
+  for (final id in PlayAchievementId.values) {
+    if (id.name == name) return id;
+  }
+  return null;
+}
+
 class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
-  PlayAchievementsNotifier()
+  PlayAchievementsNotifier({this.onRewards, this.readHumanRating})
     : super(
         const PlayAchievementsState(
           stats: PlayAchievementStats(),
@@ -362,18 +524,47 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
         ),
       ) {
     unawaited(_load());
+    // The cloud sync rewrote the file (a newer state from another device,
+    // or another account's data): show what is on disk now.
+    _replacedSub = PlayCloudSignals.localReplaced.listen(
+      (accountChanged) => unawaited(_load(force: accountChanged)),
+    );
   }
+
+  StreamSubscription<bool>? _replacedSub;
+
+  @override
+  void dispose() {
+    unawaited(_replacedSub?.cancel());
+    super.dispose();
+  }
+
+  /// Reads the saved state again, keeping this session's last-game details.
+  Future<void> reload() => _load();
+
+  /// Called with the rewards of every recorded game.
+  final void Function(PlayGameRewards rewards)? onRewards;
+
+  /// The human's rating on a ladder before the game, when the profile is
+  /// loaded. Used for the stronger-opponent bonus.
+  final int? Function(RatedTimeControl timeControl)? readHumanRating;
 
   final Set<String> _recordedGameKeys = <String>{};
   final Set<String> _recordedTournamentKeys = <String>{};
 
-  Future<void> recordSingleGame(
+  /// Records a finished game and returns what it earned, or null when the
+  /// game was not recorded (not over, or already recorded).
+  Future<PlayGameRewards?> recordSingleGame(
     PlaySessionState session, {
     List<PlayBadgeContribution> contributions = const <PlayBadgeContribution>[],
+    Map<String, dynamic>? analysis,
+    int? humanRating,
+    DateTime? at,
   }) async {
-    if (!session.isGameOver) return;
+    if (!session.isGameOver) return null;
+    final now = at ?? DateTime.now();
     final key = '${session.startingFen}|${session.history.join(' ')}';
-    if (!_recordedGameKeys.add(key)) return;
+    if (!_recordedGameKeys.add(key)) return null;
 
     final humanWon =
         (session.humanSide == Side.white &&
@@ -381,6 +572,22 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
         (session.humanSide == Side.black &&
             session.outcome == Outcome.blackWins);
     final humanDrew = session.outcome == Outcome.draw;
+    final score = humanWon ? 1.0 : (humanDrew ? 0.5 : 0.0);
+    final day = _dayKey(now);
+    final firstGameToday = state.stats.lastGameDay != day;
+    final winStreak = humanWon ? state.stats.currentWinStreak + 1 : 0;
+    final rated = toRatedTimeControl(session.config.category);
+    final xpLines = playGameXpLines(
+      score: score,
+      opponentRating: session.config.elo,
+      plies: session.history.length,
+      winStreak: winStreak,
+      firstGameToday: firstGameToday,
+      checkmate: false,
+      humanRating:
+          humanRating ?? (rated == null ? null : readHumanRating?.call(rated)),
+      analysis: analysis,
+    );
     final checkmateWin =
         humanWon &&
         (session.endReason == PlayEndReason.blackCheckmated ||
@@ -431,13 +638,41 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
           stockfishWins: state.stats.stockfishWins + engineWins.stockfish,
           leelaWins: state.stats.leelaWins + engineWins.leela,
           maiaWins: state.stats.maiaWins + engineWins.maia,
+          currentWinStreak: winStreak,
+          bestWinStreak:
+              winStreak > state.stats.bestWinStreak
+                  ? winStreak
+                  : state.stats.bestWinStreak,
+          currentUnbeaten:
+              humanWon || humanDrew ? state.stats.currentUnbeaten + 1 : 0,
+          lastGameDay: day,
         )
         .withBadgeContributions(contributions);
-    await _applyStats(stats, contributions: contributions);
+    final lines = [
+      ...xpLines,
+      if (checkmateWin) const PlayXpLine('Checkmate', 5),
+    ];
+    final xpBefore = state.stats.xp;
+    final gained = lines.fold<int>(0, (sum, l) => sum + l.xp);
+    return _applyStats(
+      stats.copyWith(xp: xpBefore + gained),
+      contributions: contributions,
+      at: now,
+      gameLines: lines,
+      xpBefore: xpBefore,
+      winStreak: winStreak,
+    );
+  }
+
+  static String _dayKey(DateTime at) {
+    final d = at.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
   }
 
   Future<void> recordTournamentCreated(TournamentConfig config) async {
     final stats = state.stats.copyWith(
+      xp: state.stats.xp + 20,
       tournamentsCreated: state.stats.tournamentsCreated + 1,
       fullHouseTournaments:
           state.stats.fullHouseTournaments +
@@ -453,6 +688,7 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
         '${snapshot.games.length}|${snapshot.games.map((g) => g.result).join(',')}';
     if (!_recordedTournamentKeys.add(key)) return;
     final stats = state.stats.copyWith(
+      xp: state.stats.xp + 60,
       tournamentsCompleted: state.stats.tournamentsCompleted + 1,
     );
     await _applyStats(stats);
@@ -488,10 +724,15 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
 
   Future<void> claimAllPending() => claimAchievements(state.claimable);
 
-  Future<void> _applyStats(
+  Future<PlayGameRewards?> _applyStats(
     PlayAchievementStats stats, {
     List<PlayBadgeContribution> contributions = const <PlayBadgeContribution>[],
+    DateTime? at,
+    List<PlayXpLine>? gameLines,
+    int? xpBefore,
+    int winStreak = 0,
   }) async {
+    final now = at ?? DateTime.now();
     final unlocked = {...state.unlocked};
     final claimable = {...state.claimable};
     final newlyEarned = <PlayAchievementId>[];
@@ -503,61 +744,124 @@ class PlayAchievementsNotifier extends StateNotifier<PlayAchievementsState> {
         newlyEarned.add(definition.id);
       }
     }
+    final tierUps = playBadgeTierUps(state.stats, stats, now);
+    final tierXp = tierUps.fold<int>(0, (sum, up) => sum + up.xp);
+    final nextStats = stats.copyWith(xp: stats.xp + tierXp);
+    final recent = [
+      ...tierUps.reversed,
+      ...state.recentUnlocks,
+    ].take(24).toList(growable: false);
+
+    PlayGameRewards? rewards;
+    if (gameLines != null) {
+      rewards = PlayGameRewards(
+        lines: [
+          ...gameLines,
+          for (final up in tierUps)
+            PlayXpLine(
+              '${up.tierName}: ${up.track?.title ?? up.trackKey}',
+              up.xp,
+            ),
+        ],
+        xpBefore: xpBefore ?? state.stats.xp,
+        xpAfter: nextStats.xp,
+        tierUps: tierUps,
+        newlyEarned: newlyEarned,
+        winStreak: winStreak,
+      );
+    }
+
+    final earnedAt = {
+      ...state.earnedAt,
+      for (final id in newlyEarned)
+        if (!state.earnedAt.containsKey(id)) id: now,
+    };
     state = PlayAchievementsState(
-      stats: stats,
+      stats: nextStats,
       unlocked: unlocked,
       claimable: claimable,
       lastUnlock: newlyEarned.isEmpty ? null : newlyEarned.last,
       lastEarned: newlyEarned,
       lastContributions: contributions,
+      recentUnlocks: recent,
+      lastRewards: rewards ?? state.lastRewards,
+      earnedAt: earnedAt,
+      updatedAt: state.updatedAt,
     );
+    if (rewards != null) onRewards?.call(rewards);
     await _save();
+    return rewards;
   }
 
-  Future<void> _load() async {
-    final text = await const PlayLocalStore().read(_statePath);
-    if (text == null) return;
-    final json = jsonDecode(text) as Map<String, dynamic>;
-    final unlocked = <PlayAchievementId>{};
-    for (final name
-        in (json['unlocked'] as List<dynamic>? ?? const <dynamic>[])) {
-      if (name is! String) continue;
-      try {
-        unlocked.add(PlayAchievementId.values.byName(name));
-      } catch (_) {}
+  /// [force] takes the file even when it is older than the state in
+  /// memory (the documents now belong to another account); otherwise an
+  /// older file never replaces a newer in-memory state that is still being
+  /// saved.
+  Future<void> _load({bool force = false}) async {
+    final String? text;
+    try {
+      text = await const PlayLocalStore().read(kPlayAchievementsStatePath);
+    } catch (e) {
+      debugPrint('[PlayRewards] read failed: $e');
+      return;
     }
-    final claimable = <PlayAchievementId>{};
-    for (final name
-        in (json['claimable'] as List<dynamic>? ?? const <dynamic>[])) {
-      if (name is! String) continue;
-      try {
-        final id = PlayAchievementId.values.byName(name);
-        if (!unlocked.contains(id)) claimable.add(id);
-      } catch (_) {}
+    if (!mounted) return;
+    if (text == null || text.trim().isEmpty) {
+      // Cleared by an account switch: start from nothing.
+      if (force &&
+          (state.stats.gamesPlayed != 0 || state.unlocked.isNotEmpty)) {
+        state = const PlayAchievementsState(
+          stats: PlayAchievementStats(),
+          unlocked: <PlayAchievementId>{},
+        );
+      }
+      return;
     }
-    final statsJson = json['stats'];
+    PlayAchievementsState? loaded;
+    try {
+      final json = jsonDecode(text);
+      loaded = json is Map ? decodePlayRewardsState(json) : null;
+    } catch (e) {
+      debugPrint('[PlayRewards] decode failed: $e');
+    }
+    if (loaded == null || !mounted) return;
+    final mine = state.updatedAt;
+    final theirs = loaded.updatedAt;
+    if (!force && mine != null && (theirs == null || theirs.isBefore(mine))) {
+      return;
+    }
     state = PlayAchievementsState(
-      stats:
-          statsJson is Map<String, dynamic>
-              ? PlayAchievementStats.fromJson(statsJson)
-              : const PlayAchievementStats(),
-      unlocked: unlocked,
-      claimable: claimable,
+      stats: loaded.stats,
+      unlocked: loaded.unlocked,
+      claimable: loaded.claimable,
+      recentUnlocks: loaded.recentUnlocks,
+      earnedAt: loaded.earnedAt,
+      updatedAt: loaded.updatedAt,
+      // This session's last game stays on screen.
+      lastUnlock: force ? null : state.lastUnlock,
+      lastEarned: force ? const <PlayAchievementId>[] : state.lastEarned,
+      lastContributions:
+          force ? const <PlayBadgeContribution>[] : state.lastContributions,
+      lastRewards: force ? null : state.lastRewards,
     );
   }
 
   Future<void> _save() async {
-    await const PlayLocalStore().write(
-      _statePath,
-      const JsonEncoder.withIndent('  ').convert({
-        'stats': state.stats.toJson(),
-        'unlocked': [for (final id in state.unlocked) id.name],
-        'claimable': [for (final id in state.claimable) id.name],
-      }),
-    );
+    // Every change is stamped, so two devices merge by the newer state.
+    state = state.copyWith(updatedAt: DateTime.now());
+    try {
+      await const PlayLocalStore().write(
+        kPlayAchievementsStatePath,
+        const JsonEncoder.withIndent(
+          '  ',
+        ).convert(encodePlayRewardsState(state)),
+      );
+    } catch (e) {
+      debugPrint('[PlayRewards] save failed: $e');
+      return;
+    }
+    PlayCloudSignals.notifyLocalChanged();
   }
-
-  static const _statePath = 'play_achievements/achievements.json';
 }
 
 const List<PlayAchievementDefinition> kPlayAchievementDefinitions = [
@@ -1053,7 +1357,29 @@ PlayAchievementDefinition achievementDefinition(PlayAchievementId id) {
   return kPlayAchievementDefinitions.firstWhere((d) => d.id == id);
 }
 
+/// What the last game recorded through
+/// [PlayAchievementsNotifier.recordSingleGame] earned: XP lines, level
+/// before and after, badge tier-ups and newly claimable badges. Null until
+/// a game is recorded in this session.
+final playLastGameRewardsProvider = StateProvider<PlayGameRewards?>(
+  (ref) => null,
+);
+
 final playAchievementsProvider =
     StateNotifierProvider<PlayAchievementsNotifier, PlayAchievementsState>(
-      (ref) => PlayAchievementsNotifier(),
+      (ref) => PlayAchievementsNotifier(
+        onRewards:
+            (rewards) =>
+                ref.read(playLastGameRewardsProvider.notifier).state = rewards,
+        readHumanRating: (tc) {
+          // Only read a profile someone already loaded; never start a fetch
+          // just for the bonus.
+          if (!ref.exists(playUserProfileProvider)) return null;
+          try {
+            return ref.read(playUserProfileProvider).valueOrNull?.ratingFor(tc);
+          } catch (_) {
+            return null;
+          }
+        },
+      ),
     );

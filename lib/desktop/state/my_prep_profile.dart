@@ -77,15 +77,25 @@ final myPrepPlayerIdProvider =
       (ref) => MyPrepPlayerIdNotifier(ref.watch(myPrepProfileStoreProvider)),
     );
 
-/// The user's own prep profile, or null while unlinked or when the linked
-/// profile no longer exists in the Players workspace.
+/// The user's own prep profile, or null while unlinked, when the linked
+/// profile no longer exists in the Players workspace, or when every source
+/// it was made from has been detached.
+///
+/// A profile with no source left is an empty shell: it still carries the
+/// name, photo and title of the record it was first built from (a ChessEver
+/// player the reader once picked by mistake, say), but nothing ties it to
+/// the reader any more. Reading it as unlinked brings the "attach your own
+/// usernames" setup back instead of pinning a stranger's card to the
+/// profile.
 final myPrepPlayerIdIfPresentProvider = Provider<String?>((ref) {
   final id = ref.watch(myPrepPlayerIdProvider).valueOrNull;
   if (id == null) return null;
-  final exists = ref.watch(
+  final usable = ref.watch(
     playerWorkspaceProvider.select(
-      (state) => state.players.any((player) => player.id == id),
+      (state) => state.players.any(
+        (player) => player.id == id && player.allAccounts.isNotEmpty,
+      ),
     ),
   );
-  return exists ? id : null;
+  return usable ? id : null;
 });

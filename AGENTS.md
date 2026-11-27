@@ -387,6 +387,8 @@ downloads them. Manual PGN and Combined sources stay local.
   change a player's id, never delete rows (a deleted profile keeps its row
   with `deleted_at`), and never sync before `isRosterLoaded`.
 
+Play data on Supabase: docs/play_supabase_schema.md is the contract; change it with the code.
+
 ## Match-play knockouts
 
 A knockout round where one player pair has 2+ games inside one source round.

@@ -19,6 +19,7 @@ import 'package:chessever/desktop/services/play/play_from_here.dart';
 import 'package:chessever/desktop/services/play/play_models.dart';
 import 'package:chessever/desktop/services/play/play_tournament_history_repository.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
+import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
 import 'package:chessever/desktop/widgets/desktop_paywall_dialog.dart';
@@ -73,6 +74,8 @@ void main() {
         ),
         playAchievementsProvider.overrideWith((_) => _Achievements()),
         playedTournamentEventsProvider.overrideWith((_) async => []),
+        // The Live help list shows each help key; skip the database read.
+        keyboardShortcutsProvider.overrideWith(_DefaultShortcuts.new),
       ],
     );
     addTearDown(container.dispose);
@@ -231,6 +234,63 @@ void main() {
     );
   }
 
+  // Pane sizes of a 1280x800 and a 1440x900 window, after the app's tab
+  // strip and sidebar.
+  for (final size in const [Size(1198, 712), Size(1358, 812)]) {
+    testWidgets(
+      'setup keeps its start actions on screen and stays put across tabs '
+      '(${size.width.toInt()}x${size.height.toInt()})',
+      semanticsEnabled: false,
+      (tester) async {
+        await pumpPlay(tester, size: size);
+        final view = Offset.zero & size;
+
+        // Every scrollbar on a Play face sits at the pane's right edge.
+        void expectNoMidPaneScrollbar() {
+          for (final element in find.byType(RawScrollbar).evaluate()) {
+            final rect = tester.getRect(find.byWidget(element.widget));
+            expect(rect.right, closeTo(size.width, 1), reason: '$rect');
+          }
+        }
+
+        bool onScreen(Finder finder) =>
+            view.deflate(1).contains(tester.getRect(finder).center) &&
+            finder.hitTestable().evaluate().isNotEmpty;
+
+        expect(onScreen(find.text('Play now')), isTrue);
+        expect(onScreen(find.text('Bot')), isTrue);
+        expectNoMidPaneScrollbar();
+        final tabs = tester.getRect(find.text('Single game'));
+        final title = tester.getTopLeft(find.text('Play vs bot'));
+        final firstCard = tester.getTopLeft(find.text('Time control'));
+        final startRight = tester.getRect(find.text('Play now'));
+
+        // Opening every help switch scrolls only its own column.
+        await _tap(tester, find.text('Live help'));
+        expect(find.text('Engine lines'), findsOneWidget);
+        expect(onScreen(find.text('Play now')), isTrue);
+        expect(tester.getRect(find.text('Play now')), startRight);
+        expectNoMidPaneScrollbar();
+
+        await tester.tap(find.text('Tournaments'));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
+        expect(onScreen(find.text('Start tournament')), isTrue);
+        expect(tester.getRect(find.text('Single game')), tabs);
+        expect(tester.getTopLeft(find.text('Tournament')), title);
+        expect(tester.getTopLeft(find.text('Event')).dx, firstCard.dx);
+        expect(tester.getTopLeft(find.text('Event')).dy, firstCard.dy);
+        expectNoMidPaneScrollbar();
+
+        await tester.tap(find.text('Events'));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
+        expect(tester.getRect(find.text('Single game')), tabs);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   test(
     'Play browsing is free on desktop and web; starting remains protected',
     () {
@@ -296,4 +356,10 @@ class _Achievements extends StateNotifier<PlayAchievementsState>
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _DefaultShortcuts extends KeyboardShortcutsNotifier {
+  @override
+  Future<BoardShortcutMap> build() async =>
+      BoardShortcutMap(defaultBoardShortcuts());
 }

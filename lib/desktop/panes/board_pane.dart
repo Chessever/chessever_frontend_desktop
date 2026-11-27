@@ -5873,6 +5873,16 @@ class _BoardPaneContent extends HookConsumerWidget {
           if (kIsWeb) return false;
           unawaited(closeActiveBoardTab(force: false));
           return true;
+        case BoardActionKey.playHelpAll:
+        case BoardActionKey.playHelpEngineLines:
+        case BoardActionKey.playHelpEvalBar:
+        case BoardActionKey.playHelpArrows:
+        case BoardActionKey.playHelpMoveMarks:
+        case BoardActionKey.playHelpExplorer:
+        case BoardActionKey.playHelpTobyPredictions:
+        case BoardActionKey.playHelpTobyBar:
+        case BoardActionKey.playHelpArrowEvals:
+          return false;
       }
     }
 
@@ -9438,6 +9448,17 @@ Intent? _intentFor(BoardActionKey action) {
     case BoardActionKey.toggleBoardFocus:
     case BoardActionKey.closeWindow:
       return _BoardActionIntent(action);
+    // Play's help keys belong to a game against a bot, not the Board.
+    case BoardActionKey.playHelpAll:
+    case BoardActionKey.playHelpEngineLines:
+    case BoardActionKey.playHelpEvalBar:
+    case BoardActionKey.playHelpArrows:
+    case BoardActionKey.playHelpMoveMarks:
+    case BoardActionKey.playHelpExplorer:
+    case BoardActionKey.playHelpTobyPredictions:
+    case BoardActionKey.playHelpTobyBar:
+    case BoardActionKey.playHelpArrowEvals:
+      return null;
   }
 }
 

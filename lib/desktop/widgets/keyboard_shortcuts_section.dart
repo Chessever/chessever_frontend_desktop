@@ -111,6 +111,24 @@ class _KeyboardShortcutsSectionState
                       ) ...[
                         if (i > 0)
                           const Divider(color: kDividerColor, height: 1),
+                        // Play's help keys sit together under their own
+                        // heading, after the board's.
+                        if (BoardActionKey.values[i].isPlayHelp &&
+                            (i == 0 ||
+                                !BoardActionKey.values[i - 1].isPlayHelp)) ...[
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(16, 14, 16, 10),
+                            child: Text(
+                              'Play help',
+                              style: TextStyle(
+                                color: kWhiteColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const Divider(color: kDividerColor, height: 1),
+                        ],
                         _ShortcutRow(
                           action: BoardActionKey.values[i],
                           chords: map.chordsFor(BoardActionKey.values[i]),
@@ -534,6 +552,9 @@ class _ChordRecorderDialogState extends State<_ChordRecorderDialog> {
   KeyChord? _captured;
   BoardActionKey? _conflictWith;
 
+  /// A key pressed that opens global search, which nothing may take.
+  KeyChord? _reservedSearch;
+
   @override
   void initState() {
     super.initState();
@@ -561,32 +582,20 @@ class _ChordRecorderDialogState extends State<_ChordRecorderDialog> {
       return KeyEventResult.handled;
     }
 
-    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    final ctrl =
-        pressed.contains(LogicalKeyboardKey.controlLeft) ||
-        pressed.contains(LogicalKeyboardKey.controlRight) ||
-        pressed.contains(LogicalKeyboardKey.control);
-    final alt =
-        pressed.contains(LogicalKeyboardKey.altLeft) ||
-        pressed.contains(LogicalKeyboardKey.altRight) ||
-        pressed.contains(LogicalKeyboardKey.alt);
-    final shift =
-        pressed.contains(LogicalKeyboardKey.shiftLeft) ||
-        pressed.contains(LogicalKeyboardKey.shiftRight) ||
-        pressed.contains(LogicalKeyboardKey.shift);
-    final meta =
-        pressed.contains(LogicalKeyboardKey.metaLeft) ||
-        pressed.contains(LogicalKeyboardKey.metaRight) ||
-        pressed.contains(LogicalKeyboardKey.meta);
-
-    final chord = KeyChord(
-      keyId: key.keyId,
-      ctrl: ctrl,
-      alt: alt,
-      shift: shift,
-      meta: meta,
+    final chord = recordedKeyChord(
+      key,
+      HardwareKeyboard.instance.logicalKeysPressed,
     );
+    if (isReservedSearchChord(chord)) {
+      setState(() {
+        _captured = null;
+        _conflictWith = null;
+        _reservedSearch = chord;
+      });
+      return KeyEventResult.handled;
+    }
     setState(() {
+      _reservedSearch = null;
       _captured = chord;
       final existingAction = widget.currentBindings.actionForChord(chord);
       _conflictWith =
@@ -597,22 +606,7 @@ class _ChordRecorderDialogState extends State<_ChordRecorderDialog> {
     return KeyEventResult.handled;
   }
 
-  bool _isModifier(LogicalKeyboardKey key) {
-    return key == LogicalKeyboardKey.controlLeft ||
-        key == LogicalKeyboardKey.controlRight ||
-        key == LogicalKeyboardKey.control ||
-        key == LogicalKeyboardKey.altLeft ||
-        key == LogicalKeyboardKey.altRight ||
-        key == LogicalKeyboardKey.alt ||
-        key == LogicalKeyboardKey.shiftLeft ||
-        key == LogicalKeyboardKey.shiftRight ||
-        key == LogicalKeyboardKey.shift ||
-        key == LogicalKeyboardKey.metaLeft ||
-        key == LogicalKeyboardKey.metaRight ||
-        key == LogicalKeyboardKey.meta ||
-        key == LogicalKeyboardKey.capsLock ||
-        key == LogicalKeyboardKey.numLock;
-  }
+  bool _isModifier(LogicalKeyboardKey key) => isShortcutModifierKey(key);
 
   @override
   Widget build(BuildContext context) {
@@ -677,6 +671,13 @@ class _ChordRecorderDialogState extends State<_ChordRecorderDialog> {
                   ),
                 ),
               ),
+              if (_reservedSearch != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '${_reservedSearch!.label} opens search. Press another key.',
+                  style: const TextStyle(color: kWhiteColor70, fontSize: 12),
+                ),
+              ],
               if (_conflictWith != null) ...[
                 const SizedBox(height: 12),
                 Container(

@@ -177,7 +177,11 @@ class PlayGameRecord {
     };
   }
 
-  PlayGameRecord copyWith({int? ratingBefore, int? ratingAfter}) {
+  PlayGameRecord copyWith({
+    int? ratingBefore,
+    int? ratingAfter,
+    Map<String, dynamic>? metadata,
+  }) {
     return PlayGameRecord(
       localGameKey: localGameKey,
       source: source,
@@ -189,7 +193,7 @@ class PlayGameRecord {
       movesUci: movesUci,
       pgn: pgn,
       pgnHeaders: pgnHeaders,
-      metadata: metadata,
+      metadata: metadata ?? this.metadata,
       analysis: analysis,
       badgeContributions: badgeContributions,
       eco: eco,
@@ -390,6 +394,7 @@ class PlayGameAnalyzer {
     String? analyzerBinaryPath,
     BotEngineKind? analyzerEngine,
     String userDisplayName = 'You',
+    String? userCountryCode,
     PlayGameSource? sourceOverride,
     String? eventTitle,
     int? eventRound,
@@ -426,6 +431,7 @@ class PlayGameAnalyzer {
       result: result,
       opening: opening,
       userDisplayName: userDisplayName,
+      userCountryCode: userCountryCode,
       source: source,
       eventTitle: eventTitle,
       eventRound: eventRound,
@@ -508,8 +514,8 @@ class PlayGameAnalyzer {
       blackName: whiteIsHuman ? bot.fullName : userDisplayName,
       whiteTitle: whiteIsHuman ? null : bot.title,
       blackTitle: whiteIsHuman ? bot.title : null,
-      whiteCountry: whiteIsHuman ? null : bot.countryCode,
-      blackCountry: whiteIsHuman ? bot.countryCode : null,
+      whiteCountry: whiteIsHuman ? userCountryCode : bot.countryCode,
+      blackCountry: whiteIsHuman ? bot.countryCode : userCountryCode,
       whiteElo: whiteIsHuman ? null : bot.elo,
       blackElo: whiteIsHuman ? bot.elo : null,
       whiteEngine: whiteIsHuman ? null : session.config.engine.name,
@@ -607,8 +613,8 @@ class PlayGameAnalyzer {
       blackName: black?.identity.fullName ?? 'Black',
       whiteTitle: white?.identity.title,
       blackTitle: black?.identity.title,
-      whiteCountry: white?.identity.countryCode,
-      blackCountry: black?.identity.countryCode,
+      whiteCountry: _nonEmpty(white?.identity.countryCode),
+      blackCountry: _nonEmpty(black?.identity.countryCode),
       whiteElo: white?.identity.elo,
       blackElo: black?.identity.elo,
       whiteEngine: white?.engine.name,
@@ -1161,9 +1167,7 @@ List<ChessMove> _buildMainline(
         uci: move.uci,
         turn: position.turn == Side.white ? ChessColor.white : ChessColor.black,
         clockTime:
-            clockMillis == null
-                ? null
-                : formatPgnClockFromMillis(clockMillis),
+            clockMillis == null ? null : formatPgnClockFromMillis(clockMillis),
       ),
     );
     position = next;
@@ -1255,6 +1259,7 @@ Map<String, String> _sessionHeaders({
   required String result,
   required PlayOpeningSummary opening,
   required String userDisplayName,
+  String? userCountryCode,
   required PlayGameSource source,
   String? eventTitle,
   int? eventRound,
@@ -1291,10 +1296,12 @@ Map<String, String> _sessionHeaders({
     _put(headers, 'WhiteTitle', bot.title);
     _put(headers, 'WhiteElo', bot.elo.toString());
     _put(headers, 'WhiteFed', bot.countryCode);
+    _put(headers, 'BlackFed', userCountryCode);
   } else {
     _put(headers, 'BlackTitle', bot.title);
     _put(headers, 'BlackElo', bot.elo.toString());
     _put(headers, 'BlackFed', bot.countryCode);
+    _put(headers, 'WhiteFed', userCountryCode);
   }
   _put(headers, 'ECO', opening.eco);
   _put(headers, 'Opening', opening.name);
@@ -1401,6 +1408,11 @@ Map<String, dynamic> _participantJson(TournamentParticipant participant) => {
   'engine': participant.engine.name,
   'identity': _botJson(participant.identity),
 };
+
+String? _nonEmpty(String? value) {
+  final text = value?.trim() ?? '';
+  return text.isEmpty ? null : text;
+}
 
 void _put(Map<String, String> headers, String key, String? value) {
   final text = value?.trim() ?? '';

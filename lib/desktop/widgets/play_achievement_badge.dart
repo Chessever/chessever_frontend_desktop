@@ -3,13 +3,21 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:chessever/desktop/services/play/play_achievements.dart';
+import 'package:chessever/desktop/services/play/play_rewards.dart';
 import 'package:chessever/theme/app_theme.dart';
 
+/// A badge drawn in code: the badge's own silhouette holds an enamel field
+/// in its colour, the frame is struck in the metal of the tier reached,
+/// the glyph sits bare in the middle and the tier shows as small marks
+/// under it. Locked badges keep their shape in dim metal.
 class PlayAchievementBadgeArt extends StatelessWidget {
   const PlayAchievementBadgeArt({
     required this.definition,
     required this.unlocked,
     this.size = 54,
+    this.tier,
+    this.maxTier,
+    this.sheen,
     super.key,
   });
 
@@ -17,126 +25,115 @@ class PlayAchievementBadgeArt extends StatelessWidget {
   final bool unlocked;
   final double size;
 
+  /// Tier reached (1 = Bronze). When set, the frame takes that tier's
+  /// metal and the tier marks show; when null the badge's own metal is
+  /// used and no marks are drawn.
+  final int? tier;
+
+  /// Number of tiers on the track; empty marks are drawn for the rest.
+  final int? maxTier;
+
+  /// Position of a light sweep across the face, 0 to 1. Null draws none.
+  final double? sheen;
+
   @override
   Widget build(BuildContext context) {
     final spec = _badgeSpec(definition.id);
     final accent = definition.color;
-    final metal = unlocked ? spec.metal : kWhiteColor.withValues(alpha: 0.36);
-    final enamel = unlocked ? accent : kBlack3Color;
+    final reached = tier;
+    final lit = unlocked && (reached == null || reached > 0);
+    final metal =
+        !lit
+            ? kWhiteColor.withValues(alpha: 0.30)
+            : reached != null
+            ? playBadgeTierMetal(reached)
+            : spec.metal;
 
-    return AnimatedScale(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      scale: unlocked ? 1 : 0.94,
-      filterQuality: FilterQuality.medium,
-      child: SizedBox.square(
-        dimension: size,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(size * 0.24),
-                boxShadow: [
-                  if (unlocked)
-                    BoxShadow(
-                      color: accent.withValues(alpha: 0.22),
-                      blurRadius: size * 0.18,
-                      offset: Offset(0, size * 0.08),
-                    ),
-                ],
+    return SizedBox.square(
+      dimension: size,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipPath(
+            clipper: _BadgeFrameClipper(spec.frame),
+            child: CustomPaint(
+              painter: _BadgePatternPainter(
+                accent: accent,
+                pattern: spec.pattern,
+                unlocked: lit,
+                sheen: sheen,
               ),
             ),
-            ClipPath(
-              clipper: _BadgeFrameClipper(spec.frame),
+          ),
+          CustomPaint(
+            painter: _BadgeFramePainter(
+              frame: spec.frame,
+              metal: metal,
+              accent: accent,
+              unlocked: lit,
+            ),
+          ),
+          Align(
+            alignment: const Alignment(0, -0.14),
+            child: Icon(
+              spec.icon,
+              color: lit ? metal : kWhiteColor.withValues(alpha: 0.38),
+              size: size * 0.34,
+            ),
+          ),
+          if (reached != null && (maxTier ?? 0) > 0)
+            Align(
+              alignment: const Alignment(0, 0.52),
+              child: _TierMarks(
+                reached: reached,
+                total: maxTier!,
+                metal: metal,
+                size: size,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small diamonds, one per tier: filled up to the tier reached.
+class _TierMarks extends StatelessWidget {
+  const _TierMarks({
+    required this.reached,
+    required this.total,
+    required this.metal,
+    required this.size,
+  });
+
+  final int reached;
+  final int total;
+  final Color metal;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final mark = size * 0.075;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < total; i++) ...[
+          Transform.rotate(
+            angle: math.pi / 4,
+            child: SizedBox.square(
+              dimension: mark,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: enamel.withValues(alpha: unlocked ? 0.42 : 0.18),
-                ),
-                child: CustomPaint(
-                  painter: _BadgePatternPainter(
-                    accent: accent,
-                    pattern: spec.pattern,
-                    unlocked: unlocked,
-                  ),
-                ),
-              ),
-            ),
-            CustomPaint(
-              painter: _BadgeFramePainter(
-                frame: spec.frame,
-                metal: metal,
-                accent: accent,
-                unlocked: unlocked,
-              ),
-            ),
-            Center(
-              child: Container(
-                width: size * 0.48,
-                height: size * 0.48,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
                   color:
-                      unlocked
-                          ? kBlackColor.withValues(alpha: 0.34)
-                          : kBlackColor.withValues(alpha: 0.54),
-                  border: Border.all(
-                    color: metal.withValues(alpha: unlocked ? 0.74 : 0.32),
-                    width: 1.1,
-                  ),
-                ),
-                child: Icon(
-                  spec.icon,
-                  color: unlocked ? metal : kWhiteColor.withValues(alpha: 0.54),
-                  size: size * 0.27,
+                      i < reached ? metal : kWhiteColor.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(mark * 0.18),
                 ),
               ),
             ),
-            Positioned(
-              right: size * 0.16,
-              bottom: size * 0.13,
-              child: Transform.rotate(
-                angle: spec.runeTilt,
-                child: Container(
-                  width: size * 0.18,
-                  height: size * 0.18,
-                  decoration: BoxDecoration(
-                    color:
-                        unlocked
-                            ? accent.withValues(alpha: 0.82)
-                            : kBlack2Color,
-                    borderRadius: BorderRadius.circular(size * 0.04),
-                    border: Border.all(
-                      color: metal.withValues(alpha: unlocked ? 0.86 : 0.34),
-                      width: 1,
-                    ),
-                  ),
-                  child: Icon(
-                    spec.rune,
-                    color:
-                        unlocked
-                            ? kWhiteColor.withValues(alpha: 0.92)
-                            : kWhiteColor.withValues(alpha: 0.36),
-                    size: size * 0.11,
-                  ),
-                ),
-              ),
-            ),
-            if (!unlocked)
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: kBlackColor.withValues(alpha: 0.36),
-                  borderRadius: BorderRadius.circular(size * 0.24),
-                ),
-                child: Icon(
-                  Icons.lock_outline,
-                  color: kWhiteColor.withValues(alpha: 0.68),
-                  size: size * 0.28,
-                ),
-              ),
-          ],
-        ),
-      ),
+          ),
+          if (i < total - 1) SizedBox(width: size * 0.045),
+        ],
+      ],
     );
   }
 }
@@ -148,19 +145,15 @@ enum _BadgePattern { rays, ranks, laurel, cross, wave }
 class _BadgeSpec {
   const _BadgeSpec({
     required this.icon,
-    required this.rune,
     required this.frame,
     required this.pattern,
     required this.metal,
-    required this.runeTilt,
   });
 
   final IconData icon;
-  final IconData rune;
   final _BadgeFrame frame;
   final _BadgePattern pattern;
   final Color metal;
-  final double runeTilt;
 }
 
 _BadgeSpec _badgeSpec(PlayAchievementId id) {
@@ -173,20 +166,11 @@ _BadgeSpec _badgeSpec(PlayAchievementId id) {
     2 => const Color(0xFFD28A55),
     _ => const Color(0xFFFFE0A3),
   };
-  final rune = switch (index % 5) {
-    0 => Icons.diamond_outlined,
-    1 => Icons.star_rounded,
-    2 => Icons.circle_outlined,
-    3 => Icons.change_history_rounded,
-    _ => Icons.auto_awesome_rounded,
-  };
   return _BadgeSpec(
     icon: _badgeIcon(id),
-    rune: rune,
     frame: frame,
     pattern: pattern,
     metal: metal,
-    runeTilt: (index.isEven ? -1 : 1) * math.pi / 4,
   );
 }
 
@@ -306,19 +290,55 @@ class _BadgePatternPainter extends CustomPainter {
     required this.accent,
     required this.pattern,
     required this.unlocked,
+    this.sheen,
   });
 
   final Color accent;
   final _BadgePattern pattern;
   final bool unlocked;
+  final double? sheen;
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Enamel: the badge colour mixed down into the page ink, lighter at
+    // the top where the light falls.
+    final base = Color.lerp(kBlack2Color, accent, unlocked ? 0.30 : 0.07)!;
+    final top = Color.lerp(kBlack2Color, accent, unlocked ? 0.42 : 0.10)!;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [top, base],
+        ).createShader(Offset.zero & size),
+    );
+    _paintPattern(canvas, size);
+    final s = sheen;
+    if (s != null && unlocked) {
+      // A narrow band of light crossing the face on a diagonal.
+      final x = -size.width * 0.6 + s * size.width * 2.2;
+      final band =
+          Path()
+            ..moveTo(x, 0)
+            ..lineTo(x + size.width * 0.16, 0)
+            ..lineTo(x + size.width * 0.16 - size.height * 0.6, size.height)
+            ..lineTo(x - size.height * 0.6, size.height)
+            ..close();
+      canvas.drawPath(
+        band,
+        Paint()..color = kWhiteColor.withValues(alpha: 0.16),
+      );
+    }
+  }
+
+  void _paintPattern(Canvas canvas, Size size) {
     final paint =
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1
-          ..color = accent.withValues(alpha: unlocked ? 0.26 : 0.08);
+          ..strokeCap = StrokeCap.round
+          ..color = kWhiteColor.withValues(alpha: unlocked ? 0.10 : 0.04);
     switch (pattern) {
       case _BadgePattern.rays:
         final center = Offset(size.width / 2, size.height / 2);
@@ -400,7 +420,8 @@ class _BadgePatternPainter extends CustomPainter {
   bool shouldRepaint(_BadgePatternPainter oldDelegate) =>
       accent != oldDelegate.accent ||
       pattern != oldDelegate.pattern ||
-      unlocked != oldDelegate.unlocked;
+      unlocked != oldDelegate.unlocked ||
+      sheen != oldDelegate.sheen;
 }
 
 Path _badgePath(Size size, _BadgeFrame frame) {

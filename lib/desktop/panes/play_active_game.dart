@@ -16,9 +16,13 @@ import 'package:motor/motor.dart';
 import 'package:chessever/desktop/panes/board_pane.dart'
     show boardEnginePvArrowShapes;
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
+import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/play_help_modules.dart';
+import 'package:chessever/desktop/state/play_help_style.dart';
 import 'package:chessever/desktop/widgets/arrow_move_eval_labels.dart';
 import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
+import 'package:chessever/desktop/widgets/play_post_game_brief.dart';
+import 'package:chessever/desktop/auth/desktop_play_access.dart';
 import 'package:chessever/desktop/widgets/toby/toby_bar.dart';
 import 'package:chessever/desktop/services/play/play_live_move_classifier.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
@@ -30,6 +34,7 @@ import 'package:chessever/desktop/widgets/board_share_dialog.dart';
 import 'package:chessever/desktop/widgets/desktop_eval_bar.dart';
 import 'package:chessever/desktop/widgets/desktop_toolbar_pill_button.dart';
 import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
+import 'package:chessever/desktop/widgets/editable_aware_shortcut_activator.dart';
 import 'package:chessever/desktop/widgets/engine_panel.dart';
 import 'package:chessever/desktop/widgets/event_info_popover.dart';
 import 'package:chessever/desktop/widgets/notation_opening_panel.dart';
@@ -52,6 +57,7 @@ import 'package:chessever/desktop/state/current_user_profile.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/play_session.dart';
 import 'package:chessever/desktop/state/play_setup.dart';
+import 'package:chessever/desktop/state/play_user_country.dart';
 import 'package:chessever/desktop/widgets/board_annotation_layer.dart';
 import 'package:chessever/desktop/widgets/board_resize_handle.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
@@ -59,6 +65,7 @@ import 'package:chessever/desktop/widgets/desktop_user_profile_button.dart';
 import 'package:chessever/desktop/widgets/move_navigation_bar.dart';
 import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
+import 'package:chessever/desktop/widgets/play_help_trigger.dart';
 import 'package:chessever/desktop/widgets/resizable_split_view.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
@@ -232,6 +239,7 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     _lastHistoryLength = totalPlies;
     final reviewPly = _effectiveReviewPly(_reviewPly, totalPlies);
     final currentPly = reviewPly ?? totalPlies;
+    _syncHelpAtLiveTip(reviewPly == null);
 
     void goToPly(int ply) => _setReviewPly(ply, totalPlies);
     void goFirst() {
@@ -255,9 +263,11 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     final showsRail = ref.watch(
       playHelpModulesProvider.select((m) => m.showsRail),
     );
-    final threatsOn = ref.watch(
-      playHelpModulesProvider.select((m) => m.threats),
-    );
+
+    // The Board's threat key, as the player bound it (X by default).
+    final threatChords = watchPlayShortcuts(
+      ref,
+    ).chordsFor(BoardActionKey.showThreat);
 
     return CallbackShortcuts(
       bindings: {
@@ -265,13 +275,27 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
         const SingleActivator(LogicalKeyboardKey.arrowLeft): goPrevious,
         const SingleActivator(LogicalKeyboardKey.arrowRight): goNext,
         const SingleActivator(LogicalKeyboardKey.end): goLast,
-        // The Board's threat key, only once the player chose the module.
-        if (threatsOn && !state.isGameOver)
-          const SingleActivator(LogicalKeyboardKey.keyX):
-              () => togglePlayThreat(ref, widget.tabId),
+        if (!state.isGameOver)
+          for (final chord in threatChords)
+            for (final activator in chord.toAllPlatformActivators())
+              EditableAwareShortcutActivator(activator):
+                  () => togglePlayThreat(ref, widget.tabId),
       },
       child: Focus(
         autofocus: true,
+        // The help keys (H for all of it, a module's own key for one) hold
+        // to peek or press to spend a hint. A peek never outlives the
+        // board's focus: a key released elsewhere would leave it on.
+        onFocusChange: (focused) {
+          if (!focused) {
+            ref.read(playHelpUsageProvider(widget.tabId).notifier).endPeek();
+          }
+        },
+        onKeyEvent:
+            (_, event) =>
+                !state.isGameOver && handlePlayHelpKey(ref, widget.tabId, event)
+                    ? KeyEventResult.handled
+                    : KeyEventResult.ignored,
         child: ResizableSplitView(
           axis: Axis.horizontal,
           controller: _splitController,
@@ -354,6 +378,24 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
     setState(() {
       _reviewPly = clamped >= totalPlies ? null : clamped;
     });
+    ref.read(playHelpAtLiveTipProvider(widget.tabId).notifier).state =
+        _reviewPly == null;
+  }
+
+  /// Keeps [playHelpAtLiveTipProvider] in step when the review resets
+  /// during a build (a new game, a take-back). A provider cannot change
+  /// mid-build, so it changes after the frame.
+  void _syncHelpAtLiveTip(bool atTip) {
+    if (ref.read(playHelpAtLiveTipProvider(widget.tabId)) == atTip) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(playHelpAtLiveTipProvider(widget.tabId).notifier).state =
+          _effectiveReviewPly(
+            _reviewPly,
+            ref.read(playSessionProviderFor(widget.tabId)).history.length,
+          ) ==
+          null;
+    });
   }
 }
 
@@ -396,6 +438,8 @@ class PlaySessionLifecycleListener extends ConsumerWidget {
       playLiveMoveJudgementsProvider(tabId),
       (_, _) {},
     );
+    // The help the game uses is counted from its first move.
+    ref.listen<PlayHelpUsage>(playHelpUsageProvider(tabId), (_, _) {});
     return child;
   }
 
@@ -467,8 +511,10 @@ void _scheduleFinishPlaySession(
 Future<void> _recordCompletedGame(
   ProviderContainer container,
   PlaySessionState state,
-  PlaySessionArgs? args,
-) async {
+  PlaySessionArgs? args, {
+  String? tabId,
+  PlayHelpUsage? help,
+}) async {
   final tournamentContext = args?.tournamentContext;
   if (state.endReason == PlayEndReason.aborted) {
     if (tournamentContext != null) {
@@ -487,22 +533,68 @@ Future<void> _recordCompletedGame(
   final analyzerBinaryPath = stockfishPath ?? args?.engineBinaryPath;
   final analyzerEngine =
       stockfishPath != null ? BotEngineKind.stockfish : state.config.engine;
-  final record = await const PlayGameAnalyzer().analyzeSession(
+  final analyzed = await const PlayGameAnalyzer().analyzeSession(
     state,
     analyzerBinaryPath: analyzerBinaryPath,
     analyzerEngine: analyzerEngine,
     userDisplayName: repository.currentDisplayName,
+    userCountryCode: container.read(playUserCountryCodeProvider),
     sourceOverride:
         tournamentContext == null ? null : PlayGameSource.tournament,
     eventTitle: tournamentContext?.tournamentTitle,
     eventRound: tournamentContext?.round,
     tournamentGameId: tournamentContext?.gameId,
   );
-  await container
+  // The help the game used rides with it: the save keeps only that share
+  // of a rating gain (`metadata.help.gainFactor`).
+  final record =
+      help == null || !help.usedAny
+          ? analyzed
+          : analyzed.copyWith(
+            metadata: {...analyzed.metadata, 'help': help.toJson()},
+          );
+  final profile = container.read(playUserProfileProvider).valueOrNull;
+  final rewards = await container
       .read(playAchievementsProvider.notifier)
-      .recordSingleGame(state, contributions: record.badgeContributions);
+      .recordSingleGame(
+        state,
+        contributions: record.badgeContributions,
+        analysis: record.analysis,
+        humanRating: profile == null ? null : _playHumanRating(state, profile),
+      );
+  // Only while this same finished game is still on its tab (not after a
+  // Rematch or New game), so a brief never shows another game's numbers.
+  bool stillShown() =>
+      tabId != null &&
+      args != null &&
+      identical(container.read(playSessionArgsByTabIdProvider)[tabId], args);
+  if (stillShown()) {
+    container.read(playFinishedRewardsProvider(tabId!).notifier).state =
+        rewards;
+  }
   final achievements = container.read(playAchievementsProvider);
-  await repository.saveCompletedGame(record, achievements: achievements);
+  final saved = await repository.saveCompletedGame(
+    record,
+    achievements: achievements,
+  );
+  // The rating the save applied is the authority: the preview taken at the
+  // end of the game may have read a profile a previous save had not
+  // refreshed yet.
+  final before = saved.ratingBefore;
+  final after = saved.ratingAfter;
+  final shown =
+      tabId == null ? null : container.read(playFinishedRatingProvider(tabId));
+  if (stillShown() && before != null && after != null && shown != null) {
+    container
+        .read(playFinishedRatingProvider(tabId!).notifier)
+        .state = PlayFinishedRating(
+      ladder: shown.ladder,
+      before: before,
+      after: after,
+      provisional: shown.provisional,
+      gainFactor: shown.gainFactor,
+    );
+  }
   if (tournamentContext != null) {
     container
         .read(tournamentServerProvider.notifier)
@@ -531,6 +623,8 @@ void _finishPlaySession(
 }) {
   final args = container.read(playSessionArgsByTabIdProvider)[tabId];
   final tournamentContext = args?.tournamentContext;
+  // Read before a tournament game clears its tab, which starts a new count.
+  final help = container.read(playHelpUsageProvider(tabId));
   if (state.endReason == PlayEndReason.aborted) {
     if (tournamentContext != null) {
       container
@@ -546,12 +640,55 @@ void _finishPlaySession(
       _recordTournamentGameResult(container, state, tournamentContext);
       _clearPlaySession(container, tabId);
     } else {
-      _openFinishedPlayGameBoard(container, state, tabId, args);
+      // The finished game stays on its own board, at the size and in the
+      // layout the player chose, with the post-game brief beside it. The
+      // full report on the Board is one click away (Full report).
+      _rememberFinishedRating(container, state, tabId);
     }
   }
   if (recordGame) {
-    unawaited(_recordCompletedGame(container, state, args));
+    unawaited(
+      _recordCompletedGame(container, state, args, tabId: tabId, help: help),
+    );
   }
+}
+
+/// Takes the rating change the game makes before it is saved: once saved,
+/// the profile already holds the new rating and a fresh computation would
+/// read the change from the wrong base.
+void _rememberFinishedRating(
+  ProviderContainer container,
+  PlaySessionState state,
+  String tabId,
+) {
+  final rated = toRatedTimeControl(state.config.category);
+  final profile = container.read(playUserProfileProvider).valueOrNull;
+  final score = _scoreForSide(state.outcome, state.humanSide);
+  if (rated == null || profile == null || score == null) return;
+  final help = container.read(playHelpUsageProvider(tabId));
+  final gainFactor = help.usedAny ? playHelpGainFactor(help) : 1.0;
+  // The same Glicko-2 step saveCompletedGame applies, help included.
+  final outcome = ratePlayGame(
+    stats: profile.statsFor(rated),
+    opponentRating: state.config.elo,
+    score: score,
+    at: DateTime.now(),
+    gainFactor: gainFactor,
+  );
+  container
+      .read(playFinishedRatingProvider(tabId).notifier)
+      .state = PlayFinishedRating(
+    ladder: rated.displayName,
+    before: outcome.ratingBefore,
+    after: outcome.ratingAfter,
+    provisional: outcome.provisionalAfter,
+    gainFactor: gainFactor,
+  );
+}
+
+void _forgetFinishedGame(ProviderContainer container, String tabId) {
+  container.read(playFinishedRatingProvider(tabId).notifier).state = null;
+  container.read(playFinishedRewardsProvider(tabId).notifier).state = null;
 }
 
 void _recordTournamentGameResult(
@@ -589,6 +726,7 @@ void _openFinishedPlayGameBoard(
     state,
     args,
     userDisplayName: userDisplayName,
+    userCountryCode: container.read(playUserCountryCodeProvider),
   );
   openBoardGameTabFromContainer(
     container,
@@ -600,6 +738,7 @@ void _openFinishedPlayGameBoard(
 }
 
 void _clearPlaySession(ProviderContainer container, String tabId) {
+  _forgetFinishedGame(container, tabId);
   container.read(playSessionArgsByTabIdProvider.notifier).update((m) {
     if (!m.containsKey(tabId)) return m;
     return <String, PlaySessionArgs>{...m}..remove(tabId);
@@ -615,7 +754,9 @@ BoardTabGameArgs _finishedPlayBoardArgs(
   PlaySessionState state,
   PlaySessionArgs? args, {
   required String userDisplayName,
+  String? userCountryCode,
 }) {
+  final humanFed = userCountryCode ?? '';
   final tournamentContext = args?.tournamentContext;
   final humanIsWhite = state.humanSide == Side.white;
   final bot = state.botIdentity;
@@ -660,11 +801,13 @@ BoardTabGameArgs _finishedPlayBoardArgs(
         'WhiteTitle': bot.title ?? '',
         'WhiteElo': bot.elo.toString(),
         'WhiteFed': bot.countryCode,
+        if (humanFed.isNotEmpty) 'BlackFed': humanFed,
       },
       if (humanIsWhite) ...{
         'BlackTitle': bot.title ?? '',
         'BlackElo': bot.elo.toString(),
         'BlackFed': bot.countryCode,
+        if (humanFed.isNotEmpty) 'WhiteFed': humanFed,
       },
     },
   );
@@ -682,8 +825,8 @@ BoardTabGameArgs _finishedPlayBoardArgs(
     label: label,
     whiteName: whiteName,
     blackName: blackName,
-    whiteFederation: humanIsWhite ? '' : bot.countryCode,
-    blackFederation: humanIsWhite ? bot.countryCode : '',
+    whiteFederation: humanIsWhite ? humanFed : bot.countryCode,
+    blackFederation: humanIsWhite ? bot.countryCode : humanFed,
     whiteTitle: whiteTitle,
     blackTitle: blackTitle,
     whiteRating: whiteRating,
@@ -708,8 +851,14 @@ BoardTabGameArgs debugFinishedPlayBoardArgs(
   PlaySessionState state,
   PlaySessionArgs? args, {
   required String userDisplayName,
+  String? userCountryCode,
 }) {
-  return _finishedPlayBoardArgs(state, args, userDisplayName: userDisplayName);
+  return _finishedPlayBoardArgs(
+    state,
+    args,
+    userDisplayName: userDisplayName,
+    userCountryCode: userCountryCode,
+  );
 }
 
 @visibleForTesting
@@ -828,7 +977,10 @@ class _PlayBoardColumn extends ConsumerWidget {
             const BoardSettingsNew().showMoveNavigation,
       ),
     );
+    // Room for the bars follows the chosen help; what fills it follows the
+    // help on screen, so peeking never moves the board.
     final bars = _watchPlayBars(ref);
+    final shownBars = _playBars(ref.watch(playHelpShownProvider(tabId)));
     final showEvalBar = bars.eval;
     final evalBarReserved = _playBarsReservedWidth(bars);
     final review = _playReviewSnapshot(state, reviewPly);
@@ -863,12 +1015,18 @@ class _PlayBoardColumn extends ConsumerWidget {
                           padding: const EdgeInsets.only(
                             top: _playHeaderHeight + _playHeaderGap,
                           ),
-                          child: _PlayEvalBar(
-                            fen: review.position.fen,
-                            width: _playEvalBarWidth,
-                            height: boardSize,
-                            isFlipped: orientation == Side.black,
-                          ),
+                          child:
+                              shownBars.eval
+                                  ? _PlayEvalBar(
+                                    fen: review.position.fen,
+                                    width: _playEvalBarWidth,
+                                    height: boardSize,
+                                    isFlipped: orientation == Side.black,
+                                  )
+                                  : PlayHeldBackBar(
+                                    width: _playEvalBarWidth,
+                                    height: boardSize,
+                                  ),
                         ),
                         const SizedBox(width: _playEvalBarGap),
                       ],
@@ -942,20 +1100,26 @@ class _PlayBoardColumn extends ConsumerWidget {
                           child: SizedBox(
                             width: _playEvalBarWidth,
                             height: boardSize,
-                            child: TobyBarSurface(
-                              target: _playTobyTarget(
-                                ref,
-                                state,
-                                review,
-                                tabId: tabId,
-                              ),
-                              controller: tobyPanel,
-                              result: _playTobyResult(state, review),
-                              positionKey: review.position.fen,
-                              flipped: orientation == Side.black,
-                              width: _playEvalBarWidth,
-                              height: boardSize,
-                            ),
+                            child:
+                                !shownBars.toby
+                                    ? PlayHeldBackBar(
+                                      width: _playEvalBarWidth,
+                                      height: boardSize,
+                                    )
+                                    : TobyBarSurface(
+                                      target: _playTobyTarget(
+                                        ref,
+                                        state,
+                                        review,
+                                        tabId: tabId,
+                                      ),
+                                      controller: tobyPanel,
+                                      result: _playTobyResult(state, review),
+                                      positionKey: review.position.fen,
+                                      flipped: orientation == Side.black,
+                                      width: _playEvalBarWidth,
+                                      height: boardSize,
+                                    ),
                           ),
                         ),
                       ],
@@ -1103,6 +1267,8 @@ class _PlayerRow extends ConsumerWidget {
                 : 'You')
             : state.botIdentity.displayName;
     final countryCode = isHuman ? null : state.botIdentity.countryCode;
+    // The player's own federation: their Countrymen country.
+    final humanFed = isHuman ? ref.watch(playUserCountryCodeProvider) : null;
     final ratedTc = toRatedTimeControl(state.config.category);
     final humanRating =
         ratedTc != null
@@ -1116,108 +1282,132 @@ class _PlayerRow extends ConsumerWidget {
             : '${playStrengthLabel(state.config.engine, state.botIdentity.elo)}'
                 ' • ${state.botIdentity.profileLine}';
     final score = state.isGameOver ? _scoreForSide(state.outcome, side) : null;
+    // Taken when the game ended: the saved profile already holds the new
+    // rating, so recomputing would read the change from the wrong base.
+    final finishedRating = ref.watch(playFinishedRatingProvider(tabId));
     final eloDelta =
         (state.isGameOver && isHuman && score != null)
-            ? _humanEloDelta(state: state, profile: profile, score: score)
+            ? finishedRating?.delta
             : null;
-    final showThreatButton =
-        isHuman &&
-        !state.isGameOver &&
-        ref.watch(playHelpModulesProvider.select((m) => m.threats));
-    return Row(
-      children: [
-        if (isHuman)
-          DesktopUserProfileButton(
-            size: 36,
-            tooltip: 'Open my player profile',
-            onPress: () => openCurrentUserProfileTab(ref),
-          )
-        else
-          SizedBox(
-            width: 42,
-            height: 42,
-            child: Center(
-              child: SizedBox(
-                width: 36,
-                height: 24,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child:
-                      countryCode != null
-                          ? CountryFlag.fromCountryCode(countryCode)
-                          : Container(color: kBlack3Color),
-                ),
-              ),
-            ),
-          ),
-        const SizedBox(width: 12),
-        // Expanded, not Flexible + Spacer: two flex-1 children split the free
-        // space in half, which parked the clock mid-row at a name-dependent
-        // offset. The name column takes all of it, so the clock is flush right.
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Text(
-                      label,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: kWhiteColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
+    // Always on screen during a game, beside the player's own clock.
+    final showThreatButton = isHuman && !state.isGameOver;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // A small board keeps the name readable: Peek and Hint drop their
+        // label.
+        final compactRow = constraints.maxWidth < 520;
+        return Row(
+          children: [
+            if (isHuman)
+              DesktopUserProfileButton(
+                size: 36,
+                tooltip: 'Open my player profile',
+                onPress: () => openCurrentUserProfileTab(ref),
+              )
+            else
+              SizedBox(
+                width: 42,
+                height: 42,
+                child: Center(
+                  child: SizedBox(
+                    width: 36,
+                    height: 24,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child:
+                          countryCode != null
+                              ? CountryFlag.fromCountryCode(countryCode)
+                              : Container(color: kBlack3Color),
                     ),
                   ),
-                  if (eloDelta != null) ...[
-                    const SizedBox(width: 8),
-                    _EloDeltaPill(
-                      key: ValueKey(
-                        'elo-${side.name}-${state.endReason.name}-${state.history.length}',
-                      ),
-                      delta: eloDelta,
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 1),
-              Text(
-                eloLabel,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: kSecondaryTextColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        if (score != null) ...[
-          _PostGameBadge(
-            key: ValueKey(
-              '${side.name}-${state.endReason.name}-${state.history.length}',
+            const SizedBox(width: 12),
+            // Expanded, not Flexible + Spacer: two flex-1 children split the free
+            // space in half, which parked the clock mid-row at a name-dependent
+            // offset. The name column takes all of it, so the clock is flush right.
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (humanFed != null) ...[
+                        SizedBox(
+                          width: 20,
+                          height: 14,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(2),
+                            child: CountryFlag.fromCountryCode(humanFed),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                      ],
+                      Flexible(
+                        child: Text(
+                          label,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: kWhiteColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (eloDelta != null) ...[
+                        const SizedBox(width: 8),
+                        _EloDeltaPill(
+                          key: ValueKey(
+                            'elo-${side.name}-${state.endReason.name}-${state.history.length}',
+                          ),
+                          delta: eloDelta,
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    eloLabel,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kSecondaryTextColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            score: score,
-          ),
-          const SizedBox(width: 12),
-        ],
-        // Beside the player's own clock, where their eyes already are.
-        if (showThreatButton) ...[
-          _PlayThreatButton(tabId: tabId),
-          const SizedBox(width: 10),
-        ],
-        _ClockChip(
-          key: ValueKey('play-clock-${side.name}'),
-          millis: clockMs,
-          active: isActive,
-        ),
-      ],
+            const SizedBox(width: 12),
+            if (score != null) ...[
+              _PostGameBadge(
+                key: ValueKey(
+                  '${side.name}-${state.endReason.name}-${state.history.length}',
+                ),
+                score: score,
+              ),
+              const SizedBox(width: 12),
+            ],
+            // Beside the player's own clock, where their eyes already are.
+            if (showThreatButton) ...[
+              // Peek or Hint, when the help is held back.
+              if (playHelpIsHeldBack(ref, tabId)) ...[
+                PlayHelpTrigger(tabId: tabId, compact: compactRow),
+                const SizedBox(width: 8),
+              ],
+              _PlayThreatButton(tabId: tabId),
+              const SizedBox(width: 10),
+            ],
+            _ClockChip(
+              key: ValueKey('play-clock-${side.name}'),
+              millis: clockMs,
+              active: isActive,
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1228,30 +1418,6 @@ double? _scoreForSide(Outcome? outcome, Side side) {
   final winner = outcome.winner;
   if (winner == null) return null;
   return winner == side ? 1.0 : 0.0;
-}
-
-/// Computes the human's ELO delta for the just-finished game using the
-/// same FIDE math the persistence layer applies in [saveCompletedGame].
-/// Returns null for unrated (custom) time controls or when the profile
-/// snapshot isn't loaded yet — in which case the badge shows the score
-/// without a delta. Bot-side rows never call this.
-int? _humanEloDelta({
-  required PlaySessionState state,
-  required PlayUserProfile? profile,
-  required double score,
-}) {
-  if (profile == null) return null;
-  final rated = toRatedTimeControl(state.config.category);
-  if (rated == null) return null;
-  final stats = profile.statsFor(rated);
-  final update = const FideEloCalculator().compute(
-    currentRating: stats.rating,
-    opponentRating: state.config.elo,
-    score: score,
-    gamesPlayedBefore: stats.gamesPlayed,
-    peakRating: stats.peak,
-  );
-  return update.delta;
 }
 
 /// Score chip mounted on a [_PlayerRow] the moment a game ends. Mounted
@@ -1462,7 +1628,8 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
     // The report's mark for the move that made the position on the board,
     // once the live classifier has judged it.
     final moveIndex = review.ply - 1;
-    final modules = ref.watch(playHelpModulesProvider);
+    // What the board draws is the help on screen (held back: none).
+    final modules = ref.watch(playHelpShownProvider(widget.tabId));
     final classification =
         moveIndex < 0 || !modules.moveMarks
             ? null
@@ -1521,7 +1688,6 @@ class _BoardInteractiveState extends ConsumerState<_BoardInteractive> {
     // question is what they must answer) and never in check, where a pass
     // is illegal. It replaces every other arrow, so nothing mixes with it.
     final threatShown =
-        modules.threats &&
         ref.watch(playThreatShownProvider(widget.tabId)) &&
         !state.isGameOver &&
         playThreatApplies(review.position, humanSide: state.humanSide);
@@ -1742,9 +1908,8 @@ void togglePlayThreat(WidgetRef ref, String tabId) {
   shown.state = !shown.state;
 }
 
-/// The "Show threat" toggle beside the player's clock. Present only when
-/// the player turned the threat module on; the arrows appear on their own
-/// turns while it is pressed.
+/// The "Show threat" toggle beside the player's clock, always on screen
+/// during a game; the arrows appear on their own turns while it is pressed.
 class _PlayThreatButton extends ConsumerWidget {
   const _PlayThreatButton({required this.tabId});
 
@@ -1895,14 +2060,14 @@ class _GameSidePanel extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           // The help switches, folded away until the player opens them.
-          const PlayHelpModulesSection(),
+          PlayHelpModulesSection(tabId: tabId),
           const SizedBox(height: 12),
           if (state.premoves.isNotEmpty) ...[
             _PremoveQueue(state: state, tabId: tabId),
             const SizedBox(height: 12),
           ],
           if (state.isGameOver)
-            _ResultBanner(state: state, tabId: tabId)
+            _scrollingBrief(_postGameBrief(context, ref, state, tabId))
           else
             _GameActions(state: state, tabId: tabId),
         ],
@@ -2041,7 +2206,17 @@ class _PlayAnalysisRail extends ConsumerWidget {
 
     void goToPly(int ply) => onReviewPlyChanged(_clampPly(ply, total));
 
-    final modules = ref.watch(playHelpModulesProvider);
+    // The rail keeps its shape for the chosen help; its content is the help
+    // on screen, and a curtain while it is held back.
+    final chosen = ref.watch(playHelpModulesProvider);
+    final modules = ref.watch(playHelpShownProvider(tabId));
+    // The engine pane opens when some of its help is revealed (a peek at
+    // Toby alone shows Toby alone); until then the help shelf stands in.
+    final paneRevealed =
+        modules.engineLines ||
+        modules.tobyPredictions ||
+        modules.arrows == PlayHelpArrows.toby;
+    final heldBack = chosen.anyOn && modules != chosen && !paneRevealed;
     final tobyTarget = _playTobyTarget(ref, state, review, tabId: tabId);
     final toby = WhatTobyThinks(
       target: tobyTarget,
@@ -2059,13 +2234,14 @@ class _PlayAnalysisRail extends ConsumerWidget {
         useFigurine: notationUseFigurine,
         pieceAssets: notationPieceAssets,
         lichessAnnotations: <int, LichessMoveAnnotation>{
-          for (final entry in classes.entries)
-            entry.key: LichessMoveAnnotation(
-              type: annotationTypeForClassification(entry.value),
-              comment: '',
-              useClassificationIcon: true,
-              reportOwnsMoveQuality: true,
-            ),
+          if (modules.moveMarks || state.isGameOver)
+            for (final entry in classes.entries)
+              entry.key: LichessMoveAnnotation(
+                type: annotationTypeForClassification(entry.value),
+                comment: '',
+                useClassificationIcon: true,
+                reportOwnsMoveQuality: true,
+              ),
         },
       ),
     );
@@ -2082,7 +2258,7 @@ class _PlayAnalysisRail extends ConsumerWidget {
             child: ProviderScope(
               overrides: [
                 boardAnalysisPreferencesProvider.overrideWith(
-                  PlayAnalysisSettings.new,
+                  () => PlayAnalysisSettings(tabId),
                 ),
               ],
               child: NotationOpeningPanel(
@@ -2138,37 +2314,43 @@ class _PlayAnalysisRail extends ConsumerWidget {
                 // Stockfish and Toby share one pane, as on the watching board;
                 // it also carries Toby's reading when only his arrows are on.
                 showEngine:
-                    modules.engineLines ||
-                    modules.tobyPredictions ||
-                    modules.arrows == PlayHelpArrows.toby,
+                    chosen.engineLines ||
+                    chosen.tobyPredictions ||
+                    chosen.arrows == PlayHelpArrows.toby ||
+                    heldBack,
                 onRestoreEngine:
                     () => ref
                         .read(playHelpModulesProvider.notifier)
                         .update((m) => m.copyWith(engineLines: true)),
-                enginePanel: EnginePanel(
-                  fen: position.fen,
-                  sideToMove: position.turn == Side.white ? 'w' : 'b',
-                  headers: headers,
-                  activePly: currentPly,
-                  onJumpToPly: goToPly,
-                  reportVisible: false,
-                  autoAnalysisAllowed: false,
-                  isForegroundTab: foreground,
-                  toby: modules.tobyPredictions ? toby : null,
-                  tobyHeaderLabel: TobyHeaderLabel(
-                    target: tobyTarget,
-                    controller: tobyPanel,
-                  ),
-                  tobyArrowsOnly:
-                      !modules.tobyPredictions &&
-                              modules.arrows == PlayHelpArrows.toby
-                          ? toby
-                          : null,
-                  tobyTabSelected: tobyTab,
-                  unifiedAnalysis: true,
-                  // Play's choices live in its Live help section.
-                  showSettings: false,
-                ),
+                enginePanel:
+                    heldBack
+                        ? PlayHelpCurtain(tabId: tabId)
+                        : PlayHelpReveal(
+                          child: EnginePanel(
+                            fen: position.fen,
+                            sideToMove: position.turn == Side.white ? 'w' : 'b',
+                            headers: headers,
+                            activePly: currentPly,
+                            onJumpToPly: goToPly,
+                            reportVisible: false,
+                            autoAnalysisAllowed: false,
+                            isForegroundTab: foreground,
+                            toby: modules.tobyPredictions ? toby : null,
+                            tobyHeaderLabel: TobyHeaderLabel(
+                              target: tobyTarget,
+                              controller: tobyPanel,
+                            ),
+                            tobyArrowsOnly:
+                                !modules.tobyPredictions &&
+                                        modules.arrows == PlayHelpArrows.toby
+                                    ? toby
+                                    : null,
+                            tobyTabSelected: tobyTab,
+                            unifiedAnalysis: true,
+                            // Play's choices live in its Live help section.
+                            showSettings: false,
+                          ),
+                        ),
               ),
             ),
           ),
@@ -2183,14 +2365,14 @@ class _PlayAnalysisRail extends ConsumerWidget {
                   const SizedBox(height: 12),
                 ],
                 // The help switches, folded away until the player opens them.
-                const PlayHelpModulesSection(),
+                PlayHelpModulesSection(tabId: tabId),
                 const SizedBox(height: 12),
                 if (state.premoves.isNotEmpty) ...[
                   _PremoveQueue(state: state, tabId: tabId),
                   const SizedBox(height: 12),
                 ],
                 if (state.isGameOver)
-                  _ResultBanner(state: state, tabId: tabId)
+                  _scrollingBrief(_postGameBrief(context, ref, state, tabId))
                 else
                   _GameActions(state: state, tabId: tabId),
               ],
@@ -2716,57 +2898,56 @@ class _GameActions extends ConsumerWidget {
   }
 }
 
-class _ResultBanner extends ConsumerWidget {
-  const _ResultBanner({required this.state, required this.tabId});
+/// The brief shrinks to the room it is given and scrolls inside it, so its
+/// actions are never pushed off a short panel.
+Widget _scrollingBrief(Widget brief) =>
+    PlayShrinkingScroller(maxHeight: 360, child: brief);
 
-  final PlaySessionState state;
-  final String tabId;
+/// The brief beside the board once the game is over, with its three ways
+/// on: the same game again with colours swapped, back to the setup, or the
+/// full report on the Board.
+Widget _postGameBrief(
+  BuildContext context,
+  WidgetRef ref,
+  PlaySessionState state,
+  String tabId,
+) {
+  final profile = ref.watch(playUserProfileProvider).valueOrNull;
+  final finished = ref.watch(playFinishedRatingProvider(tabId));
+  return PlayPostGameBrief(
+    state: state,
+    tabId: tabId,
+    humanRating: finished?.before ?? _playHumanRating(state, profile),
+    onPlayAgain: () => _leavePlaySession(ref, tabId),
+    onRematch: () => _rematch(ref, state, tabId),
+    onOpenReport:
+        () => _openFinishedPlayGameBoard(
+          ProviderScope.containerOf(context, listen: false),
+          state,
+          tabId,
+          ref.read(playSessionArgsByTabIdProvider)[tabId],
+        ),
+  );
+}
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final humanWon = state.outcome?.winner == state.humanSide;
-    final draw = state.outcome == Outcome.draw;
-    final color = draw ? kWhiteColor70 : (humanWon ? kGreenColor : kRedColor);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        border: Border.all(color: color),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            state.endReason.banner,
-            style: TextStyle(
-              color: color,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          FTheme(
-            data: FThemes.zinc.dark,
-            child: Row(
-              children: [
-                Expanded(
-                  child: FButton(
-                    style: playPrimaryActionButtonStyle(),
-                    prefix: const Icon(Icons.replay_rounded),
-                    onPress: () {
-                      _leavePlaySession(ref, tabId);
-                    },
-                    child: const Text('Play again'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+/// The same bot, clock and start again, with the colours swapped.
+void _rematch(WidgetRef ref, PlaySessionState state, String tabId) {
+  final args = ref.read(playSessionArgsByTabIdProvider)[tabId];
+  if (args == null || !admitDesktopPlay(ref)) return;
+  final next = PlaySessionArgs(
+    config: args.config.copyWith(
+      color:
+          state.humanSide == Side.white
+              ? PlayColorChoice.black
+              : PlayColorChoice.white,
+    ),
+    engineBinaryPath: args.engineBinaryPath,
+    botIdentity: args.botIdentity,
+  );
+  _leavePlaySession(ref, tabId);
+  ref
+      .read(playSessionArgsByTabIdProvider.notifier)
+      .update((m) => <String, PlaySessionArgs>{...m, tabId: next});
 }
 
 void _leavePlaySession(
@@ -2782,6 +2963,8 @@ void _leavePlaySession(
         .resetHumanGame(tournamentContext.gameId);
   }
 
+  ref.read(playFinishedRatingProvider(tabId).notifier).state = null;
+  ref.read(playFinishedRewardsProvider(tabId).notifier).state = null;
   ref.read(playSessionArgsByTabIdProvider.notifier).update((m) {
     if (!m.containsKey(tabId)) return m;
     return <String, PlaySessionArgs>{...m}..remove(tabId);

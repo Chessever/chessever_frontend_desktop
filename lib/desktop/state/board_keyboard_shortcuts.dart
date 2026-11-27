@@ -77,9 +77,36 @@ enum BoardActionKey {
   toggleNotationWindow,
   toggleBoardFocus,
   closeWindow,
+  // Play help: hold (peek style) or press (hints style) during a game
+  // against a bot to see one module of the chosen help, or all of it.
+  // Handled by the Play pane only; the Board pane and the shell skip them
+  // ([BoardActionKeyMeta.isPlayHelp]).
+  playHelpAll,
+  playHelpEngineLines,
+  playHelpEvalBar,
+  playHelpArrows,
+  playHelpMoveMarks,
+  playHelpExplorer,
+  playHelpTobyPredictions,
+  playHelpTobyBar,
+  playHelpArrowEvals,
 }
 
 extension BoardActionKeyMeta on BoardActionKey {
+  /// Play's help keys, read only by a game against a bot.
+  bool get isPlayHelp => switch (this) {
+    BoardActionKey.playHelpAll ||
+    BoardActionKey.playHelpEngineLines ||
+    BoardActionKey.playHelpEvalBar ||
+    BoardActionKey.playHelpArrows ||
+    BoardActionKey.playHelpMoveMarks ||
+    BoardActionKey.playHelpExplorer ||
+    BoardActionKey.playHelpTobyPredictions ||
+    BoardActionKey.playHelpTobyBar ||
+    BoardActionKey.playHelpArrowEvals => true,
+    _ => false,
+  };
+
   /// Human-readable label shown next to the chord pills in the settings UI
   /// and in tooltips.
   String get label {
@@ -212,6 +239,24 @@ extension BoardActionKeyMeta on BoardActionKey {
         return 'Toggle board focus';
       case BoardActionKey.closeWindow:
         return 'Close board window';
+      case BoardActionKey.playHelpAll:
+        return 'Play help: all';
+      case BoardActionKey.playHelpEngineLines:
+        return 'Play help: engine lines';
+      case BoardActionKey.playHelpEvalBar:
+        return 'Play help: eval bar';
+      case BoardActionKey.playHelpArrows:
+        return 'Play help: arrows';
+      case BoardActionKey.playHelpMoveMarks:
+        return 'Play help: move marks';
+      case BoardActionKey.playHelpExplorer:
+        return 'Play help: opening explorer';
+      case BoardActionKey.playHelpTobyPredictions:
+        return 'Play help: Toby Predicts';
+      case BoardActionKey.playHelpTobyBar:
+        return 'Play help: Toby bar';
+      case BoardActionKey.playHelpArrowEvals:
+        return 'Play help: eval on my arrows';
     }
   }
 
@@ -359,6 +404,19 @@ extension BoardActionKeyMeta on BoardActionKey {
         return 'Enter or exit board focus mode.';
       case BoardActionKey.closeWindow:
         return 'Close the active board tab or window.';
+      case BoardActionKey.playHelpAll:
+        return 'In Play, hold to peek at all your help, or press to spend '
+            'a hint on it.';
+      case BoardActionKey.playHelpEngineLines:
+      case BoardActionKey.playHelpEvalBar:
+      case BoardActionKey.playHelpArrows:
+      case BoardActionKey.playHelpMoveMarks:
+      case BoardActionKey.playHelpExplorer:
+      case BoardActionKey.playHelpTobyPredictions:
+      case BoardActionKey.playHelpTobyBar:
+      case BoardActionKey.playHelpArrowEvals:
+        return 'In Play, hold to peek at this help alone, or press to spend '
+            'a hint on it. Works when it is switched on.';
     }
   }
 
@@ -495,6 +553,24 @@ extension BoardActionKeyMeta on BoardActionKey {
         return 'toggle_board_focus';
       case BoardActionKey.closeWindow:
         return 'close_window';
+      case BoardActionKey.playHelpAll:
+        return 'play_help_all';
+      case BoardActionKey.playHelpEngineLines:
+        return 'play_help_engine_lines';
+      case BoardActionKey.playHelpEvalBar:
+        return 'play_help_eval_bar';
+      case BoardActionKey.playHelpArrows:
+        return 'play_help_arrows';
+      case BoardActionKey.playHelpMoveMarks:
+        return 'play_help_move_marks';
+      case BoardActionKey.playHelpExplorer:
+        return 'play_help_explorer';
+      case BoardActionKey.playHelpTobyPredictions:
+        return 'play_help_toby_predictions';
+      case BoardActionKey.playHelpTobyBar:
+        return 'play_help_toby_bar';
+      case BoardActionKey.playHelpArrowEvals:
+        return 'play_help_arrow_evals';
     }
   }
 }
@@ -584,10 +660,7 @@ class KeyChord {
     if (!crossPlatform) {
       return (ctrl: ctrl, meta: meta);
     }
-    return (
-      ctrl: ctrl || (meta && !isMacOS),
-      meta: meta && isMacOS,
-    );
+    return (ctrl: ctrl || (meta && !isMacOS), meta: meta && isMacOS);
   }
 
   /// Builds a Flutter [SingleActivator] so the chord can drop straight
@@ -695,7 +768,8 @@ String _keyLabel(LogicalKeyboardKey key) {
   if (key == LogicalKeyboardKey.home) return 'Home';
   if (key == LogicalKeyboardKey.end) return 'End';
   if (key == LogicalKeyboardKey.space) return 'Space';
-  if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+  if (key == LogicalKeyboardKey.enter ||
+      key == LogicalKeyboardKey.numpadEnter) {
     return '↵';
   }
   if (key == LogicalKeyboardKey.escape) return 'Esc';
@@ -706,6 +780,55 @@ String _keyLabel(LogicalKeyboardKey key) {
   // Single letters → uppercase so "a" reads "A".
   if (name.length == 1) return name.toUpperCase();
   return name;
+}
+
+/// Modifier keys alone never make a chord.
+bool isShortcutModifierKey(LogicalKeyboardKey key) =>
+    key == LogicalKeyboardKey.controlLeft ||
+    key == LogicalKeyboardKey.controlRight ||
+    key == LogicalKeyboardKey.control ||
+    key == LogicalKeyboardKey.altLeft ||
+    key == LogicalKeyboardKey.altRight ||
+    key == LogicalKeyboardKey.alt ||
+    key == LogicalKeyboardKey.shiftLeft ||
+    key == LogicalKeyboardKey.shiftRight ||
+    key == LogicalKeyboardKey.shift ||
+    key == LogicalKeyboardKey.metaLeft ||
+    key == LogicalKeyboardKey.metaRight ||
+    key == LogicalKeyboardKey.meta ||
+    key == LogicalKeyboardKey.capsLock ||
+    key == LogicalKeyboardKey.numLock;
+
+/// The chord a recorder captures for [key] with the modifiers in
+/// [pressed] held. Flags are literal (not [KeyChord.crossPlatform]).
+KeyChord recordedKeyChord(
+  LogicalKeyboardKey key,
+  Set<LogicalKeyboardKey> pressed,
+) {
+  bool any(List<LogicalKeyboardKey> keys) => keys.any(pressed.contains);
+  return KeyChord(
+    keyId: key.keyId,
+    ctrl: any(const [
+      LogicalKeyboardKey.controlLeft,
+      LogicalKeyboardKey.controlRight,
+      LogicalKeyboardKey.control,
+    ]),
+    alt: any(const [
+      LogicalKeyboardKey.altLeft,
+      LogicalKeyboardKey.altRight,
+      LogicalKeyboardKey.alt,
+    ]),
+    shift: any(const [
+      LogicalKeyboardKey.shiftLeft,
+      LogicalKeyboardKey.shiftRight,
+      LogicalKeyboardKey.shift,
+    ]),
+    meta: any(const [
+      LogicalKeyboardKey.metaLeft,
+      LogicalKeyboardKey.metaRight,
+      LogicalKeyboardKey.meta,
+    ]),
+  );
 }
 
 /// Defaults shipped with the app. Each entry is a list so an action can
@@ -857,6 +980,17 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     BoardActionKey.toggleNotationWindow: [_ctrlAlt(LogicalKeyboardKey.keyN)],
     BoardActionKey.toggleBoardFocus: [_key(LogicalKeyboardKey.keyB)],
     BoardActionKey.closeWindow: [_key(LogicalKeyboardKey.escape)],
+    // Play help: H for all of it, Shift plus a letter for one module. No
+    // default above uses Shift with a letter, so none of these collide.
+    BoardActionKey.playHelpAll: [_key(LogicalKeyboardKey.keyH)],
+    BoardActionKey.playHelpEngineLines: [_shift(LogicalKeyboardKey.keyL)],
+    BoardActionKey.playHelpEvalBar: [_shift(LogicalKeyboardKey.keyE)],
+    BoardActionKey.playHelpArrows: [_shift(LogicalKeyboardKey.keyR)],
+    BoardActionKey.playHelpMoveMarks: [_shift(LogicalKeyboardKey.keyM)],
+    BoardActionKey.playHelpExplorer: [_shift(LogicalKeyboardKey.keyO)],
+    BoardActionKey.playHelpTobyPredictions: [_shift(LogicalKeyboardKey.keyT)],
+    BoardActionKey.playHelpTobyBar: [_shift(LogicalKeyboardKey.keyB)],
+    BoardActionKey.playHelpArrowEvals: [_shift(LogicalKeyboardKey.keyV)],
   };
 }
 
@@ -878,9 +1012,10 @@ class BoardShortcutMap {
 
   /// True when [chord] is bound to *some* action — used by the recorder
   /// to flag conflicts before the user commits a binding.
-  BoardActionKey? actionForChord(KeyChord chord) {
+  BoardActionKey? actionForChord(KeyChord chord, {BoardActionKey? except}) {
     if (_isReservedSearchFindChord(chord)) return null;
     for (final entry in bindings.entries) {
+      if (entry.key == except) continue;
       for (final c in _chordsFor(entry.value)) {
         if (c.matches(chord)) return entry.key;
       }
@@ -896,9 +1031,13 @@ List<KeyChord> _chordsFor(List<KeyChord>? chords) {
   );
 }
 
+/// Whether [chord] opens global search (Cmd/Ctrl+F, with or without
+/// Shift), which no binding may take (AGENTS.md section 7).
+bool isReservedSearchChord(KeyChord chord) => _isReservedSearchFindChord(chord);
+
 bool _isReservedSearchFindChord(KeyChord chord) {
   if (chord.keyId != LogicalKeyboardKey.keyF.keyId) return false;
-  if (chord.alt || chord.shift) return false;
+  if (chord.alt) return false;
   return chord.ctrl || chord.meta || chord.crossPlatform;
 }
 
@@ -994,6 +1133,25 @@ class KeyboardShortcutsNotifier extends AsyncNotifier<BoardShortcutMap> {
     await _persist(updated);
   }
 
+  /// Binds [action] to [chord] alone, taking it from [takeFrom] in the same
+  /// write (a recorder's "Replace" after a conflict).
+  Future<void> moveChord(
+    BoardActionKey action,
+    KeyChord chord, {
+    required BoardActionKey takeFrom,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    final next = Map<BoardActionKey, List<KeyChord>>.of(current.bindings);
+    next[takeFrom] = _chordsFor(
+      current.chordsFor(takeFrom).where((c) => !c.matches(chord)).toList(),
+    );
+    next[action] = _chordsFor([chord]);
+    final updated = BoardShortcutMap(next);
+    state = AsyncValue.data(updated);
+    await _persist(updated);
+  }
+
   Future<void> addChord(BoardActionKey action, KeyChord chord) async {
     final current = state.valueOrNull;
     if (current == null) return;
@@ -1078,7 +1236,8 @@ void _upgradeDefaultLikeOverrides(
   final oldCommentBefore = _ctrlShift(LogicalKeyboardKey.keyA);
   final newCommentBefore = _shift(LogicalKeyboardKey.keyA);
   final shiftAClaimed = overrides.entries.any(
-    (entry) => entry.key != BoardActionKey.commentBeforeMove &&
+    (entry) =>
+        entry.key != BoardActionKey.commentBeforeMove &&
         entry.value.any((chord) => chord.matches(newCommentBefore)),
   );
   if (!shiftAClaimed &&

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
+import 'package:chessever/desktop/widgets/scroll_edge_arrows.dart';
 import 'package:chessever/desktop/auth/desktop_play_access.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
@@ -28,6 +28,7 @@ import 'package:chessever/desktop/services/tournament_server/eco_library.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_models.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_resource_assessor.dart';
 import 'package:chessever/desktop/services/tournament_server/tournament_server.dart';
+import 'package:chessever/desktop/state/play_user_country.dart';
 import 'package:chessever/desktop/state/board_annotations.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
@@ -40,7 +41,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/desktop_value_slider.dart';
 import 'package:chessever/desktop/widgets/motion_translate.dart';
 import 'package:chessever/desktop/widgets/play_forui_styles.dart';
-import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
+import 'package:chessever/desktop/widgets/play_setup_help_card.dart';
 import 'package:chessever/desktop/widgets/play_setup_layout.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/theme/app_theme.dart';
@@ -851,7 +852,7 @@ class _LiveGamesRail extends StatelessWidget {
     final rounds = _roundGroupsForLiveRail(snapshot);
     return Container(
       color: kBlack2Color,
-      child: DesktopScrollHost(
+      child: ScrollEdgeArrows(
         child: ListView.separated(
           padding: const EdgeInsets.all(10),
           itemCount: rounds.length,
@@ -1070,7 +1071,7 @@ class _PairingLine extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(2),
             child:
-                part == null
+                part == null || part.identity.countryCode.isEmpty
                     ? Container(color: kBlack3Color)
                     : CountryFlag.fromCountryCode(part.identity.countryCode),
           ),
@@ -1564,7 +1565,7 @@ class _ParticipantRow extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(3),
             child:
-                participant == null
+                participant == null || participant!.identity.countryCode.isEmpty
                     ? Container(color: kBlack3Color)
                     : CountryFlag.fromCountryCode(
                       participant!.identity.countryCode,
@@ -1792,7 +1793,7 @@ class _StandingsRailState extends State<_StandingsRail> {
           ),
           const Divider(height: 1, color: kDividerColor),
           Expanded(
-            child: DesktopScrollHost(
+            child: ScrollEdgeArrows(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: SizedBox(
@@ -2063,7 +2064,7 @@ class _BracketBoard extends StatelessWidget {
       byRound.putIfAbsent(game.round, () => <TournamentGame>[]).add(game);
     }
     final rounds = byRound.keys.toList()..sort();
-    return DesktopScrollHost(
+    return ScrollEdgeArrows(
       child: ListView.separated(
         padding: const EdgeInsets.all(20),
         scrollDirection: Axis.horizontal,
@@ -2087,7 +2088,7 @@ class _BracketBoard extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Expanded(
-                  child: DesktopScrollHost(
+                  child: ScrollEdgeArrows(
                     child: ListView.separated(
                       itemCount: games.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -2532,6 +2533,9 @@ class _TournamentSetupScreenState
 
   @override
   Widget build(BuildContext context) {
+    // Keeps the player's federation loaded, so it is ready when the
+    // tournament starts (read in _humanParticipant).
+    ref.watch(playUserCountryCodeProvider);
     final resource = assessTournamentResources(
       participantCount: _participantCount,
       engines:
@@ -2551,9 +2555,7 @@ class _TournamentSetupScreenState
       data: FThemes.zinc.dark,
       child: PlaySetupPage(
         title: 'Tournament',
-        subtitle:
-            'Run a local event against bots. Include yourself to play your '
-            'pairings, or leave yourself out and watch the bots play.',
+        subtitle: 'Run a local event against bots, with or without you.',
         left: [
           PlaySetupCard(
             title: 'Event',
@@ -2631,7 +2633,7 @@ class _TournamentSetupScreenState
           ),
           // The same switches as a single game, for the games the player
           // plays in the event. They open from each game's panel as well.
-          const PlaySetupCard(title: 'Live help', child: PlayHelpModulesList()),
+          const PlaySetupHelpCard(),
         ],
         right: [
           PlaySetupCard(
@@ -2697,44 +2699,49 @@ class _TournamentSetupScreenState
           ),
         ],
         startBar: PlaySetupStartBar(
-          summary:
-              '$title • ${_format.displayName} • $_participantCount players • '
-              '${_clockLabel(_baseSeconds, _incrementSeconds)}',
-          detail:
-              arena.error != null
-                  ? _friendlyArenaError(arena.error!)
-                  : _includeUser
-                  ? 'You play in it'
-                  : 'Bots only, for you to watch',
-          detailIsError: arena.error != null,
-          actions: [
-            if (widget.onCancel != null)
-              FButton(
-                style: playSecondaryActionButtonStyle(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 11,
-                  ),
-                ),
-                prefix: const Icon(Icons.arrow_back_rounded),
-                onPress: busy ? null : widget.onCancel,
-                child: const Text('Back to event'),
-              ),
-            FButton(
-              style: playPrimaryActionButtonStyle(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
-              ),
-              prefix: const Icon(Icons.play_arrow_rounded),
-              onPress:
-                  busy
-                      ? null
-                      : () => unawaited(widget.onCreate(_buildConfig())),
-              child: Text(busy ? 'Starting…' : 'Start tournament'),
+          heading: title,
+          facts: [
+            PlaySetupFact(
+              value: _clockLabel(_baseSeconds, _incrementSeconds),
+              label: _timeCategory.displayName,
+            ),
+            PlaySetupFact(
+              value: _format.displayName,
+              label: '$_participantCount players',
+            ),
+            PlaySetupFact(
+              value: _includeUser ? 'You play' : 'Bots only',
+              label: _includeUser ? 'Your pairings' : 'For you to watch',
             ),
           ],
+          detail:
+              arena.error != null ? _friendlyArenaError(arena.error!) : null,
+          detailIsError: arena.error != null,
+          secondaryAction:
+              widget.onCancel == null
+                  ? null
+                  : FButton(
+                    style: playSecondaryActionButtonStyle(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                    ),
+                    mainAxisSize: MainAxisSize.min,
+                    prefix: const Icon(Icons.arrow_back_rounded),
+                    onPress: busy ? null : widget.onCancel,
+                    child: const Text('Back to event'),
+                  ),
+          primaryAction: FButton(
+            style: playPrimaryActionButtonStyle(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+            ),
+            mainAxisSize: MainAxisSize.min,
+            prefix: const Icon(Icons.play_arrow_rounded),
+            onPress:
+                busy ? null : () => unawaited(widget.onCreate(_buildConfig())),
+            child: Text(busy ? 'Starting…' : 'Start tournament'),
+          ),
         ),
       ),
     );
@@ -2797,7 +2804,9 @@ class _TournamentSetupScreenState
       identity: BotIdentity(
         firstName: first,
         lastName: last,
-        countryCode: 'US',
+        // The player's own federation: the country they chose for
+        // Countrymen. None chosen: no flag (never a guessed one).
+        countryCode: ref.read(playUserCountryCodeProvider) ?? '',
         elo: profile?.headlineRating ?? 1200,
         nickname: 'you',
       ),

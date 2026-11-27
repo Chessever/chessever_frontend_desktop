@@ -135,11 +135,41 @@ class DesktopSegmentedTabs<T> extends StatelessWidget {
       mainAxisSize: (expand && !wrap) ? MainAxisSize.max : MainAxisSize.min,
       onPress: () => onChanged(tab.value),
       prefix: icon,
+      child: _StableWeightLabel(tab.label),
+    );
+  }
+}
+
+/// A segment's label, as wide as its bold (selected) weight in either
+/// state. Selecting a segment then only restyles it: no segment, and no
+/// control beside the strip, moves by a pixel when the selection changes.
+class _StableWeightLabel extends StatelessWidget {
+  const _StableWeightLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = DefaultTextStyle.of(context).style;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: style.copyWith(fontWeight: FontWeight.w700),
+      ),
+      textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr,
+      textScaler: MediaQuery.maybeTextScalerOf(context) ?? TextScaler.noScaling,
+      maxLines: 1,
+    )..layout();
+    final width = painter.width.ceilToDouble();
+    painter.dispose();
+    return ConstrainedBox(
+      constraints: BoxConstraints(minWidth: width),
       child: Text(
-        tab.label,
+        label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         softWrap: false,
+        textAlign: TextAlign.center,
       ),
     );
   }

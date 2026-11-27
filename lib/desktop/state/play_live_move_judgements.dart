@@ -17,22 +17,38 @@ final playLiveMoveJudgementsProvider = StateNotifierProvider.autoDispose.family<
   PlayLiveMoveJudgements,
   String
 >((ref, tabId) {
-  // Move marks are a help module: off, nothing is searched and no mark is
-  // shown. Turning them on mid-game judges the game so far, then follows it.
-  final liveHelp = ref.watch(
-    playHelpModulesProvider.select((m) => m.moveMarks),
-  );
+  // Move marks are a help module: off, nothing is searched while the game
+  // runs. Turning them on mid-game judges the game so far, then follows it.
+  // Once the game is over every move is judged regardless: that is the
+  // post-game report the player sees beside the board.
+  final marks = ref.watch(playHelpModulesProvider.select((m) => m.moveMarks));
+  // Only watched while marks are off, so a game already followed live is not
+  // judged again from scratch when it ends.
+  final gameOver =
+      !marks &&
+      ref.read(playSessionArgsByTabIdProvider).containsKey(tabId) &&
+      ref.watch(playSessionProviderFor(tabId).select((s) => s.isGameOver));
+  final liveHelp = marks || gameOver;
   PlayLiveUciEvaluator? engine;
+  var disposed = false;
+  ref.onDispose(() => disposed = true);
   final classifier = PlayLiveMoveClassifier(
     openEvaluator: () async {
       if (!liveHelp) return null;
       final path = _stockfishPath(ref, tabId);
       if (path == null) return null;
-      engine = await PlayLiveUciEvaluator.open(
+      final opened = await PlayLiveUciEvaluator.open(
         path,
         arguments: engineLaunchArguments(BotEngineKind.stockfish, path, 0),
         workingDirectory: engineWorkingDirectory(path),
       );
+      // Disposed while the engine was starting (a Rematch or New game right
+      // after the game ended): nothing will ever close it, so close it now.
+      if (disposed) {
+        await opened?.close();
+        return null;
+      }
+      engine = opened;
       return engine?.evaluate;
     },
     closeEvaluator: () async => engine?.close(),

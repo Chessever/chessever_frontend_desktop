@@ -302,6 +302,46 @@ class PlayLiveMoveClassifier extends StateNotifier<PlayLiveMoveJudgements> {
     return false;
   }
 
+  /// The whole-game report built from the searches already made, once every
+  /// move of the synced game has been judged; null before that, or when a
+  /// position was never searched (no engine). The classes in it are the
+  /// report's own, recomputed from the same searches; [state] keeps the
+  /// verdicts the board showed.
+  GameAnalysisReport? completeReport({int? whiteRating, int? blackRating}) {
+    final game = _game;
+    if (game == null ||
+        game.mainline.isEmpty ||
+        state.judgedMoves < game.mainline.length ||
+        !state.engineAvailable) {
+      return null;
+    }
+    final fens = gameReportFens(game);
+    final positions = <GameReportPosition>[];
+    for (final fen in fens) {
+      final position =
+          terminalGameReportPosition(fen) ??
+          _searchedDeep[fen] ??
+          _searched[fen];
+      if (position == null) return null;
+      positions.add(position);
+    }
+    try {
+      return buildGameAnalysisReport(
+        game: game,
+        fingerprint: gameReportFingerprint(game),
+        positions: positions,
+        whiteRating: whiteRating,
+        blackRating: blackRating,
+        bookGameCounts: [
+          for (var i = 0; i < game.mainline.length; i++) _bookCounts[i],
+        ],
+      );
+    } catch (error) {
+      debugPrint('[PlayLiveMoveClassifier] report: $error');
+      return null;
+    }
+  }
+
   static List<double> _winPercentages(List<GameReportPosition> positions) =>
       positions
           .map((position) => gameReportWinPercentage(position.bestLine))

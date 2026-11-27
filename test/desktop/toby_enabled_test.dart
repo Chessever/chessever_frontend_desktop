@@ -5,6 +5,7 @@ import 'package:chessever/desktop/panes/board_pane.dart'
 import 'package:chessever/desktop/services/toby/toby_performance.dart';
 import 'package:chessever/desktop/services/toby/toby_prediction.dart';
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
+import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
 import 'package:chessever/desktop/state/desktop_account_identity.dart';
 import 'package:chessever/desktop/state/play_help_modules.dart';
 import 'package:chessever/desktop/state/toby_enabled.dart';
@@ -36,6 +37,12 @@ class _Store implements TobyAccountStore {
   Future<void> write(String userId, bool value) async {
     writes.add((userId, value));
   }
+}
+
+class _DefaultShortcuts extends KeyboardShortcutsNotifier {
+  @override
+  Future<BoardShortcutMap> build() async =>
+      BoardShortcutMap(defaultBoardShortcuts());
 }
 
 class _Identity extends DesktopAccountIdentityNotifier {
@@ -340,7 +347,11 @@ void main() {
     ) async {
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [tobyEnabledProvider.overrideWith(() => _Toby(false))],
+          overrides: [
+            tobyEnabledProvider.overrideWith(() => _Toby(false)),
+            // Each help row shows its key; skip the database read.
+            keyboardShortcutsProvider.overrideWith(_DefaultShortcuts.new),
+          ],
           child: FTheme(
             data: FThemes.zinc.dark,
             child: const MaterialApp(

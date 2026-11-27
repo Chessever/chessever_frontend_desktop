@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chessever/desktop/services/auth/guest_account_merge.dart';
+import 'package:chessever/desktop/services/play/play_profile_repository.dart';
+import 'package:chessever/desktop/services/play/play_tournament_history_repository.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
 import 'package:chessever/utils/host_platform.dart';
 
@@ -72,6 +74,31 @@ bool isLikelyExistingDesktopAccount({
 
 enum GuestMergeStatus { nothingPending, sameAccount, merged, failed }
 
+/// Hands this device's Play documents (games, ratings, rewards) from the
+/// guest to the account it signed in to. Their upload happens in the Play
+/// sync (`PlayProfileRepository.syncNow`), which re-sends everything under
+/// the account's id; the guest's own server rows are left in place.
+typedef GuestPlayDataAdopter =
+    Future<void> Function({
+      required String guestUserId,
+      required String targetUserId,
+    });
+
+Future<void> adoptGuestPlayDataOnThisDevice({
+  required String guestUserId,
+  required String targetUserId,
+}) async {
+  // Played events first: their hand-over never throws, so the games'
+  // hand-over below always runs too.
+  await PlayTournamentHistoryRepository(
+    AppDatabase.instance,
+  ).adoptGuestEvents(guestUserId: guestUserId, targetUserId: targetUserId);
+  await PlayProfileRepository().adoptGuestPlayData(
+    guestUserId: guestUserId,
+    targetUserId: targetUserId,
+  );
+}
+
 @immutable
 class GuestMergeOutcome {
   const GuestMergeOutcome(this.status, {this.writeCount = 0, this.error});
@@ -96,11 +123,17 @@ class DesktopGuestAccountMerger {
     required this.gateway,
     required this.pendingStore,
     this.serverMerge = const UnavailableGuestAccountServerMerge(),
+    this.adoptPlayData = adoptGuestPlayDataOnThisDevice,
   });
 
   final GuestAccountMergeGateway gateway;
   final GuestMergePendingStore pendingStore;
   final GuestAccountServerMerge serverMerge;
+
+  /// Play data lives on this device, not in the snapshot. A guest who
+  /// played without favourites or folders leaves no snapshot; the Play
+  /// sync adopts guest-owned documents on its own for that case.
+  final GuestPlayDataAdopter? adoptPlayData;
 
   Future<void> _serial = Future<void>.value();
 
@@ -149,6 +182,17 @@ class DesktopGuestAccountMerger {
         await pendingStore.clear();
         return const GuestMergeOutcome(GuestMergeStatus.sameAccount);
       }
+      final adopt = adoptPlayData;
+      if (adopt != null) {
+        try {
+          await adopt(
+            guestUserId: snapshot.guestUserId,
+            targetUserId: targetUserId,
+          );
+        } catch (e) {
+          debugPrint('[GuestMerge] Play data hand-over failed: $e');
+        }
+      }
       try {
         var writes = 0;
         if (targetIsExistingAccount && serverMerge.isAvailable) {
@@ -169,7 +213,7 @@ class DesktopGuestAccountMerger {
         await pendingStore.clear();
         return GuestMergeOutcome(GuestMergeStatus.merged, writeCount: writes);
       } catch (e) {
-        if (kDebugMode) debugPrint('[GuestMerge] replay failed, kept: $e');
+        debugPrint('[GuestMerge] replay failed, kept: $e');
         return GuestMergeOutcome(GuestMergeStatus.failed, error: e);
       }
     });
@@ -308,19 +352,15 @@ class SupabaseGuestAccountMergeGateway implements GuestAccountMergeGateway {
     }
     final engine = plan.engineSettings;
     if (engine != null) {
-      await _upsertIgnoringDuplicates(
-        'user_engine_settings',
-        [engine],
-        onConflict: 'user_id',
-      );
+      await _upsertIgnoringDuplicates('user_engine_settings', [
+        engine,
+      ], onConflict: 'user_id');
     }
     final notifications = plan.notificationPreferences;
     if (notifications != null) {
-      await _upsertIgnoringDuplicates(
-        'user_notification_preferences',
-        [notifications],
-        onConflict: 'user_id',
-      );
+      await _upsertIgnoringDuplicates('user_notification_preferences', [
+        notifications,
+      ], onConflict: 'user_id');
     }
   }
 }
@@ -336,9 +376,7 @@ class FileGuestMergePendingStore implements GuestMergePendingStore {
 
   Future<File> _file() async {
     final base = await _directory();
-    return File(
-      '${base.path}${hostPathSeparator}guest_merge_pending_v1.json',
-    );
+    return File('${base.path}${hostPathSeparator}guest_merge_pending_v1.json');
   }
 
   @override

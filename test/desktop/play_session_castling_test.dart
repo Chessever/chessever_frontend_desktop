@@ -510,7 +510,7 @@ void main() {
     );
 
     test(
-      'defers finished play handoff until notifier listeners complete',
+      'a finished single game stays on the Play board',
       () async {
         final container = ProviderContainer(
           overrides: [playSessionBootEngineProvider.overrideWithValue(false)],
@@ -553,18 +553,17 @@ void main() {
 
         await Future<void>.delayed(Duration.zero);
 
+        // A finished single game stays on its own Play board (same size and
+        // layout) with the post-game brief; the Board opens only on request.
         final tabs = container.read(desktopTabsProvider);
-        final boardArgs =
-            container.read(boardTabGameArgsByTabIdProvider)[tabId];
         expect(tabs.activeId, tabId);
-        expect(tabs.active?.kind, TabKind.board);
+        expect(tabs.active?.kind, TabKind.play);
+        expect(container.read(playSessionArgsByTabIdProvider), contains(tabId));
+        expect(container.read(provider).isGameOver, isTrue);
         expect(
-          container.read(playSessionArgsByTabIdProvider),
-          isNot(contains(tabId)),
+          container.read(boardTabGameArgsByTabIdProvider)[tabId],
+          isNull,
         );
-        expect(boardArgs, isNotNull);
-        expect(boardArgs!.initialBoardFlipped, isTrue);
-        expect(boardArgs.pgn, contains('2. g4 Qh4#'));
       },
     );
   });

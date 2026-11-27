@@ -46,6 +46,8 @@ import 'package:chessever/desktop/services/local_chess_file_scanner.dart'
 import 'package:chessever/desktop/widgets/paywall/desktop_billing_issue_dialog.dart';
 import 'package:chessever/desktop/services/library_pgn_import_picker.dart';
 import 'package:chessever/desktop/services/pgn_file_picker.dart';
+import 'package:chessever/desktop/services/play/play_cloud_sync.dart';
+import 'package:chessever/desktop/services/play/play_tournament_history_repository.dart';
 import 'package:chessever/desktop/shell/command_palette.dart';
 import 'package:chessever/desktop/shell/desktop_main_routes.dart';
 import 'package:chessever/desktop/shell/desktop_pane.dart';
@@ -109,6 +111,10 @@ class DesktopShell extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // Prep profiles in step with the reader's phone (main window only).
     ref.watch(prepCloudSyncProvider);
+    // Played Play-mode events uploaded and merged per account.
+    ref.watch(playTournamentCloudSyncProvider);
+    // Play games, ratings, profile and rewards uploaded and merged per account.
+    ref.watch(playCloudSyncProvider);
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
     final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);
@@ -625,6 +631,8 @@ class DesktopShell extends HookConsumerWidget {
           final boardBindings = boardShortcutMap;
           if (dispatcher != null && boardBindings != null) {
             for (final action in BoardActionKey.values) {
+              // Play's help keys are read by the Play pane alone.
+              if (action.isPlayHelp) continue;
               for (final chord in boardBindings.chordsFor(action)) {
                 // Match the shell's dual meta/control registration for pane
                 // shortcuts: cross-platform board chords (prev/next game, …)

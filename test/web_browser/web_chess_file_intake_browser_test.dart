@@ -8,7 +8,7 @@ import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+import 'package:archive/archive.dart' hide ZstdCodec;
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';

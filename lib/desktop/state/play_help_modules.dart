@@ -7,10 +7,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:chessever/desktop/state/board_analysis_preferences.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
+import 'package:chessever/desktop/state/play_help_style.dart';
 import 'package:chessever/desktop/state/play_session.dart';
+import 'package:chessever/desktop/state/play_settings_cloud.dart';
 import 'package:chessever/desktop/state/toby_enabled.dart';
 
 const _storageKey = 'desktop.play.helpModules.v1';
+const _updatedAtKey = 'desktop.play.helpModules.v1.updatedAt';
 
 /// Where the arrows on the play board come from. One source at a time, so
 /// the board never mixes Stockfish's lines with Toby's guesses.
@@ -54,8 +57,9 @@ class PlayHelpModules {
   /// The engine's eval on the player's own legal right-drawn arrows.
   final bool arrowEvals;
 
-  /// A "Show threat" button under the board: what the opponent would play
-  /// if the player could pass, as red arrows.
+  /// Kept for saved choices written by older builds. The "Show threat"
+  /// button is now always beside the player's clock (and on X), so this
+  /// no longer gates anything; see [playThreatShownProvider].
   final bool threats;
 
   /// Arrows on the board: none, Stockfish's best lines, or Toby's guesses.
@@ -74,10 +78,12 @@ class PlayHelpModules {
       engineLines ||
       evalBar ||
       arrowEvals ||
-      threats ||
       arrows == PlayHelpArrows.stockfish;
 
-  bool get anyOn => this != const PlayHelpModules();
+  /// Whether any help module is on. The legacy [threats] flag shows
+  /// nothing, so it does not count: a saved `threats: true` alone must not
+  /// cut a win's gain or charge a peek or hint that reveals nothing.
+  bool get anyOn => chosenModules.isNotEmpty;
 
   PlayHelpModules copyWith({
     bool? engineLines,
@@ -158,6 +164,75 @@ class PlayHelpModules {
   );
 }
 
+/// One piece of the chosen help, revealed on its own by a peek or a hint
+/// (or with the rest of it). Same order as the Live help switches.
+enum PlayHelpModule {
+  engineLines('Engine lines'),
+  evalBar('Eval bar'),
+  tobyPredictions('Toby Predicts'),
+  tobyBar('Toby bar'),
+  moveMarks('Move marks'),
+  explorer('Opening explorer'),
+  arrowEvals('Eval on my arrows'),
+  arrows('Arrows');
+
+  const PlayHelpModule(this.label);
+
+  final String label;
+
+  /// Whether the player switched this module on in [modules].
+  bool chosenIn(PlayHelpModules modules) => switch (this) {
+    PlayHelpModule.engineLines => modules.engineLines,
+    PlayHelpModule.evalBar => modules.evalBar,
+    PlayHelpModule.tobyPredictions => modules.tobyPredictions,
+    PlayHelpModule.tobyBar => modules.tobyBar,
+    PlayHelpModule.moveMarks => modules.moveMarks,
+    PlayHelpModule.explorer => modules.explorer,
+    PlayHelpModule.arrowEvals => modules.arrowEvals,
+    PlayHelpModule.arrows => modules.arrows != PlayHelpArrows.off,
+  };
+
+  /// The label for [modules]' choice: arrows name their source.
+  String labelIn(PlayHelpModules modules) => switch (this) {
+    PlayHelpModule.arrows => switch (modules.arrows) {
+      PlayHelpArrows.stockfish => 'Stockfish arrows',
+      PlayHelpArrows.toby => 'Toby arrows',
+      PlayHelpArrows.off => label,
+    },
+    _ => label,
+  };
+}
+
+extension PlayHelpModulesPieces on PlayHelpModules {
+  /// The modules switched on, in [PlayHelpModule] order.
+  List<PlayHelpModule> get chosenModules => [
+    for (final module in PlayHelpModule.values)
+      if (module.chosenIn(this)) module,
+  ];
+
+  /// These choices with only [revealed] kept on. Arrows keep their chosen
+  /// source. All of them revealed is these choices as they are.
+  PlayHelpModules onlyRevealed(Set<PlayHelpModule> revealed) {
+    if (revealed.length == PlayHelpModule.values.length) return this;
+    bool keep(PlayHelpModule module, bool on) =>
+        on && revealed.contains(module);
+    return copyWith(
+      engineLines: keep(PlayHelpModule.engineLines, engineLines),
+      evalBar: keep(PlayHelpModule.evalBar, evalBar),
+      tobyPredictions: keep(PlayHelpModule.tobyPredictions, tobyPredictions),
+      tobyBar: keep(PlayHelpModule.tobyBar, tobyBar),
+      moveMarks: keep(PlayHelpModule.moveMarks, moveMarks),
+      explorer: keep(PlayHelpModule.explorer, explorer),
+      arrowEvals: keep(PlayHelpModule.arrowEvals, arrowEvals),
+      threats: false,
+      arrows:
+          revealed.contains(PlayHelpModule.arrows)
+              ? arrows
+              : PlayHelpArrows.off,
+    );
+  }
+}
+
 final playHelpModulesProvider =
     NotifierProvider<PlayHelpModulesNotifier, PlayHelpModules>(
       PlayHelpModulesNotifier.new,
@@ -181,16 +256,30 @@ PlayHelpModules playHelpModulesShown(
                   : modules.arrows,
         );
 
-/// The player's chosen help, saved on this device. Its state is the help
-/// as shown ([playHelpModulesShown]); Toby's modules are kept in the saved
-/// choice while Toby is off, and come back with him.
+/// The player's chosen help, saved on this device and on the player's
+/// profile row ([PlaySettingsCloudSync]), so it follows them to other
+/// devices and apps. Its state is the help as shown
+/// ([playHelpModulesShown]); Toby's modules are kept in the saved choice
+/// while Toby is off, and come back with him.
 class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
   bool _edited = false;
   bool _disposed = false;
   Future<void> _writes = Future<void>.value();
   PlayHelpModules _chosen = const PlayHelpModules();
+  final Completer<void> _restored = Completer<void>();
+  DateTime? _updatedAt;
 
   bool get _tobyOn => ref.read(tobyEnabledProvider);
+
+  /// When the choice was last changed here or taken from the server; null
+  /// when it never was.
+  DateTime? get updatedAt => _updatedAt;
+
+  /// The saved choice, Toby's modules included while Toby is off.
+  PlayHelpModules get chosen => _chosen;
+
+  /// Completes once the saved choice was read.
+  Future<void> get restored => _restored.future;
 
   @override
   PlayHelpModules build() {
@@ -206,7 +295,10 @@ class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
     try {
       final preferences = await SharedPreferences.getInstance();
       final raw = preferences.getString(_storageKey);
-      if (_disposed || _edited || raw == null) return;
+      final at = parsePlaySettingsTime(preferences.getString(_updatedAtKey));
+      if (_disposed || _edited) return;
+      _updatedAt = at;
+      if (raw == null) return;
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, Object?>) {
         _chosen = PlayHelpModules.fromJson(decoded);
@@ -214,6 +306,9 @@ class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
       }
     } catch (error) {
       debugPrint('Play help modules could not be restored: $error');
+    } finally {
+      if (!_restored.isCompleted) _restored.complete();
+      if (!_disposed) ref.read(playSettingsCloudProvider).start();
     }
   }
 
@@ -225,42 +320,75 @@ class PlayHelpModulesNotifier extends Notifier<PlayHelpModules> {
       value = value.copyWith(
         tobyPredictions: _chosen.tobyPredictions,
         tobyBar: _chosen.tobyBar,
-        arrows:
-            value.arrows == state.arrows ? _chosen.arrows : value.arrows,
+        arrows: value.arrows == state.arrows ? _chosen.arrows : value.arrows,
       );
     }
     _chosen = value;
     state = playHelpModulesShown(value, tobyEnabled: _tobyOn);
+    _updatedAt = DateTime.now().toUtc();
+    _save(value, _updatedAt);
+    ref.read(playSettingsCloudProvider).localChanged();
+  }
+
+  void update(PlayHelpModules Function(PlayHelpModules current) change) =>
+      set(change(state));
+
+  /// Takes the choice saved on the server at [at]. Skipped (returns false)
+  /// when the choice changed here since the sync read [expectedLocalAt]:
+  /// the newer local change goes up on the next pass instead.
+  bool adoptRemote(
+    PlayHelpModules value,
+    DateTime? at, {
+    required DateTime? expectedLocalAt,
+  }) {
+    if (_disposed || _updatedAt != expectedLocalAt) return false;
+    _edited = true;
+    _updatedAt = at;
+    _chosen = value;
+    final shown = playHelpModulesShown(value, tobyEnabled: _tobyOn);
+    if (shown != state) state = shown;
+    _save(value, at);
+    return true;
+  }
+
+  void _save(PlayHelpModules value, DateTime? at) {
     final json = jsonEncode(value.toJson());
+    final stamp = at?.toUtc().toIso8601String();
     _writes = _writes
         .then((_) async {
           final preferences = await SharedPreferences.getInstance();
           await preferences.setString(_storageKey, json);
+          if (stamp == null) {
+            await preferences.remove(_updatedAtKey);
+          } else {
+            await preferences.setString(_updatedAtKey, stamp);
+          }
         })
         .catchError((Object error) {
           debugPrint('Play help modules could not be saved: $error');
         });
   }
-
-  void update(PlayHelpModules Function(PlayHelpModules current) change) =>
-      set(change(state));
 }
 
 /// Whether the game on screen is a Play game whose help needs Stockfish.
 /// The shared position search ([boardEvalProvider]) runs for it even when
 /// the Board's own analysis is off: Play's help is chosen separately.
 /// Whether the player has asked to see the opponent's threat in each Play
-/// tab. Only read while the threat module is on; it stays as the player
-/// left it for the next game in the same tab.
+/// tab. The button is always on screen during a game; it stays as the
+/// player left it for the next game in the same tab.
 final playThreatShownProvider = StateProvider.family<bool, String>(
   (ref, tabId) => false,
 );
 
 final playStockfishDemandProvider = Provider<bool>((ref) {
-  if (!ref.watch(playHelpModulesProvider.select((m) => m.needsStockfish))) {
-    return false;
-  }
   final activeId = ref.watch(desktopTabsProvider.select((t) => t.activeId));
+  final modulesNeedIt = ref.watch(
+    playHelpModulesProvider.select((m) => m.needsStockfish),
+  );
+  // The threat button searches only while the player has it pressed.
+  final threatShown =
+      activeId != null && ref.watch(playThreatShownProvider(activeId));
+  if (!modulesNeedIt && !threatShown) return false;
   return ref.watch(
     playSessionArgsByTabIdProvider.select((m) => m.containsKey(activeId)),
   );
@@ -272,6 +400,13 @@ final playStockfishDemandProvider = Provider<bool>((ref) {
 /// controls (pause, the Stockfish and Toby switches, arrows) change the
 /// player's help modules, never the Board's settings.
 class PlayAnalysisSettings extends BoardAnalysisSettings {
+  /// With a game's [tabId], the pane reads the help on screen in it
+  /// ([playHelpShownProvider]): a peek at Toby alone shows Toby without
+  /// Stockfish's lines. Its switches still change the chosen modules.
+  PlayAnalysisSettings([this.tabId]);
+
+  final String? tabId;
+
   int? _lineIndex;
   late PlayHelpModulesNotifier _modules;
   late PlayHelpModules _current;
@@ -281,7 +416,11 @@ class PlayAnalysisSettings extends BoardAnalysisSettings {
     // Held from the build, so a second switch in the same frame still
     // reaches the modules while this rebuilds from the first.
     _modules = ref.watch(playHelpModulesProvider.notifier);
-    _current = ref.watch(playHelpModulesProvider);
+    final id = tabId;
+    _current =
+        id == null
+            ? ref.watch(playHelpModulesProvider)
+            : ref.watch(playHelpShownProvider(id));
     return _preferencesFor(_current);
   }
 
