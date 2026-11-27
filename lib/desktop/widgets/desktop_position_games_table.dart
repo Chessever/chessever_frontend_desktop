@@ -1554,6 +1554,7 @@ class _DesktopPositionGamesTableState
         id: ++_insertRequestId,
         pgn: pgn,
         sourceLabel: _sourceLabelFromRow(row),
+        keepCurrentPosition: true,
       );
     } catch (e) {
       if (!mounted) return;

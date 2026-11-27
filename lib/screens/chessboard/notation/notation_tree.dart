@@ -1,6 +1,7 @@
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
+import 'package:chessever/screens/chessboard/notation/pgn_before_move_comments.dart';
 import 'package:chessever/screens/chessboard/notation/pgn_move_number_repair.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/utils/pgn_time_control.dart';
@@ -188,7 +189,7 @@ String exportGameToPgn(ChessGame game) {
         moves: root,
         comments: game.rootComments,
       ).makePgn();
-  return _withRepairedMoveNumbers(pgn);
+  return putPgnMoveNumbersBeforeComments(_withRepairedMoveNumbers(pgn));
 }
 
 /// dartchess omits the `N...` indicator on a black move that follows a comment.
@@ -355,7 +356,7 @@ PgnNodeData _toPgnNodeData(ChessMove move) {
 
   return PgnNodeData(
     san: move.san,
-    startingComments: move.startingComments,
+    startingComments: tagPgnBeforeMoveComments(move.startingComments),
     comments: comments.isEmpty ? null : comments,
     nags: move.nags,
   );

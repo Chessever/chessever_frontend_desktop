@@ -63,6 +63,7 @@ import 'package:chessever/screens/chessboard/utils/chessever_annotation.dart'
     hide mergeGameReportAnnotationsForGif;
 import 'package:chessever/desktop/services/local_library_game_updater.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
+import 'package:chessever/desktop/services/board_cut_previous_moves.dart';
 import 'package:chessever/desktop/state/active_board_shortcuts.dart';
 import 'package:chessever/desktop/widgets/desktop_board_access_gate.dart';
 import 'package:chessever/desktop/state/active_player.dart';
@@ -1202,6 +1203,10 @@ class _BoardPaneContent extends HookConsumerWidget {
     // bug. A plain +1 tip append (a single live move while watching) does NOT
     // bump it, so that one-move slide still plays.
     final boardCutEpoch = useRef<int>(0);
+    final cutBroadcastGameId = useRef<String?>(
+      restoredSession?.cutBroadcastGameId,
+    );
+    final cutEditGeneration = useRef<int>(0);
     final dirtySinceLoad = useState<bool>(
       restoredSession?.dirtySinceLoad ?? false,
     );
@@ -1552,6 +1557,9 @@ class _BoardPaneContent extends HookConsumerWidget {
             : (latestPgnImport == null
                 ? legacyActiveGameId
                 : latestPgnImport.gameId);
+    bool hasBroadcastCut(String? gameId) =>
+        gameId != null && cutBroadcastGameId.value == gameId;
+
     BoardAnalysisRecoveryOwner recoveryOwner() => (
       tabId: activeTabId ?? 'board-default',
       game:
@@ -1643,6 +1651,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           savedSourceSeedPgn: savedSourceSeedPgn.value,
           hasCommittedSave: hasCommittedSave.value,
           detachedSeedPgn: restoredSession?.detachedSeedPgn,
+          cutBroadcastGameId: cutBroadcastGameId.value,
           userNags: userNags,
         );
     useEffect(
@@ -1674,6 +1683,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         lastSavedAnalysisPgn.value,
         lastBroadcastPgn.value,
         lastAppliedPgn.value,
+        cutBroadcastGameId.value,
         savedSourceSeedPgn.value,
         hasUnseenMoves.value,
       ],
@@ -1779,6 +1789,9 @@ class _BoardPaneContent extends HookConsumerWidget {
       bool canonicalBroadcastUpdate = false,
       bool isInitialSeed = false,
     }) {
+      // Opening seeds, late hydrations and accepted feed updates may all
+      // carry the original game. None can replace this tab's private cut.
+      if (hasBroadcastCut(gameId)) return;
       final trimmed = pgn.trim();
       // A detached transport seed is private working state, not a new live
       // packet. Preserve the separately transferred canonical baseline.
@@ -1960,6 +1973,12 @@ class _BoardPaneContent extends HookConsumerWidget {
       final freshGame = parsed
           .copyWith(metadata: finalizedMetadata)
           .rememberGameEndingPlyIndex(parsed.mainline.length - 1);
+      if (cutBroadcastGameId.value != null &&
+          gameId != cutBroadcastGameId.value) {
+        cutBroadcastGameId.value = null;
+        cutEditGeneration.value++;
+        undoStack.value.clear();
+      }
       if (isCanonicalBroadcastSource) {
         followRecoveryThroughBroadcast(trimmed, freshGame);
       } else if (!isInitialSeed && gameId == null) {
@@ -2144,6 +2163,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void applyLiveResultStatus(Map<String, dynamic> data) {
+      if (hasBroadcastCut(activeGameId)) return;
       final rawStatus = (data['status'] as String?)?.trim();
       final currentGame = chessGame.value;
       final metadata = mergeRecognizedLiveStatusMetadata(
@@ -2746,6 +2766,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       LiveGameUpdate update, {
       required String origin,
     }) {
+      if (hasBroadcastCut(gameId)) return;
       final data = update.toLegacyMap();
       final rawPgn = update.pgn?.trim();
       final pgn =
@@ -2918,6 +2939,12 @@ class _BoardPaneContent extends HookConsumerWidget {
       final isTabSwitched = currentTabId != lastShapeTabId.value;
       if (activeGameId != lastAppliedGameId.value) {
         final priorGameId = lastAppliedGameId.value;
+        if (cutBroadcastGameId.value != null &&
+            !hasBroadcastCut(activeGameId)) {
+          cutBroadcastGameId.value = null;
+          cutEditGeneration.value++;
+          undoStack.value.clear();
+        }
         if (boardArgs == null) {
           reportActivation.value = Object();
           savedSourceSeedPgn.value = null;
@@ -3638,9 +3665,17 @@ class _BoardPaneContent extends HookConsumerWidget {
         return;
       }
       final snapshot = stack.removeLast();
+      final rejoinsBroadcast =
+          snapshot.broadcastCut == false && hasBroadcastCut(activeGameId);
+      if (snapshot.broadcastCut case final wasCut?) {
+        cutBroadcastGameId.value = wasCut ? activeGameId : null;
+        cutEditGeneration.value++;
+        boardCutEpoch.value++;
+      }
       chessGame.value = snapshot.game;
       pointer.value = snapshot.pointer;
       dirtySinceLoad.value = snapshot.dirtySinceLoad;
+      if (snapshot.pgnHeaders case final headers?) pgnHeaders.value = headers;
       if (snapshot.restoreRecovery) putRecovery(snapshot.recovery);
       if (snapshot.annotations != null) {
         restoreAllAnnotations(snapshot.annotations!);
@@ -3684,6 +3719,24 @@ class _BoardPaneContent extends HookConsumerWidget {
               .read(userMoveNagsProvider.notifier)
               .restoreTab(editsTabId, snapshot.userNags!);
           if (stack.isNotEmpty) stack.removeLast();
+        }
+      }
+      if (rejoinsBroadcast && activeGameId != null) {
+        // The shared base row kept receiving accepted packets during the cut.
+        // Resume from that row (not a possibly stale stream/seed packet).
+        final latest = ref.read(baseGameProvider(activeGameId));
+        final pgn = latest?.pgn?.trim();
+        if (latest != null) {
+          if (pgn != null && pgn.isNotEmpty && pgn != lastBroadcastPgn.value) {
+            applyPgn(
+              pgn,
+              origin: 'resume:$activeGameId',
+              gameId: activeGameId,
+              acceptedLiveStatus: latest.gameStatus.displayText,
+              canonicalBroadcastUpdate: true,
+            );
+          }
+          applyLiveResultStatus({'status': latest.gameStatus.displayText});
         }
       }
       focusNode.requestFocus();
@@ -3746,6 +3799,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           savedSourceSeedPgn: savedSourceSeedPgn.value,
           hasCommittedSave: hasCommittedSave.value,
           detachedSeedPgn: restoredSession?.detachedSeedPgn,
+          cutBroadcastGameId: cutBroadcastGameId.value,
         ),
       );
       readers[tabId] = capture;
@@ -3759,6 +3813,7 @@ class _BoardPaneContent extends HookConsumerWidget {
     ({bool Function() ownsActivation, void Function(String) commit})
     captureBoardSaveCompletion() {
       final activation = reportActivation.value;
+      final cutGeneration = cutEditGeneration.value;
 
       final seed = boardArgs?.retainedSeedIdentity ?? boardArgs;
       final before = mergeUserMainlineNagsForGif(
@@ -3767,6 +3822,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       );
       bool ownsActivation() {
         if (!context.mounted ||
+            cutGeneration != cutEditGeneration.value ||
             !identical(activation, reportActivation.value)) {
           return false;
         }
@@ -3916,6 +3972,7 @@ class _BoardPaneContent extends HookConsumerWidget {
         final saveCompletion = captureBoardSaveCompletion();
         final useOpeningSource =
             source != null &&
+            !hasBroadcastCut(activeGameId) &&
             shouldUsePristineEventSourceForLibrarySave(
               canSaveSource: canSaveDesktopGameToLibrary(source),
               dirtySinceLoad: dirtySinceLoad.value,
@@ -3960,7 +4017,8 @@ class _BoardPaneContent extends HookConsumerWidget {
           _ => null,
         };
         final savedResult = metadata['Result']?.toString().trim() ?? '';
-        if (knownResult != null &&
+        if (!hasBroadcastCut(activeGameId) &&
+            knownResult != null &&
             (savedResult.isEmpty || savedResult == '*')) {
           metadata['Result'] = knownResult;
         }
@@ -4106,12 +4164,17 @@ class _BoardPaneContent extends HookConsumerWidget {
       await runBoardSave(savePgnActionImpl);
     }
 
-    void setMoveComment(ChessMovePointer target, String? comment) {
+    void setMoveComment(
+      ChessMovePointer target,
+      String? comment, {
+      bool before = false,
+    }) {
       if (target.isEmpty) return;
       final nextGame = _setMoveCommentAtPointer(
         chessGame.value,
         target,
         comment,
+        before: before,
       );
       if (identical(nextGame, chessGame.value)) return;
       pushUndoSnapshot();
@@ -4208,19 +4271,62 @@ class _BoardPaneContent extends HookConsumerWidget {
       dirtySinceLoad.value = true;
     }
 
-    Future<void> commentAfterMoveAction() async {
-      final move = _moveAtPointer(chessGame.value, pointer.value);
+    void clearMoveTextComments(ChessMovePointer target) {
+      final nextGame = _updateMoveAtPointer(chessGame.value, target, (move) {
+        return _withEditableComment(
+          _withEditableComment(move, null),
+          null,
+          before: true,
+        );
+      });
+      if (identical(nextGame, chessGame.value)) return;
+      pushUndoSnapshot();
+      chessGame.value = nextGame;
+      dirtySinceLoad.value = true;
+    }
+
+    Future<void> editMoveComment(
+      ChessMovePointer target, {
+      required bool before,
+    }) async {
+      final game = chessGame.value;
+      final move = _moveAtPointer(game, target);
       if (move == null) {
         showToast('Select a move before adding a comment.', error: true);
         return;
       }
+      final activation = reportActivation.value;
+      final cutGeneration = cutEditGeneration.value;
+      List<(String, String)> movePath(ChessGame source) =>
+          _pathFromPointer(source, target)
+              .map((m) => (m.uci, m.fen))
+              .toList(growable: false);
+      final path = movePath(game);
+      final initial = _editableCommentForPlacement(move, before);
       final next = await showMoveCommentEditor(
         context,
-        initialComment: _firstEditableComment(move.comments) ?? '',
+        title: before ? 'Comment before move' : 'Comment after move',
+        initialComment: initial ?? '',
       );
-      if (!context.mounted || next == null) return;
+      if (!context.mounted ||
+          next == null ||
+          !identical(activation, reportActivation.value) ||
+          cutGeneration != cutEditGeneration.value) {
+        return;
+      }
+      if (isForegroundTab &&
+          ref.read(desktopTabsProvider).activeId != activeTabId) {
+        return;
+      }
+      final currentGame = chessGame.value;
+      final current = _moveAtPointer(currentGame, target);
+      if (current == null ||
+          _editableCommentForPlacement(current, before) != initial ||
+          !listEquals(path, movePath(currentGame))) {
+        return;
+      }
       final comment = next.trim();
-      setMoveComment(pointer.value, comment.isEmpty ? null : comment);
+      setMoveComment(target, comment.isEmpty ? null : comment, before: before);
       showToast(comment.isEmpty ? 'Comment cleared' : 'Comment saved');
     }
 
@@ -4654,6 +4760,58 @@ class _BoardPaneContent extends HookConsumerWidget {
       showToast('Remaining moves cut');
     }
 
+    void cutPreviousMovesAction(ChessMovePointer target) {
+      final game = chessGame.value;
+      if (!canCutBoardPreviousMoves(game, target)) {
+        showToast('No previous moves to cut');
+        return;
+      }
+      final nags = currentUserNags();
+      final cut = cutBoardPreviousMoves(hydrateGameWithReport(game), target)!;
+      pauseAutoReplayForManualNavigation();
+      final recovery = currentRecovery();
+      final stack = undoStack.value;
+      stack.add(
+        BoardUndoSnapshot(
+          game: game,
+          pointer: List<int>.unmodifiable(pointer.value),
+          dirtySinceLoad: dirtySinceLoad.value,
+          userNags: _cloneNagMap(nags),
+          pgnHeaders: Map<String, String>.unmodifiable(pgnHeaders.value),
+          broadcastCut: hasBroadcastCut(activeGameId),
+          recovery: recovery,
+          restoreRecovery: recovery != null,
+        ),
+      );
+      if (stack.length > 50) stack.removeAt(0);
+      if (recovery != null) putRecovery(null);
+      final nextNags = rebaseCutPreviousUserNags(
+        nags,
+        target,
+        cut.mainline.length,
+      );
+      suppressUserNagUndoSnapshot.value = true;
+      try {
+        ref.read(userMoveNagsProvider.notifier).restoreTab(editsTabId, nextNags);
+      } finally {
+        suppressUserNagUndoSnapshot.value = false;
+      }
+      // Keep the game rail and tab identity, but stop applying feed moves to
+      // this Board's private working tree. Shared source rows stay unchanged.
+      cutBroadcastGameId.value = activeGameId;
+      cutEditGeneration.value++;
+      chessGame.value = cut;
+      pgnHeaders.value = cut.metadata.map(
+        (key, value) => MapEntry(key, value?.toString() ?? ''),
+      );
+      pointer.value = const <int>[0];
+      dirtySinceLoad.value = true;
+      hasUnseenMoves.value = false;
+      boardCutEpoch.value++;
+      focusNode.requestFocus();
+      showToast('Previous moves cut');
+    }
+
     void clearGraphicCommentaryAction() {
       final currentState = ref.read(boardAnnotationsProvider(editsTabId));
       final current = currentState.shapes;
@@ -5040,9 +5198,11 @@ class _BoardPaneContent extends HookConsumerWidget {
     }
 
     void insertGamePgn(BoardGameInsertRequest request) {
+      final activePointer = pointer.value;
+      final activePath = _pathFromPointer(chessGame.value, activePointer);
       final insertion = insertBoardPgn(
         game: chessGame.value,
-        activePath: _pathFromPointer(chessGame.value, pointer.value),
+        activePath: activePath,
         pgn: request.pgn,
         sourceLabel: request.sourceLabel,
       );
@@ -5053,7 +5213,20 @@ class _BoardPaneContent extends HookConsumerWidget {
         );
         return;
       }
-      final landing = _pointerForUciPath(insertion.game, insertion.landingPath);
+      final targetPath = request.keepCurrentPosition
+          ? activePath.map((move) => move.uci).toList(growable: false)
+          : insertion.landingPath;
+      // Insertion can renumber/reparent variations. Resolve the original line
+      // by its played moves, not just its old notation coordinates.
+      final landing = request.keepCurrentPosition &&
+              _isPointerValid(insertion.game, activePointer) &&
+              _uciPathsEqual(
+                _pathFromPointer(insertion.game, activePointer)
+                    .map((move) => move.uci).toList(growable: false),
+                targetPath,
+              )
+          ? activePointer
+          : _pointerForUciPath(insertion.game, targetPath);
       if (landing == null) {
         showToast('Could not insert the complete game.', error: true);
         return;
@@ -5068,7 +5241,7 @@ class _BoardPaneContent extends HookConsumerWidget {
       explorerPreviewLineAutoplay.value = true;
       explorerPreviewSoundKey.value = null;
       chessGame.value = insertion.game;
-      pointer.value = landing;
+      if (!_pointersEqual(pointer.value, landing)) pointer.value = landing;
       dirtySinceLoad.value = true;
       showToast('Game inserted as variation');
     }
@@ -5534,7 +5707,7 @@ class _BoardPaneContent extends HookConsumerWidget {
           unawaited(saveGameToLibraryAction());
           return true;
         case BoardActionKey.commentAfterMove:
-          unawaited(commentAfterMoveAction());
+          unawaited(editMoveComment(pointer.value, before: false));
           return true;
         case BoardActionKey.playEngineMove:
           playTopEngineMoveAction();
@@ -5616,13 +5789,13 @@ class _BoardPaneContent extends HookConsumerWidget {
           cutRemainingMovesAction();
           return true;
         case BoardActionKey.cutPreviousMoves:
-          showUnsupportedReferenceShortcut('Cut previous moves');
+          cutPreviousMovesAction(pointer.value);
           return true;
         case BoardActionKey.clearVariationsAndComments:
           clearVariationsAndCommentsAction();
           return true;
         case BoardActionKey.commentBeforeMove:
-          showUnsupportedReferenceShortcut('Comment before move');
+          unawaited(editMoveComment(pointer.value, before: true));
           return true;
         case BoardActionKey.annotateGoodMove:
           setQualityNagAction(1, '!');
@@ -5974,9 +6147,22 @@ class _BoardPaneContent extends HookConsumerWidget {
         onClearMoveQualityAnnotation: clearMoveQualityAnnotation,
         onClearAllCommentary: clearAllNotationCommentary,
         onSetMoveComment: setMoveComment,
+        onEditPositionedComment: (target, before) =>
+            editMoveComment(target, before: before),
+        onClearMoveTextComments: clearMoveTextComments,
+        beforeMoveCommentShortcutLabel: shortcutLabelFor(
+          BoardActionKey.commentBeforeMove,
+        ),
+        afterMoveCommentShortcutLabel: shortcutLabelFor(
+          BoardActionKey.commentAfterMove,
+        ),
         onPromoteVariation: promoteVariation,
         onDeleteVariation: deleteVariation,
         onTrimContinuation: trimContinuation,
+        onCutPreviousMoves: cutPreviousMovesAction,
+        cutPreviousMovesShortcutLabel: shortcutLabelFor(
+          BoardActionKey.cutPreviousMoves,
+        ),
         useFigurine: notationUseFigurine,
         pieceAssets: notationPieceAssets,
         layoutModeController: layoutModeController,
@@ -6801,6 +6987,7 @@ ChessLine _stripCommentsAndNags(ChessLine line) {
     for (final move in line)
       move.copyWith(
         comments: const <String>[],
+        startingComments: const <String>[],
         nags: const <int>[],
         variations: move.variations
             ?.map(_stripCommentsAndNags)
@@ -7487,6 +7674,17 @@ _reconcileCanonicalBroadcastLocalAnnotations({
       ], currentComment);
       hasLocalComment = true;
     }
+    final previousBefore = _editableCommentForPlacement(previousMove, true);
+    final currentBefore = _editableCommentForPlacement(currentMove, true);
+    if (currentBefore != previousBefore) {
+      reconciledGame = _setMoveCommentAtPointer(
+        reconciledGame,
+        <int>[ply],
+        currentBefore,
+        before: true,
+      );
+      hasLocalComment = true;
+    }
 
     // The broadcast owns the mainline, but moves played by the user on a live
     // Board are private analysis branches. Only carry branches that were added
@@ -7710,6 +7908,14 @@ _reconcileCanonicalVariationLists({
     final currentComment = _firstEditableComment(currentMove.comments);
     if (currentComment != previousComment) {
       reconciledMove = _withEditableComment(reconciledMove, currentComment);
+      hasLocalEdits = true;
+    }
+    final previousBefore = _editableCommentForPlacement(previousMove, true);
+    final currentBefore = _editableCommentForPlacement(currentMove, true);
+    if (currentBefore != previousBefore) {
+      reconciledMove = _withEditableComment(
+        reconciledMove, currentBefore, before: true,
+      );
       hasLocalEdits = true;
     }
 
@@ -8098,6 +8304,10 @@ bool _broadcastLinesMatch(ChessLine current, ChessLine canonical) {
         currentMove.clockTime != canonicalMove.clockTime ||
         currentMove.eval != canonicalMove.eval ||
         !_broadcastValuesMatch(currentMove.comments, canonicalMove.comments) ||
+        !_broadcastValuesMatch(
+          currentMove.startingComments,
+          canonicalMove.startingComments,
+        ) ||
         !_broadcastValuesMatch(currentMove.nags, canonicalMove.nags)) {
       return false;
     }
@@ -8289,12 +8499,13 @@ ChessGame _updateMoveAtPointer(
 ChessGame _setMoveCommentAtPointer(
   ChessGame game,
   ChessMovePointer pointer,
-  String? comment,
-) {
+  String? comment, {
+  bool before = false,
+}) {
   return _updateMoveAtPointer(
     game,
     pointer,
-    (move) => _withEditableComment(move, comment),
+    (move) => _withEditableComment(move, comment, before: before),
   );
 }
 
@@ -8472,8 +8683,34 @@ List<int> _toggleNagList(List<int> current, int nag) {
   return List<int>.unmodifiable(next);
 }
 
-ChessMove _withEditableComment(ChessMove move, String? comment) {
+String? _editableCommentForPlacement(ChessMove move, bool before) {
+  if (!before) return _firstEditableComment(move.comments);
+  final text = (move.startingComments ?? const <String>[])
+      .map((comment) => comment.replaceAll(_pgnDirectiveRegex, '').trim())
+      .where((comment) => comment.isNotEmpty)
+      .join('\n');
+  return text.isEmpty ? null : text;
+}
+
+ChessMove _withEditableComment(
+  ChessMove move,
+  String? comment, {
+  bool before = false,
+}) {
   final nextComment = comment?.trim() ?? '';
+  if (before) {
+    if ((_editableCommentForPlacement(move, true) ?? '') == nextComment) {
+      return move;
+    }
+    final directives = <String>[
+      for (final existing in move.startingComments ?? const <String>[])
+        for (final directive in _pgnDirectiveRegex.allMatches(existing)) directive[0]!,
+    ];
+    return move.copyWith(startingComments: [
+      ...directives,
+      if (nextComment.isNotEmpty) nextComment,
+    ]);
+  }
   final directives = <String>[];
   for (final existing in move.comments ?? const <String>[]) {
     directives.addAll(_extractNonClockDirectives(existing));

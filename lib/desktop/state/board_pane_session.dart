@@ -41,6 +41,8 @@ class BoardUndoSnapshot {
     required this.dirtySinceLoad,
     this.shapes,
     this.userNags,
+    this.pgnHeaders,
+    this.broadcastCut,
     this.annotations,
     this.recovery,
     this.restoreRecovery = false,
@@ -51,6 +53,10 @@ class BoardUndoSnapshot {
   final ChessGame game;
   final ChessMovePointer pointer;
   final bool dirtySinceLoad;
+  final Map<String, String>? pgnHeaders;
+
+  /// Only a root-cut edit restores this mode; ordinary edit undos keep it.
+  final bool? broadcastCut;
 
   /// Annotation shapes (arrows + circles) at snapshot time. `null` means
   /// "don't restore" so move-only mutations don't clobber later shape edits.
@@ -87,6 +93,7 @@ class BoardPaneSession {
     this.savedSourceSeedPgn,
     this.hasCommittedSave = false,
     this.detachedSeedPgn,
+    this.cutBroadcastGameId,
     this.userNags = const <int, List<int>>{},
   });
 
@@ -117,6 +124,9 @@ class BoardPaneSession {
 
   /// Transport seed already represented by the restored working tree.
   final String? detachedSeedPgn;
+
+  /// A private cut owns this tab's notation until Undo or another game opens.
+  final String? cutBroadcastGameId;
 
   /// The tab's user NAGs (`userMoveNagsProvider`) when this was written. They
   /// stay out of [game]: a restore keeps reading them from the provider, so a
