@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 # The Linux Stockfish engine asset is intentionally NOT listed in pubspec.yaml
-# (assets are shared across platforms — listing it would bundle the 78 MB
+# (assets are shared across platforms — listing it would bundle the 103 MB
 # binary into the macOS/Windows apps too). Inject it here so only the Linux
 # build carries it. Idempotent; the binary is committed at the path below.
 LINUX_ENGINE_ASSET='    - assets/engine/linux/stockfish'

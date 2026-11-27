@@ -53,7 +53,7 @@ else
   DMG_ARCH_LABEL="intel"
   STABLE_DMG_NAME="Chessever-intel.dmg"
   EXPECTED_STOCKFISH_ARCH="x86_64"
-  FORBIDDEN_STOCKFISH_ARCH="arm64"
+  FORBIDDEN_STOCKFISH_ARCH=""
 fi
 
 require_env() {
@@ -376,12 +376,20 @@ STOCKFISH="$APP/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_a
 STOCKFISH_INFO="$(lipo -info "$STOCKFISH" 2>/dev/null || file "$STOCKFISH")"
 echo "Stockfish binary: $STOCKFISH_INFO"
 echo "$STOCKFISH_INFO" | grep -E "$EXPECTED_STOCKFISH_ARCH" >/dev/null ||
-  die "Stockfish must be $EXPECTED_STOCKFISH_ARCH-only for $UPDATE_PLATFORM (got: $STOCKFISH_INFO)"
-if echo "$STOCKFISH_INFO" | grep -q "$FORBIDDEN_STOCKFISH_ARCH"; then
-  die "Stockfish must not embed $FORBIDDEN_STOCKFISH_ARCH in the $UPDATE_PLATFORM package"
-fi
-if echo "$STOCKFISH_INFO" | grep -qi 'Architectures in the fat file'; then
-  die "Stockfish must be a single-arch binary (no fat/universal engine) for $UPDATE_PLATFORM"
+  die "Stockfish must contain $EXPECTED_STOCKFISH_ARCH for $UPDATE_PLATFORM (got: $STOCKFISH_INFO)"
+if [ "$MACOS_RELEASE_ARCH" = "arm64" ]; then
+  # Apple Silicon ships the thinned arm64 slice only.
+  if echo "$STOCKFISH_INFO" | grep -q "$FORBIDDEN_STOCKFISH_ARCH"; then
+    die "Stockfish must not embed $FORBIDDEN_STOCKFISH_ARCH in the $UPDATE_PLATFORM package"
+  fi
+  if echo "$STOCKFISH_INFO" | grep -qi 'Architectures in the fat file'; then
+    die "Stockfish must be a single-arch binary (no fat/universal engine) for $UPDATE_PLATFORM"
+  fi
+else
+  # Intel ships the whole universal Stockfish: since Stockfish 19 its x86_64
+  # slice reads the network from the arm64 slice of the same file.
+  echo "$STOCKFISH_INFO" | grep -q 'arm64' ||
+    die "Stockfish for $UPDATE_PLATFORM must be the universal build (x86_64 reads its network from the arm64 slice)"
 fi
 sign_one "$STOCKFISH"
 if [ -d "$APP/Contents/Frameworks" ]; then

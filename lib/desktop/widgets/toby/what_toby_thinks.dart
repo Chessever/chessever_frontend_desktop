@@ -48,6 +48,7 @@ import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
 import 'package:chessever/desktop/widgets/spring_tokens.dart';
 import 'package:chessever/desktop/utils/text_line_metrics.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/services/engine/stockfish_version.dart';
 
 // A Stockfish row's geometry, so Toby's list reads as the same list.
 
@@ -2216,7 +2217,7 @@ class TobyViewTabs extends ConsumerStatefulWidget {
   final bool compact;
 
   /// The engine's tab.
-  static const String stockfishLabel = 'Stockfish';
+  static const String stockfishLabel = kStockfishShortLabel;
 
   /// The room before the first label, part of its hit area. The header
   /// subtracts it from the gap before the tabs, so the first label sits

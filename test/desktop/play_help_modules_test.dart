@@ -162,9 +162,9 @@ void main() {
     );
 
     // The help keys make the list taller than the test window.
-    await tester.ensureVisible(find.text('Stockfish'));
+    await tester.ensureVisible(find.text('SF 19'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Stockfish'));
+    await tester.tap(find.text('SF 19'));
     await tester.pumpAndSettle();
     expect(
       container.read(playHelpModulesProvider),

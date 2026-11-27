@@ -442,7 +442,7 @@ void main() {
       final h = await _pump(tester, premium: true);
       await tester.pump(const Duration(seconds: 2));
 
-      expect(_tab('Stockfish'), findsOneWidget);
+      expect(_tab('SF 19'), findsOneWidget);
       expect(_tab(kTobyFeatureLabel), findsOneWidget);
       expect(find.byType(WhatTobyThinks), findsNothing);
       expect(find.text('Stockfish lines'), findsOneWidget);
@@ -454,11 +454,11 @@ void main() {
       await _pump(tester, premium: true);
       Text label(String text) => tester.widget<Text>(_tab(text));
       final before = (
-        tester.getRect(_tab('Stockfish')),
+        tester.getRect(_tab('SF 19')),
         tester.getRect(_tab(kTobyFeatureLabel)),
       );
-      expect(label('Stockfish').style!.color, kWhiteColor);
-      expect(label('Stockfish').style!.fontWeight, FontWeight.w600);
+      expect(label('SF 19').style!.color, kWhiteColor);
+      expect(label('SF 19').style!.fontWeight, FontWeight.w600);
       expect(label(kTobyFeatureLabel).style!.color, kWhiteColor70);
       expect(label(kTobyFeatureLabel).style!.fontWeight, FontWeight.w500);
 
@@ -467,15 +467,15 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
       }
       expect(label(kTobyFeatureLabel).style!.color, isSameColorAs(kWhiteColor));
-      expect(tester.getRect(_tab('Stockfish')), before.$1);
+      expect(tester.getRect(_tab('SF 19')), before.$1);
       expect(tester.getRect(_tab(kTobyFeatureLabel)), before.$2);
 
       await _tapTab(tester, kTobyFeatureLabel);
       await _settle(tester);
       expect(label(kTobyFeatureLabel).style!.color, kWhiteColor);
-      expect(label('Stockfish').style!.color, kWhiteColor70);
+      expect(label('SF 19').style!.color, kWhiteColor70);
       // The labels keep their full-weight width: switching moves nothing.
-      expect(tester.getRect(_tab('Stockfish')).left, before.$1.left);
+      expect(tester.getRect(_tab('SF 19')).left, before.$1.left);
       expect(tester.getRect(_tab(kTobyFeatureLabel)).left, before.$2.left);
       // No pill, no dot, no lock: only the static rule under the chosen tab.
       expect(find.byIcon(Icons.lock_rounded), findsNothing);
@@ -631,7 +631,7 @@ void main() {
       final preferences = await SharedPreferences.getInstance();
       expect(preferences.getBool(tobyTabStorageKey), isTrue);
 
-      await _tapTab(tester, 'Stockfish');
+      await _tapTab(tester, 'SF 19');
       expect(preferences.getBool(tobyTabStorageKey), isFalse);
       expect(find.byType(WhatTobyThinks), findsNothing);
 
@@ -691,7 +691,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.pump();
-      expect(onTab('Stockfish'), isTrue);
+      expect(onTab('SF 19'), isTrue);
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
       expect(find.byType(WhatTobyThinks), findsNothing);
@@ -1148,7 +1148,7 @@ void main() {
       await tester.pump();
       expect(h.controller.boardArrows.value, isNotNull);
 
-      await _tapTab(tester, 'Stockfish');
+      await _tapTab(tester, 'SF 19');
       await tester.pump();
       expect(find.byType(WhatTobyThinks), findsNothing);
       expect(h.controller.boardArrows.value, isNull);

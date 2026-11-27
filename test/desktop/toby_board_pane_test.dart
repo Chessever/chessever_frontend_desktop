@@ -176,7 +176,7 @@ void main() {
       _script.value = TobyReadingState.ready(_reading(final_: true));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
-      expect(find.text('Stockfish'), findsOneWidget);
+      expect(find.text('SF 19'), findsOneWidget);
       final liveFen = _boardFen(tester);
       final container = ProviderScope.containerOf(
         tester.element(find.byType(BoardPane)),
@@ -368,7 +368,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(find.byType(TobyViewTabs), findsNothing);
     expect(find.byType(WhatTobyThinks), findsOneWidget);
-    expect(find.text('Stockfish'), findsOneWidget);
+    expect(find.text('SF 19'), findsOneWidget);
     expect(find.text('3.Nf3'), findsOneWidget);
     expect(_boardSize(tester), before);
     tester.view.physicalSize = const Size(1100, 1000);
@@ -424,7 +424,7 @@ void main() {
     expect(_boardShapes(tester), shapes);
     await hover.removePointer();
 
-    await _tapTab(tester, 'Stockfish');
+    await _tapTab(tester, 'SF 19');
     await tester.pump();
     expect(_boardShapes(tester).where(_isToby), hasLength(2));
     prefs.setArrows(BoardAnalysisArrows.off);
@@ -911,7 +911,7 @@ void main() {
       withToby: false,
     );
     expect(find.byType(TobyViewTabs), findsNothing);
-    expect(find.text('Stockfish'), findsOneWidget);
+    expect(find.text('SF 19'), findsOneWidget);
     expect(_pvLines(tester).first.top, withTabs);
   });
 
@@ -1052,7 +1052,7 @@ void main() {
     void tabsWhole(double width) {
       // On screen, after any scaling.
       expect(tester.getRect(find.byType(TobyViewTabs)).width, width);
-      for (final label in ['Stockfish', kTobyFeatureLabel]) {
+      for (final label in ['SF 19', kTobyFeatureLabel]) {
         final paragraph = tester.renderObject<RenderParagraph>(_tab(label));
         expect(paragraph.didExceedMaxLines, isFalse);
         expect(tester.getRect(_tab(label)).width, paragraph.size.width);
@@ -1110,7 +1110,7 @@ void main() {
       toby: false,
       chrome: true,
     );
-    for (final label in ['Stockfish', kTobyFeatureLabel]) {
+    for (final label in ['SF 19', kTobyFeatureLabel]) {
       expect(scaleOf(label), greaterThanOrEqualTo(kEngineHeaderTabsMinScale));
       expect(scaleOf(label), lessThan(1));
     }
@@ -1195,7 +1195,7 @@ void main() {
     await press(kTobyFeatureLabel, LogicalKeyboardKey.enter);
     expect(find.byType(WhatTobyThinks), findsOneWidget);
     expect(_notationPanel(tester).showEngine, isTrue);
-    await press('Stockfish', LogicalKeyboardKey.space);
+    await press('SF 19', LogicalKeyboardKey.space);
     expect(find.byType(WhatTobyThinks), findsNothing);
     expect(_notationPanel(tester).showEngine, isTrue);
   });

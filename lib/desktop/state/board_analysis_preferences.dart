@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:chessever/desktop/state/toby_enabled.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
+import 'package:chessever/desktop/services/engine/stockfish_version.dart';
 
 const _stockfishKey = 'desktop.analysis.stockfish.v1';
 const _stockfishLinesKey = 'desktop.analysis.stockfishLines.v1';
@@ -23,7 +24,7 @@ List<BoardAnalysisArrows> boardArrowSources({required bool tobyEnabled}) =>
         : const [BoardAnalysisArrows.stockfish, BoardAnalysisArrows.off];
 
 String boardArrowSourceLabel(BoardAnalysisArrows source) => switch (source) {
-  BoardAnalysisArrows.stockfish => 'Stockfish',
+  BoardAnalysisArrows.stockfish => kStockfishShortLabel,
   BoardAnalysisArrows.toby => 'Toby',
   BoardAnalysisArrows.off => 'Off',
 };

@@ -3,24 +3,45 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('fetch_stockfish.sh documents dual single-arch packages', () {
+  test('fetch_stockfish.sh pins Stockfish 19 and packages each Mac flavor', () {
     final script = File('scripts/fetch_stockfish.sh').readAsStringSync();
     expect(script, contains('MACOS_ENGINE_ARCH'));
-    expect(script, contains('stockfish-macos-m1-apple-silicon'));
-    expect(script, contains('stockfish-macos-x86-64-avx2'));
+    expect(script, contains('VERSION="\${STOCKFISH_VERSION:-19}"'));
+    expect(script, contains('stockfish-macos-universal.tar.gz'));
+    expect(script, contains('stockfish-windows-x86-64-universal.zip'));
+    // Archives are verified against the pinned sf_19 digests.
+    expect(
+      script,
+      contains(
+        'a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77',
+      ),
+    );
+    expect(
+      script,
+      contains(
+        '3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7',
+      ),
+    );
+    // Apple Silicon ships the thinned arm64 slice only.
+    expect(script, contains('lipo -thin arm64'));
     expect(script, contains('must not embed x86_64'));
-    expect(script, contains('must not embed arm64'));
-    // Explicitly rejects fat Stockfish.
+    // Intel keeps the universal file: its x86_64 slice reads the network
+    // from the arm64 slice.
+    expect(script, contains('the Intel package needs the universal Stockfish'));
     expect(script, isNot(contains('lipo -create')));
   });
 
   test('publish script wires dual archive + dmg aliases', () {
-    final script = File('scripts/codemagic_publish_macos.sh').readAsStringSync();
+    final script =
+        File('scripts/codemagic_publish_macos.sh').readAsStringSync();
     expect(script, contains('UPDATE_PLATFORM="macos"'));
     expect(script, contains('UPDATE_PLATFORM="macos-x64"'));
     expect(script, contains('Chessever.dmg'));
     expect(script, contains('Chessever-intel.dmg'));
-    expect(script, contains(r'dart run desktop_updater:archive "$UPDATE_PLATFORM"'));
+    expect(
+      script,
+      contains(r'dart run desktop_updater:archive "$UPDATE_PLATFORM"'),
+    );
     expect(
       script,
       contains(r'ingest $UPDATE_PLATFORM $ARCHIVE_NAME $RELEASE_VERSION'),
@@ -40,12 +61,18 @@ void main() {
     expect(codemagic, contains('codemagic_publish_macos.sh --arch'));
     expect(codemagic, isNot(contains('lipo -create')));
 
-    final armBlock = codemagic.split('macos-desktop-release-arm64:').last.split(
-      'macos-desktop-release-x64:',
-    ).first;
-    final x64Block = codemagic.split('macos-desktop-release-x64:').last.split(
-      'windows-desktop-release:',
-    ).first;
+    final armBlock =
+        codemagic
+            .split('macos-desktop-release-arm64:')
+            .last
+            .split('macos-desktop-release-x64:')
+            .first;
+    final x64Block =
+        codemagic
+            .split('macos-desktop-release-x64:')
+            .last
+            .split('windows-desktop-release:')
+            .first;
     expect(armBlock, contains('flutter: beta'));
     expect(armBlock, contains('ARCH=arm64'));
     // Continuous Silicon slug is bare macos, not macos-arm64.

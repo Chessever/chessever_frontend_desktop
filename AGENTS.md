@@ -218,7 +218,7 @@ On demand — read `docs/agents/package-changes.md` before working on this area.
 ## 5. Stockfish replacement (the hard one)
 
 On demand — read `docs/agents/stockfish-replacement.md` before working on this area. Gist: Pub package `stockfish` is mobile-only because it bundles native libs for Android/iOS.
-Never add `assets/engine/linux/stockfish` to `pubspec.yaml` — the Linux build script injects it so mac/Windows downloads stay 78 MB lighter.
+Never add `assets/engine/linux/stockfish` to `pubspec.yaml` — the Linux build script injects it so mac/Windows downloads stay 103 MB lighter.
 
 ## 6. Auth (the second-hardest)
 

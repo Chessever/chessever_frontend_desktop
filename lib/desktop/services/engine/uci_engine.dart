@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'package:chessever/desktop/services/engine/stockfish_version.dart';
 import 'package:chessever/desktop/services/mac_app_store.dart';
 import 'package:chessever/utils/host_platform.dart';
 import 'package:chessever/web/web_engine_process_stub.dart'
@@ -376,11 +377,13 @@ Future<String?> findStockfishBinary() async {
   if (isMacAppStore) {
     // Store helpers are sealed and signed in the app bundle. Never extract an
     // executable to Application Support or discover an engine outside it.
-    final helper = File(p.join(
-      File(Platform.resolvedExecutable).parent.parent.path,
-      'Helpers',
-      'stockfish',
-    ));
+    final helper = File(
+      p.join(
+        File(Platform.resolvedExecutable).parent.parent.path,
+        'Helpers',
+        'stockfish',
+      ),
+    );
     return await helper.exists() ? helper.path : null;
   }
   // 1. Bundled asset.
@@ -441,11 +444,32 @@ Future<String?> _findSourceTreeBinary() async {
   return null;
 }
 
+/// File name of the extracted bundled engine for this release. Naming the copy
+/// after [kBundledStockfishVersion] makes an app update that ships a new
+/// engine write a fresh copy instead of reusing the previous release's binary.
+String bundledStockfishFileName({required bool windows}) =>
+    windows
+        ? 'stockfish-$kBundledStockfishVersion.exe'
+        : 'stockfish-$kBundledStockfishVersion';
+
+Future<String?>? _bundledBinaryExtraction;
+
 /// Copies the bundled Stockfish binary out of the Flutter asset bundle into
-/// the app support directory on first launch. Returns the on-disk path of
-/// the executable copy, or `null` if the bundle does not contain a
+/// the app support directory once per engine release. Returns the on-disk
+/// path of the executable copy, or `null` if the bundle does not contain a
 /// platform-appropriate binary (e.g. an old build that predates bundling).
-Future<String?> _ensureBundledBinary() async {
+Future<String?> _ensureBundledBinary() {
+  final pending = _bundledBinaryExtraction ??= _extractBundledBinary();
+  // A failed extraction can be retried by the next caller.
+  pending.then((path) {
+    if (path == null && identical(_bundledBinaryExtraction, pending)) {
+      _bundledBinaryExtraction = null;
+    }
+  });
+  return pending;
+}
+
+Future<String?> _extractBundledBinary() async {
   final assetPath = _bundledAssetPathForPlatform();
   if (assetPath == null) return null;
 
@@ -456,26 +480,32 @@ Future<String?> _ensureBundledBinary() async {
       await engineDir.create(recursive: true);
     }
 
-    final binaryName = hostIsWindows ? 'stockfish.exe' : 'stockfish';
+    final binaryName = bundledStockfishFileName(windows: hostIsWindows);
     final destination = File(p.join(engineDir.path, binaryName));
 
-    // If we've already extracted the binary on a previous launch, reuse it.
-    // Skip the size check for now — Stockfish releases ship at ~80 MB, and
-    // a corrupted partial copy from a prior crash is the only realistic
-    // case that would slip past `exists()`. The driver will fail at
-    // `Process.start` with a clear message in that case, so it's not a
-    // silent failure.
+    // Written to a temporary name and renamed, so a crash mid-copy never
+    // leaves a truncated binary at the final path.
     if (!await destination.exists()) {
       final bytes = await rootBundle.load(assetPath);
-      await destination.writeAsBytes(
+      final partial = File(
+        '${destination.path}.${DateTime.now().microsecondsSinceEpoch}.partial',
+      );
+      await partial.writeAsBytes(
         bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
         flush: true,
       );
       if (!hostIsWindows) {
         // chmod +x on POSIX so the OS will exec the file.
-        await UciEngine._runTrackedProcess('chmod', ['+x', destination.path]);
+        await UciEngine._runTrackedProcess('chmod', ['+x', partial.path]);
+      }
+      try {
+        await partial.rename(destination.path);
+      } on FileSystemException {
+        if (!await destination.exists()) rethrow;
+        await partial.delete().catchError((Object _) => partial);
       }
     }
+    unawaited(_deleteStaleBundledBinaries(engineDir, keep: binaryName));
     return destination.path;
   } catch (e) {
     if (kDebugMode) {
@@ -483,6 +513,40 @@ Future<String?> _ensureBundledBinary() async {
     }
     return null;
   }
+}
+
+/// Removes engine copies left by earlier releases (`stockfish`,
+/// `stockfish.exe`, `stockfish-17.1`, ...) and abandoned partial copies.
+/// Best effort: a file still held by a running process is left for the next
+/// launch.
+Future<void> _deleteStaleBundledBinaries(
+  Directory engineDir, {
+  required String keep,
+}) async {
+  try {
+    await for (final entity in engineDir.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = p.basename(entity.path);
+      if (name == keep || !isStaleBundledStockfishName(name, keep: keep)) {
+        continue;
+      }
+      try {
+        await entity.delete();
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+/// Whether [name] in the engine directory is a bundled Stockfish copy other
+/// than [keep]. Only `stockfish`, `stockfish.exe`, `stockfish-<version>[.exe]`
+/// and their `.partial` copies match, so nothing else there is touched.
+@visibleForTesting
+bool isStaleBundledStockfishName(String name, {required String keep}) {
+  // Another window may still be writing this release's partial copy.
+  if (name == keep || name.startsWith('$keep.')) return false;
+  return RegExp(
+    r'^stockfish(-[0-9][0-9A-Za-z._]*)?(\.exe)?(\.[0-9]+\.partial)?$',
+  ).hasMatch(name);
 }
 
 String? _bundledAssetPathForPlatform() {

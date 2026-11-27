@@ -15,6 +15,7 @@ import 'package:chessever/desktop/widgets/desktop_tooltip.dart';
 import 'package:chessever/desktop/widgets/play_help_trigger.dart';
 import 'package:chessever/desktop/widgets/scroll_edge_arrows.dart';
 import 'package:chessever/theme/app_theme.dart';
+import 'package:chessever/desktop/services/engine/stockfish_version.dart';
 
 /// One switch per help module, plus where the board's arrows come from.
 /// The setup screen and the in-game section show the same list, bound to
@@ -132,7 +133,7 @@ class PlayHelpModulesList extends ConsumerWidget {
               ),
               const DesktopSegmentedTab(
                 value: PlayHelpArrows.stockfish,
-                label: 'Stockfish',
+                label: kStockfishShortLabel,
               ),
               if (tobyOn)
                 const DesktopSegmentedTab(

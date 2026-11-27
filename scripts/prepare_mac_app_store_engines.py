@@ -40,24 +40,22 @@ def fetch(name, urls, digest):
     raise RuntimeError(f"No verified source for {name}: " + "; ".join(failures))
 
 
-# Keep these pins aligned with lib/desktop/services/play/engine_catalog.dart.
-stockfish = []
-for arch, name, digest in [
-    ("arm64", "stockfish-macos-m1-apple-silicon", "4d77c4aa3ad9bd1ea8111f2ac5a4620fe7ebf998d6893bf828d49ccd579c8cb0"),
-    ("x86_64", "stockfish-macos-x86-64-avx2", "41d30e0860ad924a6ceb422c3a36eba43bbe5ae87d3310840da50e71c53f35d9"),
-]:
-    archive = fetch(name + ".tar", f"https://github.com/official-stockfish/Stockfish/releases/download/sf_18/{name}.tar", digest)
-    executable = root / f"stockfish-{arch}"
-    with tarfile.open(archive) as package:
-        with package.extractfile("stockfish/" + name) as source, executable.open("wb") as destination:
-            shutil.copyfileobj(source, destination)
-        for member in package.getmembers():
-            if member.isfile() and Path(member.name).name.lower() in {"copying.txt", "copying", "license"}:
-                with package.extractfile(member) as source, (root / "Stockfish-LICENSE.txt").open("wb") as destination:
-                    shutil.copyfileobj(source, destination)
-    executable.chmod(0o755)
-    stockfish.append(str(executable))
-subprocess.run(["lipo", "-create", *stockfish, "-output", str(root / "stockfish")], check=True)
+# Keep this pin aligned with lib/desktop/services/play/engine_catalog.dart.
+# Stockfish 19 publishes one universal (arm64 + x86_64) macOS executable. Ship
+# it whole: its x86_64 slice reads the network from the arm64 slice.
+stockfish_name = "stockfish-macos-universal"
+archive = fetch(
+    stockfish_name + ".tar.gz",
+    f"https://github.com/official-stockfish/Stockfish/releases/download/sf_19/{stockfish_name}.tar.gz",
+    "a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77",
+)
+with tarfile.open(archive) as package:
+    with package.extractfile("stockfish/" + stockfish_name) as source, (root / "stockfish").open("wb") as destination:
+        shutil.copyfileobj(source, destination)
+    for member in package.getmembers():
+        if member.isfile() and Path(member.name).name.lower() in {"copying.txt", "copying", "license"}:
+            with package.extractfile(member) as source, (root / "Stockfish-LICENSE.txt").open("wb") as destination:
+                shutil.copyfileobj(source, destination)
 
 for name, url, digest in [
     ("lc0", "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.0/lc0-v0.32.0-macos_12.6.1", "2d276ad784fc0a9a00dc6e0a71d0340fb8805acf27a1874c769f3d8e7c60c81e"),

@@ -111,54 +111,57 @@ String _hostArch() {
 final Map<BotEngineKind, EngineDescriptor> kEngineCatalog = {
   BotEngineKind.stockfish: EngineDescriptor(
     kind: BotEngineKind.stockfish,
-    version: '18',
+    version: '19',
     summary:
         'Strongest classical search engine. Skill is throttled via '
         'UCI_LimitStrength + UCI_Elo.',
+    // Stockfish 19 ships one universal executable per OS. The macOS one holds
+    // both slices, and the x86_64 slice reads its network from the arm64
+    // slice, so both Mac arches install the whole file.
     artifacts: [
       EngineArtifact(
         platform: 'macos',
         arch: 'arm64',
         url:
-            'https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-macos-m1-apple-silicon.tar',
+            'https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-macos-universal.tar.gz',
         sha256:
-            '4d77c4aa3ad9bd1ea8111f2ac5a4620fe7ebf998d6893bf828d49ccd579c8cb0',
+            'a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77',
         archiveKind: 'tar',
-        executablePath: 'stockfish/stockfish-macos-m1-apple-silicon',
-        bytes: 115322880,
+        executablePath: 'stockfish/stockfish-macos-universal',
+        bytes: 82323876,
       ),
       EngineArtifact(
         platform: 'macos',
         arch: 'x64',
         url:
-            'https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-macos-x86-64-avx2.tar',
+            'https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-macos-universal.tar.gz',
         sha256:
-            '41d30e0860ad924a6ceb422c3a36eba43bbe5ae87d3310840da50e71c53f35d9',
+            'a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77',
         archiveKind: 'tar',
-        executablePath: 'stockfish/stockfish-macos-x86-64-avx2',
-        bytes: 114472960,
+        executablePath: 'stockfish/stockfish-macos-universal',
+        bytes: 82323876,
       ),
       EngineArtifact(
         platform: 'windows',
         arch: 'x64',
         url:
-            'https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-windows-x86-64-avx2.zip',
+            'https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-x86-64-universal.zip',
         sha256:
-            '6f6c272ebd6ea594377715235c8a7326f75940ef4f4f856f45106028fe6ae900',
+            '3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7',
         archiveKind: 'zip',
-        executablePath: 'stockfish/stockfish-windows-x86-64-avx2.exe',
-        bytes: 76955020,
+        executablePath: 'stockfish/stockfish-windows-x86-64-universal.exe',
+        bytes: 81431614,
       ),
       EngineArtifact(
         platform: 'windows',
         arch: 'arm64',
         url:
-            'https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-windows-armv8.zip',
+            'https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-arm64-universal.zip',
         sha256:
-            '7bc5880c11a58b2fdc4fcd606bf5cb593230026eb501a5a8865dc79fda5ea5fd',
+            '8372ad3f0d7276deb2c70f801f541ec7db463219fc6d9c7592864e542aa4f401',
         archiveKind: 'zip',
-        executablePath: 'stockfish/stockfish-windows-armv8.exe',
-        bytes: 76855612,
+        executablePath: 'stockfish/stockfish-windows-arm64-universal.exe',
+        bytes: 80190536,
       ),
     ],
   ),

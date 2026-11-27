@@ -3,7 +3,7 @@
 /// The service runs the *same* classifier this app runs — its
 /// `container/dart/lib/vendor/` is a checksummed copy of this repo's own files,
 /// on Stockfish 18 at the same depth, with the same book lookups. The desktop
-/// fallback remains on its bundled Stockfish 17.1, so server reports use the
+/// fallback runs its bundled Stockfish 19, so server reports use the
 /// same classifier and search configuration but can have different numerical
 /// evaluations than an offline run.
 ///

@@ -50,6 +50,7 @@ import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/auth/auth_upgrade_sheet.dart';
+import 'package:chessever/desktop/services/engine/stockfish_version.dart';
 
 import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
@@ -957,7 +958,9 @@ class _EnginePanelState extends ConsumerState<EnginePanel> {
                               constraints.maxWidth < 64
                                   ? const SizedBox.shrink()
                                   : Text(
-                                    tobyOnly || analysisPaused ? 'Analysis' : 'Stockfish',
+                                    tobyOnly || analysisPaused
+                                        ? 'Analysis'
+                                        : kStockfishShortLabel,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
