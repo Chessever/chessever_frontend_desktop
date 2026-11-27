@@ -73,6 +73,19 @@ final botvinnikDockProvider =
       (ref) => BotvinnikDockNotifier(),
     );
 
+/// True when [next] holds a Play game [previous] did not (a new tab or new
+/// args on a tab): the Botvinnik chat closes for it, so a game never starts
+/// with the chat open. Typed loosely to keep this file free of Play imports.
+bool botvinnikClosesForNewGame(
+  Map<String, Object?>? previous,
+  Map<String, Object?> next,
+) {
+  for (final entry in next.entries) {
+    if (!identical(previous?[entry.key], entry.value)) return true;
+  }
+  return false;
+}
+
 /// Opens the dock from a contextual launch (Events, a tournament, a player).
 ///
 /// A launch with a new [screenContext] starts a fresh conversation about that

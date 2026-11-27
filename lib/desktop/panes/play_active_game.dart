@@ -142,6 +142,10 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
   /// The Toby Predicts tab's state for this board: hover, pin and the
   /// arrows they put on the board.
   final _tobyPanel = TobyPanelController();
+
+  /// Keeps the rail's analysis panel (engine search, explorer, split) alive
+  /// when it moves under the result at the end of the game.
+  final _analysisPanelKey = GlobalKey(debugLabel: 'play.analysisPanel');
   int? _reviewPly;
   int? _lastHistoryLength;
   double? _boardSizePreference;
@@ -341,6 +345,7 @@ class _PlayActiveGameViewState extends ConsumerState<PlayActiveGameView> {
                   tabId: widget.tabId,
                   orientation: orientation,
                   tobyPanel: _tobyPanel,
+                  analysisPanelKey: _analysisPanelKey,
                   reviewPly: reviewPly,
                   onReviewPlyChanged: goToPly,
                   onFlipBoard: flipBoard,
@@ -2024,6 +2029,40 @@ class _GameSidePanel extends ConsumerWidget {
       ),
     );
 
+    // Once the game is over the result takes the whole panel, the moves
+    // under it.
+    if (state.isGameOver) {
+      final game = _playNotationGame(state);
+      final activePly = reviewPly ?? game.mainline.length;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _postGameBrief(
+              context,
+              ref,
+              state,
+              tabId,
+              movesLabel: 'Moves',
+              moves: NotationLadderView(
+                game: game,
+                activePointer: _playNotationPointerForPly(game, activePly),
+                onJump:
+                    (pointer) =>
+                        onReviewPlyChanged(_playPlyForPointer(pointer)),
+                useFigurine: notationUseFigurine,
+                pieceAssets: notationPieceAssets,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // The help switches stay, so the review can bring in the engine
+          // or the explorer.
+          PlayHelpModulesSection(tabId: tabId),
+        ],
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: kBlack2Color,
@@ -2066,10 +2105,7 @@ class _GameSidePanel extends ConsumerWidget {
             _PremoveQueue(state: state, tabId: tabId),
             const SizedBox(height: 12),
           ],
-          if (state.isGameOver)
-            _scrollingBrief(_postGameBrief(context, ref, state, tabId))
-          else
-            _GameActions(state: state, tabId: tabId),
+          _GameActions(state: state, tabId: tabId),
         ],
       ),
     );
@@ -2151,6 +2187,7 @@ class _PlayAnalysisRail extends ConsumerWidget {
     required this.tabId,
     required this.orientation,
     required this.tobyPanel,
+    required this.analysisPanelKey,
     required this.reviewPly,
     required this.onReviewPlyChanged,
     required this.onFlipBoard,
@@ -2160,6 +2197,7 @@ class _PlayAnalysisRail extends ConsumerWidget {
   final String tabId;
   final Side orientation;
   final TobyPanelController tobyPanel;
+  final GlobalKey analysisPanelKey;
   final int? reviewPly;
   final ValueChanged<int> onReviewPlyChanged;
   final VoidCallback onFlipBoard;
@@ -2246,114 +2284,148 @@ class _PlayAnalysisRail extends ConsumerWidget {
       ),
     );
 
+    final analysisPanel = KeyedSubtree(
+      key: analysisPanelKey,
+      child:
+      // The engine pane reads the Board's analysis choices; here they
+      // are the player's help modules, so its own switches change
+      // those and never the Board's settings.
+      ProviderScope(
+        overrides: [
+          boardAnalysisPreferencesProvider.overrideWith(
+            () => PlayAnalysisSettings(tabId),
+          ),
+        ],
+        child: NotationOpeningPanel(
+          tabId: tabId,
+          notationChild: notation,
+          currentFen: position.fen,
+          startingFen: game.startingFen,
+          lineUcis: lineUcis,
+          onPlayUciMove: playUci,
+          onNotationStep: (delta) {
+            final next = currentPly + delta;
+            if (next < 0 || next > total) return false;
+            goToPly(next);
+            return true;
+          },
+          onNotationJumpToHead: () => goToPly(0),
+          onNotationJumpToTip: () => goToPly(total),
+          canGoBack: currentPly > 0,
+          canGoForward: currentPly < total,
+          onFirstMove: () => goToPly(0),
+          onPreviousMove: () => goToPly(currentPly - 1),
+          onNextMove: () => goToPly(currentPly + 1),
+          onLastMove: () => goToPly(total),
+          // Moves are marked as they are played, so the whole-game report
+          // waits for the finished game on its Board tab.
+          showReport: false,
+          secondaryActions: _PlayRailSecondaryActions(
+            onFlipBoard: onFlipBoard,
+            onShare:
+                () => unawaited(
+                  _sharePlayPosition(
+                    context,
+                    game: game,
+                    headers: headers,
+                    review: review,
+                    flipped: orientation == Side.black,
+                  ),
+                ),
+          ),
+          trailingActions: FTheme(
+            data: FThemes.zinc.dark,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox.square(
+                  dimension: 40,
+                  child: EventInfoPopover(headers: headers),
+                ),
+              ],
+            ),
+          ),
+          showExplorer: modules.explorer,
+          // Stockfish and Toby share one pane, as on the watching board;
+          // it also carries Toby's reading when only his arrows are on.
+          showEngine:
+              chosen.engineLines ||
+              chosen.tobyPredictions ||
+              chosen.arrows == PlayHelpArrows.toby ||
+              heldBack,
+          onRestoreEngine:
+              () => ref
+                  .read(playHelpModulesProvider.notifier)
+                  .update((m) => m.copyWith(engineLines: true)),
+          enginePanel:
+              heldBack
+                  ? PlayHelpCurtain(tabId: tabId)
+                  : PlayHelpReveal(
+                    child: EnginePanel(
+                      fen: position.fen,
+                      sideToMove: position.turn == Side.white ? 'w' : 'b',
+                      headers: headers,
+                      activePly: currentPly,
+                      onJumpToPly: goToPly,
+                      reportVisible: false,
+                      autoAnalysisAllowed: false,
+                      isForegroundTab: foreground,
+                      toby: modules.tobyPredictions ? toby : null,
+                      tobyHeaderLabel: TobyHeaderLabel(
+                        target: tobyTarget,
+                        controller: tobyPanel,
+                      ),
+                      tobyArrowsOnly:
+                          !modules.tobyPredictions &&
+                                  modules.arrows == PlayHelpArrows.toby
+                              ? toby
+                              : null,
+                      tobyTabSelected: tobyTab,
+                      unifiedAnalysis: true,
+                      // Play's choices live in its Live help section.
+                      showSettings: false,
+                    ),
+                  ),
+        ),
+      ),
+    );
+
+    // Once the game is over the result leads the column; the moves and the
+    // analysis (engine, explorer, flip, share) stay under it for review.
+    // The help switches stay, so the review can bring in the engine or
+    // the explorer.
+    if (state.isGameOver) {
+      return Padding(
+        // The rail's own vertical insets: the panel keeps its width.
+        padding: const EdgeInsets.symmetric(vertical: _playBoardPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _postGameBrief(
+                context,
+                ref,
+                state,
+                tabId,
+                moves: analysisPanel,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, _playBoardPadding, 0),
+              child: PlayHelpModulesSection(tabId: tabId),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: _playBoardPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            // The engine pane reads the Board's analysis choices; here they
-            // are the player's help modules, so its own switches change
-            // those and never the Board's settings.
-            child: ProviderScope(
-              overrides: [
-                boardAnalysisPreferencesProvider.overrideWith(
-                  () => PlayAnalysisSettings(tabId),
-                ),
-              ],
-              child: NotationOpeningPanel(
-                tabId: tabId,
-                notationChild: notation,
-                currentFen: position.fen,
-                startingFen: game.startingFen,
-                lineUcis: lineUcis,
-                onPlayUciMove: playUci,
-                onNotationStep: (delta) {
-                  final next = currentPly + delta;
-                  if (next < 0 || next > total) return false;
-                  goToPly(next);
-                  return true;
-                },
-                onNotationJumpToHead: () => goToPly(0),
-                onNotationJumpToTip: () => goToPly(total),
-                canGoBack: currentPly > 0,
-                canGoForward: currentPly < total,
-                onFirstMove: () => goToPly(0),
-                onPreviousMove: () => goToPly(currentPly - 1),
-                onNextMove: () => goToPly(currentPly + 1),
-                onLastMove: () => goToPly(total),
-                // Moves are marked as they are played, so the whole-game report
-                // waits for the finished game on its Board tab.
-                showReport: false,
-                secondaryActions: _PlayRailSecondaryActions(
-                  onFlipBoard: onFlipBoard,
-                  onShare:
-                      () => unawaited(
-                        _sharePlayPosition(
-                          context,
-                          game: game,
-                          headers: headers,
-                          review: review,
-                          flipped: orientation == Side.black,
-                        ),
-                      ),
-                ),
-                trailingActions: FTheme(
-                  data: FThemes.zinc.dark,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox.square(
-                        dimension: 40,
-                        child: EventInfoPopover(headers: headers),
-                      ),
-                    ],
-                  ),
-                ),
-                showExplorer: modules.explorer,
-                // Stockfish and Toby share one pane, as on the watching board;
-                // it also carries Toby's reading when only his arrows are on.
-                showEngine:
-                    chosen.engineLines ||
-                    chosen.tobyPredictions ||
-                    chosen.arrows == PlayHelpArrows.toby ||
-                    heldBack,
-                onRestoreEngine:
-                    () => ref
-                        .read(playHelpModulesProvider.notifier)
-                        .update((m) => m.copyWith(engineLines: true)),
-                enginePanel:
-                    heldBack
-                        ? PlayHelpCurtain(tabId: tabId)
-                        : PlayHelpReveal(
-                          child: EnginePanel(
-                            fen: position.fen,
-                            sideToMove: position.turn == Side.white ? 'w' : 'b',
-                            headers: headers,
-                            activePly: currentPly,
-                            onJumpToPly: goToPly,
-                            reportVisible: false,
-                            autoAnalysisAllowed: false,
-                            isForegroundTab: foreground,
-                            toby: modules.tobyPredictions ? toby : null,
-                            tobyHeaderLabel: TobyHeaderLabel(
-                              target: tobyTarget,
-                              controller: tobyPanel,
-                            ),
-                            tobyArrowsOnly:
-                                !modules.tobyPredictions &&
-                                        modules.arrows == PlayHelpArrows.toby
-                                    ? toby
-                                    : null,
-                            tobyTabSelected: tobyTab,
-                            unifiedAnalysis: true,
-                            // Play's choices live in its Live help section.
-                            showSettings: false,
-                          ),
-                        ),
-              ),
-            ),
-          ),
+          Expanded(child: analysisPanel),
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 12, _playBoardPadding, 0),
             child: Column(
@@ -2371,10 +2443,7 @@ class _PlayAnalysisRail extends ConsumerWidget {
                   _PremoveQueue(state: state, tabId: tabId),
                   const SizedBox(height: 12),
                 ],
-                if (state.isGameOver)
-                  _scrollingBrief(_postGameBrief(context, ref, state, tabId))
-                else
-                  _GameActions(state: state, tabId: tabId),
+                _GameActions(state: state, tabId: tabId),
               ],
             ),
           ),
@@ -2898,11 +2967,6 @@ class _GameActions extends ConsumerWidget {
   }
 }
 
-/// The brief shrinks to the room it is given and scrolls inside it, so its
-/// actions are never pushed off a short panel.
-Widget _scrollingBrief(Widget brief) =>
-    PlayShrinkingScroller(maxHeight: 360, child: brief);
-
 /// The brief beside the board once the game is over, with its three ways
 /// on: the same game again with colours swapped, back to the setup, or the
 /// full report on the Board.
@@ -2910,14 +2974,19 @@ Widget _postGameBrief(
   BuildContext context,
   WidgetRef ref,
   PlaySessionState state,
-  String tabId,
-) {
+  String tabId, {
+  Widget? moves,
+  String? movesLabel,
+}) {
   final profile = ref.watch(playUserProfileProvider).valueOrNull;
   final finished = ref.watch(playFinishedRatingProvider(tabId));
   return PlayPostGameBrief(
     state: state,
     tabId: tabId,
     humanRating: finished?.before ?? _playHumanRating(state, profile),
+    fill: true,
+    moves: moves,
+    movesLabel: movesLabel,
     onPlayAgain: () => _leavePlaySession(ref, tabId),
     onRematch: () => _rematch(ref, state, tabId),
     onOpenReport:

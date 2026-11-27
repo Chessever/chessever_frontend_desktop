@@ -77,6 +77,7 @@ import 'package:chessever/desktop/state/user_move_nags.dart';
 import 'package:chessever/desktop/state/active_tournament.dart';
 import 'package:chessever/desktop/state/board_tab_fen.dart';
 import 'package:chessever/desktop/state/board_tab_sound_mute.dart';
+import 'package:chessever/desktop/state/botvinnik_dock.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/local_chess_library.dart';
 import 'package:chessever/desktop/state/player_workspace.dart';
@@ -115,6 +116,17 @@ class DesktopShell extends HookConsumerWidget {
     ref.watch(playTournamentCloudSyncProvider);
     // Play games, ratings, profile and rewards uploaded and merged per account.
     ref.watch(playCloudSyncProvider);
+    // A game against a bot starts without the Botvinnik chat beside it,
+    // however it was started (setup, rematch, tournament, Play from here).
+    // The player can still open it during the game.
+    ref.listen<Map<String, PlaySessionArgs>>(playSessionArgsByTabIdProvider, (
+      previous,
+      next,
+    ) {
+      if (botvinnikClosesForNewGame(previous, next)) {
+        ref.read(botvinnikDockProvider.notifier).close();
+      }
+    });
     final tabsState = ref.watch(desktopTabsProvider);
     final tabsNotifier = ref.read(desktopTabsProvider.notifier);
     final boardArgsByTabId = ref.watch(boardTabGameArgsByTabIdProvider);

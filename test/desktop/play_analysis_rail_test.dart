@@ -18,6 +18,7 @@ import 'package:chessever/desktop/state/play_help_modules.dart';
 import 'package:chessever/desktop/state/play_help_style.dart';
 import 'package:chessever/desktop/widgets/play_help_trigger.dart';
 import 'package:chessever/desktop/widgets/play_help_modules_panel.dart';
+import 'package:chessever/desktop/widgets/play_post_game_brief.dart';
 import 'package:chessever/desktop/widgets/scroll_edge_arrows.dart';
 import 'package:chessever/revenue_cat_service/subscribe_state.dart';
 
@@ -636,6 +637,109 @@ void main() {
       const fen = '4k3/8/8/8/8/8/8/R3K3 w Q - 0 1';
       final after = _after(fen, 'a1a8');
       expect(boardMoveBadgeSquare(after, Move.parse('a1a8')), Square.a8);
+    });
+  });
+
+  group('the result after the game', () {
+    Future<void> resign(WidgetTester tester) async {
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(PlayActiveGameView)),
+      );
+      container.read(playSessionProviderFor(_tabId).notifier).resign();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    void expectActionsOnScreen(WidgetTester tester, double height) {
+      for (final action in ['Rematch', 'New game', 'Full report']) {
+        final rect = tester.getRect(find.text(action));
+        expect(rect.bottom, lessThanOrEqualTo(height), reason: action);
+      }
+    }
+
+    testWidgets('leads the analysis rail, with the analysis kept under it', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _harness(
+          const PlayHelpModules(engineLines: true),
+          startingMovesUci: const ['e2e4', 'e7e5'],
+        ),
+      );
+      await tester.pump(const Duration(seconds: 5));
+      await resign(tester);
+
+      final brief = tester.widget<PlayPostGameBrief>(
+        find.byType(PlayPostGameBrief),
+      );
+      expect(brief.fill, isTrue);
+      expect(find.text('You lost'), findsOneWidget);
+      // Moves, engine, explorer, flip and share stay for the review.
+      expect(find.byType(NotationOpeningPanel), findsOneWidget);
+      expect(find.byType(NotationLadderView), findsOneWidget);
+      // The game's own controls are gone; the help switches stay, so the
+      // review can bring in more help.
+      expect(find.byType(PlayHelpModulesSection), findsOneWidget);
+      expect(find.text('Resign'), findsNothing);
+      expectActionsOnScreen(tester, 900);
+      // The result sits above the analysis, not under it.
+      expect(
+        tester.getRect(find.text('Rematch')).bottom,
+        lessThan(tester.getRect(find.byType(NotationOpeningPanel)).top),
+      );
+      expect(tester.takeException(), isNull);
+      await _drainEngine(tester);
+    });
+
+    testWidgets('takes the plain side panel, the moves under it', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _harness(
+          const PlayHelpModules(),
+          startingMovesUci: const ['e2e4', 'e7e5'],
+        ),
+      );
+      await tester.pump(const Duration(seconds: 5));
+      await resign(tester);
+
+      expect(find.text('You lost'), findsOneWidget);
+      expect(find.text('Moves'), findsOneWidget);
+      expect(find.byType(NotationLadderView), findsOneWidget);
+      expect(find.byType(PlayHelpModulesSection), findsOneWidget);
+      expect(find.text('Resign'), findsNothing);
+      expectActionsOnScreen(tester, 900);
+      expect(tester.takeException(), isNull);
+      await _drainEngine(tester);
+    });
+
+    testWidgets('a short window still keeps the moves and the actions', (
+      tester,
+    ) async {
+      // The shortest the desktop window goes, less its chrome.
+      await tester.binding.setSurfaceSize(const Size(1440, 620));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_harness(const PlayHelpModules()));
+      await tester.pump(const Duration(seconds: 5));
+      // The test font draws every glyph a full em wide, so the player rows
+      // beside a board this small overflow during the game (here only, not
+      // with real fonts). Anything thrown after the resign still fails.
+      tester.takeException();
+      await resign(tester);
+
+      expect(find.text('You lost'), findsOneWidget);
+      expect(find.byType(NotationLadderView), findsOneWidget);
+      expect(
+        tester.getSize(find.byType(NotationLadderView)).height,
+        greaterThanOrEqualTo(150),
+      );
+      expectActionsOnScreen(tester, 620);
+      expect(tester.takeException(), isNull);
+      await _drainEngine(tester);
     });
   });
 }
