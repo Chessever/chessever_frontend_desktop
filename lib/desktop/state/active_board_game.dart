@@ -855,11 +855,15 @@ class BoardGameInsertRequest {
     required this.id,
     required this.pgn,
     required this.sourceLabel,
+    this.keepCurrentPosition = false,
   });
 
   final int id;
   final String pgn;
   final String sourceLabel;
+
+  /// Insert without using the imported tail as the Board's landing position.
+  final bool keepCurrentPosition;
 }
 
 final boardGameInsertRequestProvider = StateProvider<BoardGameInsertRequest?>(

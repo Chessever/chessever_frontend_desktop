@@ -1,3 +1,4 @@
+import 'package:chessever/screens/chessboard/notation/pgn_before_move_comments.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
 import 'package:dartchess/dartchess.dart';
@@ -209,7 +210,7 @@ class ChessGame {
   String? get timeControl => metadata['TimeControl'] as String?;
 
   factory ChessGame.fromPgn(String gameId, String pgn) {
-    final pgnGame = PgnGame.parsePgn(pgn);
+    final pgnGame = parsePgnWithNumberedComments(pgn);
     final startingPosition = PgnGame.startingPosition(pgnGame.headers);
     // The classes a copy carries out-of-band. Read before the headers become
     // metadata, so the private carrier can never ride into the game — or into

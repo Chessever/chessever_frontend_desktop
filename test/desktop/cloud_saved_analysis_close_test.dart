@@ -9,6 +9,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:chessever/desktop/services/desktop_board_window_payload.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/board_keyboard_shortcuts.dart';
+import 'package:chessever/desktop/state/board_eval.dart';
 import 'package:chessever/desktop/state/desktop_tabs.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/state/user_move_nags.dart';
@@ -17,6 +18,7 @@ import 'package:chessever/desktop/services/board_report_output.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/state/board_pane_session.dart';
 import 'package:chessever/desktop/widgets/desktop_chess_board.dart';
+import 'package:chessever/desktop/widgets/notation_ladder_view.dart';
 import 'package:chessever/providers/board_settings_provider_new.dart';
 import 'package:chessever/providers/engine_settings_provider.dart';
 import 'package:chessever/repository/sqlite/app_database.dart';
@@ -30,6 +32,8 @@ import 'package:chessever/screens/chessboard/provider/game_pgn_stream_provider.d
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/utils/date_time_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/current_broadcast_games.dart';
 
 const sourcePgn =
     '[White "Source"]\n[Black "Opponent"]\n[Result "*"]\n\n'
@@ -605,6 +609,216 @@ void main() {
       },
     );
 
+    for (final anchor in <List<int>>[const [], const [0], const [2]]) {
+      testWidgets('Explorer Insert game preserves the Board cursor at $anchor', (
+        tester,
+      ) async {
+        final board = await _pumpBoard(tester, live: false);
+        tester
+            .widget<NotationLadderView>(find.byType(NotationLadderView))
+            .onJump(anchor);
+        await board.settle();
+        final before = board.liveSession();
+        final fen = board.fen();
+        expect(before.pointer, anchor);
+
+        board.container.read(boardGameInsertRequestProvider.notifier).state =
+            const BoardGameInsertRequest(
+              id: 101,
+              pgn: '1. e4 c5 2. Nf3 d6 {Imported commentary} *',
+              sourceLabel: 'Explorer fixture',
+              keepCurrentPosition: true,
+            );
+        await board.settle();
+
+        final after = board.liveSession();
+        final saved = exportGameToPgn(after.game);
+        expect(saved, contains('Imported commentary'));
+        expect(saved, contains('[%src Explorer fixture]'));
+        expect(after.game.mainline.map((move) => move.san), ['e4', 'e5', 'Nf3', 'Nc6']);
+        expect(after.pointer, anchor);
+        expect(board.fen(), fen);
+        expect(board.container.read(desktopTabsProvider).activeId, _boardTabId);
+        expect(after.undoStack.length, before.undoStack.length + 1);
+
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await board.settle();
+        expect(exportGameToPgn(board.liveSession().game), exportGameToPgn(before.game));
+        expect(board.fen(), fen);
+        await board.dispose();
+      });
+    }
+
+    testWidgets('left bracket keeps the selected move and remaining moves; Undo restores the original', (
+      tester,
+    ) async {
+      final board = await _pumpBoard(tester, live: false);
+      tester
+          .widget<NotationLadderView>(find.byType(NotationLadderView))
+          .onJump(const [1]);
+      await board.settle();
+      board.toggleNag(0, 3);
+      board.toggleNag(1, 5);
+      await board.settle();
+      final before = board.liveSession();
+      final fen = board.fen();
+      expect(before.pointer, [1]);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.bracketLeft);
+      await board.settle();
+      final cut = board.liveSession();
+      expect(cut.game.startingFen, before.game.mainline.first.fen);
+      expect(cut.pointer, [0]);
+      expect(board.fen(), fen);
+      expect(cut.game.mainline.map((move) => move.san), ['e5', 'Nf3', 'Nc6']);
+      expect(cut.game.mainline.first.nags, contains(5));
+      expect(cut.game.mainline.first.nags, isNot(contains(3)));
+      expect(cut.dirtySinceLoad, isTrue);
+      final reopened = ChessGame.fromPgn('', exportGameToPgn(cut.game));
+      expect(reopened.startingFen, before.game.mainline.first.fen);
+      expect(reopened.mainline.map((move) => move.san), ['e5', 'Nf3', 'Nc6']);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await board.settle();
+      final undone = board.liveSession();
+      expect(exportGameToPgn(undone.game), exportGameToPgn(before.game));
+      expect(undone.pointer, before.pointer);
+      expect(undone.dirtySinceLoad, before.dirtySinceLoad);
+      await board.dispose();
+    });
+
+    testWidgets('right bracket keeps the selected move and removes later plies', (tester) async {
+      final board = await _pumpBoard(tester, live: false);
+      tester.widget<NotationLadderView>(find.byType(NotationLadderView)).onJump(const [1]);
+      await board.settle();
+      final fen = board.fen();
+      final before = board.liveSession();
+      await tester.sendKeyEvent(LogicalKeyboardKey.bracketRight);
+      await board.settle();
+      final cut = board.liveSession();
+      expect(cut.game.mainline.map((m) => m.san), ['e4', 'e5']);
+      expect(cut.game.startingFen, before.game.startingFen);
+      expect(cut.pointer, [1]);
+      expect(board.fen(), fen);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await board.settle();
+      expect(board.liveSession().game.mainline.map((m) => m.san), ['e4', 'e5', 'Nf3', 'Nc6']);
+      expect(board.fen(), fen);
+      await board.dispose();
+    });
+
+    testWidgets('broadcast cut stays on the same Board and Undo rejoins the feed', (
+      tester,
+    ) async {
+      final board = await _pumpBoard(tester, live: true);
+      tester
+          .widget<NotationLadderView>(find.byType(NotationLadderView))
+          .onJump(const [1]);
+      await board.settle();
+      final before = board.liveSession();
+      final anchor = board.fen();
+      await tester.sendKeyEvent(LogicalKeyboardKey.bracketLeft);
+      await board.settle();
+
+      final state = board.container.read(desktopTabsProvider);
+      expect(state.activeId, _boardTabId);
+      expect(state.tabs.map((tab) => tab.id), [_boardTabId]);
+      final cut = board.liveSession();
+      expect(cut.game.startingFen, before.game.mainline.first.fen);
+      expect(cut.game.mainline.map((move) => move.san), ['e5']);
+      expect(cut.pointer, [0]);
+      expect(board.fen(), anchor);
+      expect(board.closeWarns(), isTrue);
+      final canonical = board.container.read(boardTabGameArgsByTabIdProvider);
+      expect(canonical.keys, [_boardTabId]);
+      expect(canonical[_boardTabId]?.gameId, _liveGameId);
+      expect(canonical[_boardTabId]?.pgn.trim(), _livePgn.trim());
+      final transferred = DesktopBoardWindowPayload.decode(
+        DesktopBoardWindowPayload.fromBoardSession(
+          state.tabs.single,
+          openingArgs: canonical[_boardTabId],
+          session: cut,
+          attachedOrigin: null,
+        ).encode(),
+      );
+      final child = ProviderContainer();
+      addTearDown(child.dispose);
+      transferred.restoreBoardSession(child, 'child');
+      final restored = child.read(boardPaneSessionByTabIdProvider)['child']!;
+      expect(restored.cutBroadcastGameId, _liveGameId);
+      expect(restored.game.startingFen, before.game.mainline.first.fen);
+
+      await board.feed(_row(_liveGameId, nextMove: true));
+      expect(exportGameToPgn(board.liveSession().game), exportGameToPgn(cut.game));
+      await board.remountFrom(board.retained());
+      await board.feed(_row(_liveGameId, nextMove: true));
+      expect(exportGameToPgn(board.liveSession().game), exportGameToPgn(cut.game));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await board.settle();
+      final undone = board.liveSession();
+      expect(undone.game.mainline.map((move) => move.san), ['e4', 'e5', 'Nf3']);
+      // Undo rejoins the live tip when the restored selection was the tip.
+      expect(undone.pointer, [2]);
+      expect(board.fen(), _nextMoveFen);
+      await board.dispose();
+    });
+
+    testWidgets('Shift+A edits before the selected move and survives PGN reopen', (
+      tester,
+    ) async {
+      final board = await _pumpBoard(tester, live: false);
+      tester
+          .widget<NotationLadderView>(find.byType(NotationLadderView))
+          .onJump(const [1]);
+      await board.settle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await board.settle();
+      expect(find.text('Comment before move'), findsOneWidget);
+      await tester.enterText(find.byType(EditableText).last, 'Before Black replies');
+      await tester.tap(find.text('Save'));
+      await board.settle();
+      final game = board.liveSession().game;
+      expect(game.mainline[1].startingComments, ['Before Black replies']);
+      final reopened = ChessGame.fromPgn('', exportGameToPgn(game));
+      expect(reopened.mainline[1].startingComments, ['Before Black replies']);
+      expect(reopened.mainline[0].comments ?? [], isEmpty);
+      await board.dispose();
+    });
+
+    testWidgets('a before-move comment survives an accepted broadcast append', (
+      tester,
+    ) async {
+      final board = await _pumpBoard(tester, live: true);
+      tester
+          .widget<NotationLadderView>(find.byType(NotationLadderView))
+          .onJump(const [1]);
+      await board.settle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await board.settle();
+      await tester.enterText(find.byType(EditableText).last, 'Private before e5');
+      await tester.tap(find.text('Save'));
+      await board.settle();
+      await board.feed(_row(_liveGameId, nextMove: true));
+      final game = board.liveSession().game;
+      expect(game.mainline.map((m) => m.san), ['e4', 'e5', 'Nf3']);
+      expect(game.mainline[1].startingComments, ['Private before e5']);
+      expect(board.closeWarns(), isTrue);
+      await board.dispose();
+    });
+
     testWidgets('a restored board does not keep a NAG the user toggled off', (
       tester,
     ) async {
@@ -627,7 +841,7 @@ void main() {
   });
 }
 
-const _boardTabId = 'tournaments-default';
+const _boardTabId = 'fixture-board';
 const _liveGameId = 'titled-tuesday-1';
 
 const String _livePgn = '''
@@ -829,11 +1043,24 @@ Future<_MountedBoard> _pumpBoard(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        currentBroadcastGames,
+        desktopTabsProvider.overrideWith((ref) => _FixtureBoardTabs()),
         boardTabGameArgsByTabIdProvider.overrideWith(
           (ref) => <String, BoardTabGameArgs>{_boardTabId: args},
         ),
         boardSettingsProviderNew.overrideWith(_QuietBoardSettings.new),
         engineSettingsProviderNew.overrideWith(_NoEngineSettings.new),
+        boardEvalProvider.overrideWith(
+          (ref, fen) => BoardEvalNotifier(
+            ref,
+            fen,
+            const BoardEvalConfig(
+              enabled: false,
+              searchTimeIndex: 0,
+              principalVariationIndex: 0,
+            ),
+          ),
+        ),
         keyboardShortcutsProvider.overrideWith(_DefaultShortcuts.new),
         liveGameUpdateArrivalStreamProvider.overrideWith(
           (ref, gameId) => _arrivals(updates.stream, gameId),
@@ -883,6 +1110,15 @@ Stream<LiveStreamArrival<LiveGameUpdate?>> _arrivals(
       sessionEpoch: 1,
       sequence: ++sequence,
       isFallback: false,
+    );
+  }
+}
+
+class _FixtureBoardTabs extends DesktopTabsNotifier {
+  _FixtureBoardTabs() {
+    state = const DesktopTabsState(
+      tabs: [DesktopTab(id: _boardTabId, kind: TabKind.board, title: 'Fixture')],
+      activeId: _boardTabId,
     );
   }
 }

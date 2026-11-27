@@ -21,6 +21,7 @@ import 'package:chessever/desktop/utils/notation_vertical_navigation.dart';
 import 'package:chessever/desktop/utils/notation_variation_placement.dart';
 import 'package:chessever/desktop/utils/notation_move_timing.dart';
 import 'package:chessever/desktop/widgets/spring_scroll_physics.dart';
+import 'package:chessever/desktop/services/board_cut_previous_moves.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game_navigator.dart';
 import 'package:chessever/screens/chessboard/notation/notation_pointer.dart';
@@ -257,9 +258,15 @@ class NotationLadderView extends StatefulWidget {
     this.onClearMoveQualityAnnotation,
     this.onClearAllCommentary,
     this.onSetMoveComment,
+    this.onEditPositionedComment,
+    this.onClearMoveTextComments,
+    this.beforeMoveCommentShortcutLabel,
+    this.afterMoveCommentShortcutLabel,
     this.onPromoteVariation,
     this.onDeleteVariation,
     this.onTrimContinuation,
+    this.onCutPreviousMoves,
+    this.cutPreviousMovesShortcutLabel = '[',
     this.autoCollapseDepth = 1 << 30,
     this.autoCollapseMoveThreshold = 1 << 30,
     this.scrollController,
@@ -348,6 +355,11 @@ class NotationLadderView extends StatefulWidget {
   /// empty string clears the rendered comment block.
   final void Function(ChessMovePointer pointer, String? comment)?
   onSetMoveComment;
+  final Future<void> Function(ChessMovePointer pointer, bool before)?
+      onEditPositionedComment;
+  final ValueChanged<ChessMovePointer>? onClearMoveTextComments;
+  final String? beforeMoveCommentShortcutLabel;
+  final String? afterMoveCommentShortcutLabel;
 
   /// Promote a variation to the mainline. Pointer is the head move of
   /// the variation (depth ≥ 3, i.e. `[…, varIdx, 0]`).
@@ -359,6 +371,10 @@ class NotationLadderView extends StatefulWidget {
 
   /// Trim everything after [pointer] in the current line.
   final void Function(ChessMovePointer pointer)? onTrimContinuation;
+
+  /// Keep the continuation after this exact move's position.
+  final void Function(ChessMovePointer pointer)? onCutPreviousMoves;
+  final String? cutPreviousMovesShortcutLabel;
 
   /// Variations are unfolded by default on desktop; callers may pass finite
   /// thresholds to opt back into mobile-style auto-collapse.
@@ -1602,7 +1618,9 @@ class _LineBlock extends StatelessWidget {
         whiteMove = line[i];
         whitePointer = [...pointerPrefix, i];
         if (i + 1 < line.length &&
-            notationVariationsAfterMove(line, i).isEmpty) {
+            notationVariationsAfterMove(line, i).isEmpty &&
+            (annotationsHidden ||
+                _cleanPgnComments(line[i + 1].startingComments).isEmpty)) {
           blackMove = line[i + 1];
           blackPointer = [...pointerPrefix, i + 1];
         }
@@ -1834,6 +1852,14 @@ class _LineBlock extends StatelessWidget {
         final activeNow =
             whiteIsActive ? whiteKey : (blackIsActive ? blackKey : null);
         row = buildRow(activeNow, activeKey);
+      }
+      if (!annotationsHidden) {
+        final before = _cleanPgnComments(
+          (whiteMove ?? blackMove)?.startingComments,
+        );
+        if (before.isNotEmpty) {
+          pairChildren.add(_MoveComments(depth: depth, comments: before));
+        }
       }
       pairChildren.add(row);
       if (showResultInBlackSlot) resultShown = true;
@@ -3821,6 +3847,36 @@ class _LadderChipState extends State<_LadderChip>
     final canTrim = widget.onTrimFromHere != null;
     final notationState =
         context.findAncestorStateOfType<_NotationLadderViewState>();
+    final cutGame = notationState?.widget.game;
+    final cutPointer = widget.pointer;
+    final positionedEditor = notationState?.widget.onEditPositionedComment;
+    final clearTextComments = notationState?.widget.onClearMoveTextComments;
+    final commentActions = <DesktopContextMenuItem<Object>>[
+      if (positionedEditor != null) ...[
+        DesktopContextMenuItem<Object>(
+          value: _LadderAction.editCommentBefore,
+          icon: Icons.add_comment_outlined,
+          label: 'Comment before move',
+          shortcut: notationState?.widget.beforeMoveCommentShortcutLabel,
+        ),
+        DesktopContextMenuItem<Object>(
+          value: _LadderAction.editComment,
+          icon: Icons.add_comment_outlined,
+          label: 'Comment after move',
+          shortcut: notationState?.widget.afterMoveCommentShortcutLabel,
+        ),
+      ] else if (canComment)
+        DesktopContextMenuItem<Object>(
+          value: _LadderAction.editComment,
+          icon: Icons.add_comment_outlined,
+          label: (widget.commentText ?? '').trim().isEmpty
+              ? 'Add comment'
+              : 'Edit comment',
+        ),
+    ];
+    final canCutPrevious =
+        notationState?.widget.onCutPreviousMoves != null &&
+        cutGame != null && canCutBoardPreviousMoves(cutGame, cutPointer);
     final clearStoredQuality =
         notationState?.widget.onClearMoveQualityAnnotation;
     final canClearQuality =
@@ -3860,6 +3916,7 @@ class _LadderChipState extends State<_LadderChip>
           label: 'Copy FEN',
         ),
         if (canTrim ||
+            canCutPrevious ||
             canDeleteVariation ||
             canComment ||
             canAnnotate ||
@@ -3886,12 +3943,12 @@ class _LadderChipState extends State<_LadderChip>
                 enabled: canTrim,
                 destructive: true,
               ),
-              const DesktopContextMenuItem<Object>(
+              DesktopContextMenuItem<Object>(
                 value: _LadderAction.deletePreviousMoves,
                 icon: Icons.keyboard_tab_rounded,
                 label: 'Delete Previous Moves',
-                shortcut: '[',
-                enabled: false,
+                shortcut: notationState?.widget.cutPreviousMovesShortcutLabel,
+                enabled: canCutPrevious,
                 destructive: true,
               ),
               const DesktopContextMenuDivider<Object>(),
@@ -3907,7 +3964,7 @@ class _LadderChipState extends State<_LadderChip>
                 value: _LadderAction.deleteTextCommentary,
                 icon: Icons.subject_rounded,
                 label: 'Delete Text Commentary',
-                enabled: canComment,
+                enabled: canComment || clearTextComments != null,
                 destructive: true,
               ),
             ],
@@ -3921,17 +3978,9 @@ class _LadderChipState extends State<_LadderChip>
             label: 'Promote to mainline',
           ),
         ],
-        if (canAnnotate) ...[
+        if (canAnnotate || commentActions.isNotEmpty) ...[
           const DesktopContextMenuDivider<Object>(),
-          if (canComment)
-            DesktopContextMenuItem<Object>(
-              value: _LadderAction.editComment,
-              icon: Icons.add_comment_outlined,
-              label:
-                  (widget.commentText ?? '').trim().isEmpty
-                      ? 'Add comment'
-                      : 'Edit comment',
-            ),
+          ...commentActions,
           DesktopContextMenuItem<Object>(
             value: _LadderAction.toggleAllAnnotations,
             icon:
@@ -3955,27 +4004,6 @@ class _LadderChipState extends State<_LadderChip>
               icon: Icons.clear_rounded,
               label: 'Clear move symbol',
             ),
-        ] else if (canComment) ...[
-          const DesktopContextMenuDivider<Object>(),
-          DesktopContextMenuItem<Object>(
-            value: _LadderAction.editComment,
-            icon: Icons.add_comment_outlined,
-            label:
-                (widget.commentText ?? '').trim().isEmpty
-                    ? 'Add comment'
-                    : 'Edit comment',
-          ),
-          DesktopContextMenuItem<Object>(
-            value: _LadderAction.toggleAllAnnotations,
-            icon:
-                (notationState?._annotationsHidden ?? false)
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-            label:
-                (notationState?._annotationsHidden ?? false)
-                    ? 'Show All Annotations'
-                    : 'Hide All Annotations',
-          ),
         ],
       ],
     );
@@ -4020,7 +4048,11 @@ class _LadderChipState extends State<_LadderChip>
           widget.onClearNags?.call();
         }
       case _LadderAction.deleteTextCommentary:
-        widget.onSetComment?.call(null);
+        if (clearTextComments == null) {
+          widget.onSetComment?.call(null);
+        } else if (identical(notationState?.widget.game, cutGame)) {
+          clearTextComments(cutPointer);
+        }
       case _LadderAction.clearAnnotation:
         if (clearStoredQuality != null) {
           clearStoredQuality(widget.pointer);
@@ -4029,20 +4061,32 @@ class _LadderChipState extends State<_LadderChip>
         }
       case _LadderAction.toggleAllAnnotations:
         notationState?._toggleAllAnnotationsFromMenu();
+      case _LadderAction.editCommentBefore:
       case _LadderAction.editComment:
-        if (!context.mounted) return;
+        if (!context.mounted || !identical(notationState?.widget.game, cutGame)) {
+          return;
+        }
+        if (positionedEditor != null) {
+          await positionedEditor(
+            cutPointer,
+            selected == _LadderAction.editCommentBefore,
+          );
+          return;
+        }
         final next = await showMoveCommentEditor(
           context,
           initialComment: widget.commentText ?? '',
         );
-        if (next != null) {
+        if (mounted &&
+            next != null &&
+            identical(notationState?.widget.game, cutGame)) {
           widget.onSetComment?.call(next.trim().isEmpty ? null : next.trim());
         }
       case _LadderAction.deletePreviousMoves:
-        // Present for parity with reference database menus. The current desktop
-        // notation model can safely delete variations and continuations; keeping
-        // this disabled avoids rewriting the game's starting position/FENs.
-        return;
+        // The originating tree may have changed while the menu was open.
+        if (canCutPrevious && identical(notationState?.widget.game, cutGame)) {
+          notationState?.widget.onCutPreviousMoves?.call(cutPointer);
+        }
     }
   }
 
@@ -4449,6 +4493,7 @@ enum _LadderAction {
   clearAnnotation,
   toggleAllAnnotations,
   editComment,
+  editCommentBefore,
 }
 
 enum _LadderNagKind { quality, evaluation, idea }
@@ -4463,10 +4508,11 @@ class _LadderNagAction {
 Future<String?> showMoveCommentEditor(
   BuildContext context, {
   required String initialComment,
+  String title = 'Move comment',
 }) {
   return showDesktopModal<String>(
     context,
-    title: 'Move comment',
+    title: title,
     maxWidth: 520,
     builder: (_) => _MoveCommentEditor(initialComment: initialComment),
   );

@@ -311,12 +311,12 @@ extension BoardActionKeyMeta on BoardActionKey {
       case BoardActionKey.cutRemainingMoves:
         return 'Delete the continuation after the selected move.';
       case BoardActionKey.cutPreviousMoves:
-        return 'Delete moves before the selected move when supported.';
+        return 'Delete moves before the selected move, keeping it and the rest of the line.';
       case BoardActionKey.clearVariationsAndComments:
         return 'Remove variations, text comments, graphic comments, and '
             'user annotations from the current game.';
       case BoardActionKey.commentBeforeMove:
-        return 'Add text commentary before the selected move when supported.';
+        return 'Add or edit a comment before the selected move.';
       case BoardActionKey.annotateGoodMove:
         return 'Mark the selected move with the ! annotation glyph.';
       case BoardActionKey.annotateBrilliant:
@@ -836,7 +836,7 @@ Map<BoardActionKey, List<KeyChord>> defaultBoardShortcuts() {
     BoardActionKey.clearVariationsAndComments: [
       _ctrlShift(LogicalKeyboardKey.keyY),
     ],
-    BoardActionKey.commentBeforeMove: [_ctrlShift(LogicalKeyboardKey.keyA)],
+    BoardActionKey.commentBeforeMove: [_shift(LogicalKeyboardKey.keyA)],
     BoardActionKey.annotateGoodMove: [_shift(LogicalKeyboardKey.digit1)],
     BoardActionKey.annotateBrilliant: [_shift(LogicalKeyboardKey.digit2)],
     BoardActionKey.annotateMistake: [_shift(LogicalKeyboardKey.digit3)],
@@ -1071,6 +1071,21 @@ void _upgradeDefaultLikeOverrides(
         defaults[BoardActionKey.savePgnFile]!;
     overrides[BoardActionKey.saveGameToLibrary] =
         defaults[BoardActionKey.saveGameToLibrary]!;
+  }
+
+  // Persisted bindings include old defaults as well as custom shortcuts.
+  final commentBefore = overrides[BoardActionKey.commentBeforeMove];
+  final oldCommentBefore = _ctrlShift(LogicalKeyboardKey.keyA);
+  final newCommentBefore = _shift(LogicalKeyboardKey.keyA);
+  final shiftAClaimed = overrides.entries.any(
+    (entry) => entry.key != BoardActionKey.commentBeforeMove &&
+        entry.value.any((chord) => chord.matches(newCommentBefore)),
+  );
+  if (!shiftAClaimed &&
+      (_sameChords(commentBefore, [oldCommentBefore]) ||
+          _sameChords(commentBefore, [newCommentBefore, oldCommentBefore]))) {
+    overrides[BoardActionKey.commentBeforeMove] =
+        defaults[BoardActionKey.commentBeforeMove]!;
   }
 
   final openExplorer = overrides[BoardActionKey.openExplorer];

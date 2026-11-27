@@ -2,6 +2,7 @@ import 'package:dartchess/dartchess.dart';
 
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 import 'package:chessever/screens/chessboard/utils/chessever_classification_header.dart';
+import 'package:chessever/screens/chessboard/notation/pgn_before_move_comments.dart';
 import 'package:chessever/utils/pgn_clock_utils.dart';
 
 /// A fully prepared edit. The caller publishes it with one undo snapshot.
@@ -23,7 +24,7 @@ BoardPgnInsertion? insertBoardPgn({
 }) {
   try {
     _validatePgnTokens(pgn);
-    final parsed = PgnGame.parsePgn(pgn);
+    final parsed = parsePgnWithNumberedComments(pgn);
     final incoming = _PositionNode();
     final start = PgnGame.startingPosition(parsed.headers);
     _readPgn(

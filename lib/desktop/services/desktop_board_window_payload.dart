@@ -110,6 +110,7 @@ class DesktopBoardWindowPayload {
           'committed': session.hasCommittedSave,
           'savedSeed': session.savedSourceSeedPgn,
           'detachedSeed': pgn.trim(),
+          'cutBroadcastGameId': session.cutBroadcastGameId,
         },
         'attachedOrigin': _librarySaveOriginToJson(attachedOrigin),
       },
@@ -145,6 +146,7 @@ class DesktopBoardWindowPayload {
             hasCommittedSave: data['committed'] == true,
             savedSourceSeedPgn: data['savedSeed'] as String?,
             detachedSeedPgn: data['detachedSeed'] as String?,
+            cutBroadcastGameId: data['cutBroadcastGameId'] as String?,
           ),
         );
     final origin = _librarySaveOriginFromJson(metadata['attachedOrigin']);

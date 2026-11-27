@@ -88,6 +88,7 @@ String restoreBlackMoveNumbers(String movetext) {
       frame.moveNumber = number.moveNumber;
       frame.blackToMove = number.blackToMove;
       frame.seenMove = true;
+      frame.explicitNumber = true;
       adjacent = true;
       out.write(token);
       index = end;
@@ -103,12 +104,14 @@ String restoreBlackMoveNumbers(String movetext) {
     // A SAN. If it is black's and no number token introduced it, the reader
     // has nothing tying it to a move number — write the `N...` the standard
     // asks for.
-    if (frame.seenMove && frame.blackToMove && !adjacent) {
+    if (frame.seenMove && frame.blackToMove && !adjacent &&
+        !frame.explicitNumber) {
       out.write('${frame.moveNumber}... ');
     }
     out.write(token);
     index = end;
     adjacent = true;
+    frame.explicitNumber = false;
 
     if (!frame.seenMove) {
       // A movetext that opened without any number token (rare, but never
@@ -130,6 +133,7 @@ class _Frame {
   int moveNumber = 1;
   bool blackToMove = false;
   bool seenMove = false;
+  bool explicitNumber = false;
 }
 
 bool _isSpace(String char) =>

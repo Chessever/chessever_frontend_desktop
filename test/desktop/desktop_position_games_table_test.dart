@@ -918,6 +918,7 @@ void main() {
                 );
               } else {
                 expect(request?.pgn, second);
+                expect(request?.keepCurrentPosition, isTrue);
               }
             } else {
               final tabs = container.read(boardTabGameArgsByTabIdProvider);
