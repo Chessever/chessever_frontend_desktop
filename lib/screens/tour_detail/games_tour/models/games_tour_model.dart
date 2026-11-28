@@ -728,6 +728,14 @@ class PlayerCard {
   final String? gamebasePlayerId;
   final double? customPoints;
 
+  /// The FIDE spelling Gamebase sent for this side (`whiteCanonicalName` /
+  /// `blackCanonicalName`), shown in place of [name] by [displayName]. Null
+  /// for every other source and for servers that do not send it.
+  ///
+  /// Display only: [name] stays the stored spelling, which PGN headers,
+  /// sorting and name-based side matching keep using.
+  final String? canonicalName;
+
   PlayerCard({
     required this.name,
     required this.federation,
@@ -738,6 +746,7 @@ class PlayerCard {
     this.fideId,
     this.gamebasePlayerId,
     this.customPoints,
+    this.canonicalName,
   });
 
   factory PlayerCard.fromPlayer(Player player) {
@@ -769,6 +778,7 @@ class PlayerCard {
     String? gamebasePlayerId,
     double? customPoints,
     bool clearCustomPoints = false,
+    String? canonicalName,
   }) {
     return PlayerCard(
       name: name ?? this.name,
@@ -781,10 +791,16 @@ class PlayerCard {
       gamebasePlayerId: gamebasePlayerId ?? this.gamebasePlayerId,
       customPoints:
           clearCustomPoints ? null : customPoints ?? this.customPoints,
+      canonicalName: canonicalName ?? this.canonicalName,
     );
   }
 
-  String get displayName => name;
+  /// The name to show: [canonicalName] when Gamebase sent one, else [name].
+  String get displayName {
+    final canonical = canonicalName?.trim() ?? '';
+    return canonical.isNotEmpty ? canonical : name;
+  }
+
   String get displayTitle => title.isNotEmpty ? title : '';
   String get displayRating => rating > 0 ? rating.toString() : 'Unrated';
 
@@ -800,7 +816,8 @@ class PlayerCard {
         other.fideId == fideId &&
         other.team == team &&
         other.gamebasePlayerId == gamebasePlayerId &&
-        other.customPoints == customPoints;
+        other.customPoints == customPoints &&
+        other.canonicalName == canonicalName;
   }
 
   @override
@@ -815,6 +832,7 @@ class PlayerCard {
       team,
       gamebasePlayerId,
       customPoints,
+      canonicalName,
     );
   }
 }

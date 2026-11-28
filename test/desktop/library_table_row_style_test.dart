@@ -18,7 +18,11 @@ void main() {
       libraryStandardTablePlayerName('Praggnanandhaa R'),
       'Praggnanandhaa, R.',
     );
-    expect(libraryStandardTablePlayerName('Magnus Carlsen'), 'Carlsen, M.');
+    // No comma and no single surname: shown as written, never turned
+    // around (the same Library holds TWIC "Ding,L" as `Ding, L.`).
+    expect(libraryStandardTablePlayerName('Magnus Carlsen'), 'Magnus Carlsen');
+    expect(libraryStandardTablePlayerName('Ding Liren'), 'Ding Liren');
+    expect(libraryStandardTablePlayerName('Ding,L'), 'Ding, L.');
   });
 
   test('study and repertoire labels are never abbreviated', () {
@@ -58,12 +62,18 @@ void main() {
       ),
     );
 
-    await tester.pumpWidget(row(width: 260, name: 'Magnus Carlsen'));
-    expect(find.text('Magnus Carlsen'), findsOneWidget);
+    await tester.pumpWidget(row(width: 300, name: 'Carlsen, Magnus'));
+    expect(find.text('Carlsen, Magnus'), findsOneWidget);
     expect(find.text('Carlsen, M.'), findsNothing);
 
-    await tester.pumpWidget(row(width: 96, name: 'Magnus Carlsen'));
+    await tester.pumpWidget(row(width: 96, name: 'Carlsen, Magnus'));
     expect(find.text('Carlsen, M.'), findsOneWidget);
+
+    // A name the rules cannot read is only ever ellipsized, never turned
+    // around into `Carlsen, M.`.
+    await tester.pumpWidget(row(width: 96, name: 'Magnus Carlsen'));
+    expect(find.text('Magnus Carlsen'), findsOneWidget);
+    expect(find.text('Carlsen, M.'), findsNothing);
 
     // A study label is never rewritten, however tight the column is.
     await tester.pumpWidget(

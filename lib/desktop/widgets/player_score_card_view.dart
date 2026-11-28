@@ -2414,7 +2414,9 @@ class _GameRowState extends State<_GameRow> {
                               behavior: HitTestBehavior.opaque,
                               onTap: widget.onOpenOpponent,
                               child: Text(
-                                opponent.name.isEmpty ? '—' : opponent.name,
+                                opponent.displayName.isEmpty
+                                    ? '—'
+                                    : opponent.displayName,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(

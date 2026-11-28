@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/desktop_player_favorite_actions.dart';
 
@@ -1471,12 +1472,11 @@ String _initials(String name) {
 }
 
 String _shortName(String fullName) {
-  final parts = fullName.split(',');
-  if (parts.length > 1 && parts.first.trim().isNotEmpty) {
-    return parts.first.trim();
-  }
   final words = fullName.trim().split(RegExp(r'\s+'));
-  if (words.length > 1) return words.last;
+  if (fullName.contains(',') || words.length > 1) {
+    final surname = desktopPlayerSurname(fullName);
+    if (surname.isNotEmpty) return surname;
+  }
   return fullName.length > 14 ? '${fullName.substring(0, 12)}...' : fullName;
 }
 

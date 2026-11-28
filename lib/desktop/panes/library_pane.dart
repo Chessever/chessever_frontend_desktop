@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/auth/web_pgn_access.dart';
 import 'package:chessever/desktop/auth/web_prep_source_access.dart';
@@ -9106,11 +9107,8 @@ String _relativeTime(DateTime t) {
 }
 
 String _short(String n) {
-  final t = n.trim();
-  if (t.isEmpty) return '—';
-  if (t.contains(',')) return t.split(',').first.trim();
-  final parts = t.split(RegExp(r'\s+'));
-  return parts.length == 1 ? parts.first : parts.last;
+  if (n.trim().isEmpty) return '—';
+  return desktopPlayerSurname(n);
 }
 
 void _openLocalPreviewGame(
@@ -11704,14 +11702,14 @@ class _TwicTableRowState extends State<_TwicTableRow>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _PlayerCell(
-                name: white.name,
+                name: white.displayName,
                 federation: white.federation,
                 title: white.title,
                 rating: white.rating > 0 ? white.rating.toString() : '',
                 abbreviate: false,
               ),
               _PlayerCell(
-                name: black.name,
+                name: black.displayName,
                 federation: black.federation,
                 title: black.title,
                 rating: black.rating > 0 ? black.rating.toString() : '',
@@ -11737,7 +11735,7 @@ class _TwicTableRowState extends State<_TwicTableRow>
         Expanded(
           flex: _kPreviewColWhite,
           child: _PlayerCell(
-            name: game.whitePlayer.name,
+            name: game.whitePlayer.displayName,
             federation: game.whitePlayer.federation,
             title: game.whitePlayer.title,
             rating:
@@ -11753,7 +11751,7 @@ class _TwicTableRowState extends State<_TwicTableRow>
         Expanded(
           flex: _kPreviewColBlack,
           child: _PlayerCell(
-            name: game.blackPlayer.name,
+            name: game.blackPlayer.displayName,
             federation: game.blackPlayer.federation,
             title: game.blackPlayer.title,
             rating:
@@ -13982,7 +13980,7 @@ class _TwicPreviewPanel extends StatelessWidget {
     return _LibraryChessGamePreviewPanel(
       game: previewGame!,
       plyIndex: plyIndex,
-      title: '${g.whitePlayer.name} vs ${g.blackPlayer.name}',
+      title: '${g.whitePlayer.displayName} vs ${g.blackPlayer.displayName}',
       isResolvingNotation: isResolvingNotation,
       onOpen: onOpen,
       onPlyChanged: onPlyChanged,

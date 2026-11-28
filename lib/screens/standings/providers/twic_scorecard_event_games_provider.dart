@@ -5,6 +5,7 @@ import 'package:chessever/screens/gamebase/models/models.dart'
 import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
 import 'package:chessever/utils/chess_title_utils.dart';
+import 'package:chessever/utils/gamebase_row_player_name.dart';
 import 'package:chessever/utils/twic_player_enrichment.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -200,6 +201,7 @@ GamesTourModel _mapPlayerGameRowToModel(
         (whitePlayerId != null && whitePlayerId.isNotEmpty)
             ? whitePlayerId
             : whitePlayer?.id,
+    canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: true),
   );
 
   final blackCard = PlayerCard(
@@ -218,6 +220,7 @@ GamesTourModel _mapPlayerGameRowToModel(
         (blackPlayerId != null && blackPlayerId.isNotEmpty)
             ? blackPlayerId
             : blackPlayer?.id,
+    canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: false),
   );
 
   final round = row['round']?.toString().trim();

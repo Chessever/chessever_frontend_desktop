@@ -30,6 +30,7 @@ import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/state/tournament_games.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
 import 'package:chessever/desktop/widgets/cursor_mode.dart';
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_context_menu.dart';
 import 'package:chessever/desktop/widgets/move_hover_preview.dart';
 import 'package:chessever/desktop/widgets/table_display_value.dart';
@@ -44,6 +45,7 @@ import 'package:chessever/screens/library/utils/gamebase_pgn_builder.dart';
 import 'package:chessever/screens/player_profile/utils/twic_event_identity.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/utils/figurine_notation.dart';
+import 'package:chessever/utils/gamebase_row_player_name.dart';
 import 'package:chessever/widgets/federation_flag.dart';
 import 'package:chessever/desktop/widgets/desktop_spinner.dart';
 
@@ -1569,11 +1571,11 @@ class _DesktopPositionGamesTableState
   String _sourceLabelFromRow(Map<String, dynamic> row) {
     final result = _normalizeResult((row['result']?.toString() ?? '').trim());
     final white = _compactPlayerCitation(
-      row['white']?.toString() ?? row['whiteName']?.toString() ?? '',
+      gamebaseRowPlayerName(row, isWhite: true),
       _readInt(row['whiteElo']),
     );
     final black = _compactPlayerCitation(
-      row['black']?.toString() ?? row['blackName']?.toString() ?? '',
+      gamebaseRowPlayerName(row, isWhite: false),
       _readInt(row['blackElo']),
     );
     final event = _displayEventForRow(row);
@@ -1592,15 +1594,12 @@ class _DesktopPositionGamesTableState
     return '';
   }
 
+  /// The player as the table cell names them, plus the rating.
   String _compactPlayerCitation(String rawName, int rating) {
-    final clean = rawName.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (clean.isEmpty) return '';
-    final parts =
-        clean.split(RegExp(r'[ ,]+')).where((p) => p.isNotEmpty).toList();
-    final last = parts.isEmpty ? clean : parts.first;
-    final initial = parts.length >= 2 ? ',${parts[1].substring(0, 1)}' : '';
+    final name = desktopPositionTablePlayerName(rawName);
+    if (name.isEmpty) return '';
     final ratingText = rating > 0 ? ' ($rating)' : '';
-    return '$last$initial$ratingText';
+    return '$name$ratingText';
   }
 
   String _normalizeResult(String result) {
@@ -1754,8 +1753,8 @@ class _DesktopPositionGamesTableState
     return GameTabDragPayload(
       id: id,
       label: gameDragLabel(
-        row['white']?.toString() ?? '',
-        row['black']?.toString() ?? '',
+        gamebaseRowPlayerName(row, isWhite: true),
+        gamebaseRowPlayerName(row, isWhite: false),
       ),
       spawn: (_, {required focus}) => _openGame(row, focus: focus),
     );
@@ -1790,8 +1789,8 @@ class _DesktopPositionGamesTableState
       (candidate) => (candidate['id']?.toString().trim() ?? '') == id,
       orElse: () => Map<String, dynamic>.from(row),
     );
-    final whiteName = (openedRow['white']?.toString() ?? '').trim();
-    final blackName = (openedRow['black']?.toString() ?? '').trim();
+    final whiteName = gamebaseRowPlayerName(openedRow, isWhite: true);
+    final blackName = gamebaseRowPlayerName(openedRow, isWhite: false);
     final initialFen = _initialFenForOpenedGame(
       openedRow,
       continuationStep: continuationStep,
@@ -2302,7 +2301,7 @@ class _DesktopPositionGamesTableState
         sortField: GamebaseSortField.whiteName,
         cellBuilder:
             (_, row) => _CompactPlayerName(
-              name: _rowText(row, const ['white', 'whiteName']),
+              name: gamebaseRowPlayerName(row, isWhite: true),
               federation: _rowText(row, const ['whiteFed']),
               title: _rowText(row, const ['whiteTitle']),
               showFlag: showPlayerChrome,
@@ -2316,7 +2315,7 @@ class _DesktopPositionGamesTableState
         sortField: GamebaseSortField.blackName,
         cellBuilder:
             (_, row) => _CompactPlayerName(
-              name: _rowText(row, const ['black', 'blackName']),
+              name: gamebaseRowPlayerName(row, isWhite: false),
               federation: _rowText(row, const ['blackFed']),
               title: _rowText(row, const ['blackTitle']),
               showFlag: showPlayerChrome,
@@ -2525,6 +2524,17 @@ class _DesktopPositionGamesTableState
   }
 }
 
+/// A player as the position games table names them: `Surname,I` by the
+/// shared rules of [desktopCompactPlayerNameParts]. "Gukesh,D", "Gukesh D"
+/// and "Gukesh D (IND)" all read `Gukesh,D`. A name with no comma and no
+/// single surname ("Ding Liren") is shown as written, never turned around.
+String desktopPositionTablePlayerName(String raw) {
+  final parts = desktopCompactPlayerNameParts(raw);
+  if (parts.isAsWritten) return parts.name;
+  if (parts.firstInitial.isEmpty) return parts.lastName;
+  return '${parts.lastName},${parts.firstInitial}';
+}
+
 /// Player-name cell kept database-tight: "Surname,I" by default, with
 /// optional flag/title chrome in the wider standalone Games tab.
 class _CompactPlayerName extends StatelessWidget {
@@ -2544,27 +2554,9 @@ class _CompactPlayerName extends StatelessWidget {
   final bool showTitle;
   final double maxWidth;
 
-  static String _compact(String raw) {
-    final trimmed = desktopTablePlayerValue(raw);
-    if (trimmed.isEmpty) return '';
-    if (trimmed.contains(',')) {
-      final parts = trimmed.split(',');
-      final surname = parts.first.trim();
-      final given = parts.length > 1 ? parts[1].trim() : '';
-      if (surname.isEmpty) return trimmed;
-      if (given.isEmpty) return surname;
-      return '$surname,${given.substring(0, 1)}';
-    }
-    final parts = trimmed.split(RegExp(r'\s+'));
-    if (parts.length < 2) return trimmed;
-    final given = parts.first;
-    final surname = parts.last;
-    return '$surname,${given.substring(0, 1)}';
-  }
-
   @override
   Widget build(BuildContext context) {
-    final compactName = _compact(name);
+    final compactName = desktopPositionTablePlayerName(name);
     if (compactName.isEmpty) return const SizedBox.shrink();
     final label = Text(
       compactName,
@@ -3427,11 +3419,11 @@ String? _sourceLabelForRow(Map<String, dynamic> row) {
   }
 
   put('result', _trimmedString(row['result']));
-  put('white', _trimmedString(row['white']));
+  put('white', _trimmedString(gamebaseRowPlayerName(row, isWhite: true)));
   put('whiteElo', _intString(row['whiteElo']));
   put('whiteTitle', _trimmedString(row['whiteTitle']));
   put('whiteFed', _trimmedString(row['whiteFed']));
-  put('black', _trimmedString(row['black']));
+  put('black', _trimmedString(gamebaseRowPlayerName(row, isWhite: false)));
   put('blackElo', _intString(row['blackElo']));
   put('blackTitle', _trimmedString(row['blackTitle']));
   put('blackFed', _trimmedString(row['blackFed']));

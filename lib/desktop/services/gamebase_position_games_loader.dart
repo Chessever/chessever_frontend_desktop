@@ -16,6 +16,7 @@ import 'package:chessever/screens/gamebase/providers/explorer_games_cache.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_explorer_state.dart';
 import 'package:chessever/screens/gamebase/providers/gamebase_providers.dart';
 import 'package:chessever/screens/tour_detail/games_tour/models/games_tour_model.dart';
+import 'package:chessever/utils/gamebase_row_player_name.dart';
 
 class DesktopPositionGamesPageResult {
   const DesktopPositionGamesPageResult({
@@ -586,8 +587,10 @@ TournamentGameSummary gamebasePositionGameSummaryFromRow(
   required String fallbackFen,
 }) {
   final id = (row['id']?.toString().trim() ?? '');
-  final white = (row['white']?.toString() ?? '').trim();
-  final black = (row['black']?.toString() ?? '').trim();
+  // The FIDE spelling when the server sends one, so the Board tab and its
+  // game list name a player the way the table row did.
+  final white = gamebaseRowPlayerName(row, isWhite: true);
+  final black = gamebaseRowPlayerName(row, isWhite: false);
   final name =
       white.isEmpty && black.isEmpty
           ? 'Game $id'

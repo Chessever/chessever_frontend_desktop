@@ -8,6 +8,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:chessever/desktop/state/active_board_game.dart';
 import 'package:chessever/desktop/utils/library_multi_select.dart';
 import 'package:chessever/desktop/widgets/adaptive_games_table.dart';
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/desktop/widgets/tournament_games_view.dart'
     show openTournamentGameTab;
@@ -712,7 +713,8 @@ class _DefaultGamesPlayerCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final flagFederation = defaultGamePlayerFlagFederation(player);
     final title = player.title.trim();
-    final playerName = defaultGamePlayerName(player.name);
+    // The FIDE spelling when Gamebase sent one ([PlayerCard.displayName]).
+    final playerName = defaultGamePlayerName(player.displayName);
     if (playerName.isEmpty) return const SizedBox.shrink();
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 170),
@@ -779,29 +781,11 @@ String defaultGameSite(GamesTourModel game) {
   return _humanizeDefaultGameSlug(slug);
 }
 
+/// `Surname, I.` by the shared desktop rules ([desktopCompactPlayerNameParts]):
+/// FIDE's "Gukesh D" reads "Gukesh, D.", never "D, G.". A name with no comma
+/// and no single surname ("Sam Shankland") is shown as written.
 String defaultGamePlayerName(String rawName) {
-  var name = defaultGameTableDisplayValue(rawName);
-  if (name.isEmpty) return name;
-  name = name.replaceFirst(
-    RegExp(r'^(GM|IM|FM|CM|WGM|WIM|WFM|WCM)\s+', caseSensitive: false),
-    '',
-  );
-  if (const {'white', 'black'}.contains(name.trim().toLowerCase())) return '';
-
-  final commaIndex = name.indexOf(',');
-  if (commaIndex >= 0) {
-    final last = name.substring(0, commaIndex).trim();
-    final first = name.substring(commaIndex + 1).trim();
-    if (last.isEmpty || first.isEmpty) return name;
-    final initial = _firstNameInitial(first);
-    return initial == null ? last : '$last, $initial.';
-  }
-
-  final parts = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-  if (parts.length < 2) return name;
-  final initial = _firstNameInitial(parts.first);
-  if (initial == null) return name;
-  return '${parts.sublist(1).join(' ')}, $initial.';
+  return desktopCompactPlayerNameParts(rawName).displayLabel;
 }
 
 String defaultGameRoundLabel(GamesTourModel game) {
@@ -821,11 +805,6 @@ String defaultGameRoundLabel(GamesTourModel game) {
 /// from becoming visible data.
 String defaultGameTableDisplayValue(Object? raw) {
   return desktopTableDisplayValue(raw);
-}
-
-String? _firstNameInitial(String firstName) {
-  final match = RegExp(r'[A-Za-zÀ-ÖØ-öø-ÿ]').firstMatch(firstName.trim());
-  return match?.group(0)?.toUpperCase();
 }
 
 bool _looksLikeEcoCode(String value) {

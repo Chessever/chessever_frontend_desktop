@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:chessever/utils/twic_player_enrichment.dart';
+import 'package:chessever/utils/gamebase_row_player_name.dart';
 
 final playerGamesSelectionModeProvider =
     StateProvider.family<bool, PlayerProfileKey>((ref, key) => false);
@@ -697,6 +698,7 @@ Future<List<GamesTourModel>> _getTwicGamesViaDedicatedEndpoint(
           team: null,
           fideId: int.tryParse(row['whiteFideId']?.toString() ?? ''),
           gamebasePlayerId: row['whitePlayerId']?.toString().trim(),
+          canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: true),
         );
 
         final blackCard = PlayerCard(
@@ -708,6 +710,7 @@ Future<List<GamesTourModel>> _getTwicGamesViaDedicatedEndpoint(
           team: null,
           fideId: int.tryParse(row['blackFideId']?.toString() ?? ''),
           gamebasePlayerId: row['blackPlayerId']?.toString().trim(),
+          canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: false),
         );
 
         final tourId =
@@ -889,6 +892,7 @@ Future<List<GamesTourModel>> _getTwicGamesFromGamebase(
           team: null,
           fideId: parseFide(row['whiteFideId']),
           gamebasePlayerId: row['whitePlayerId']?.toString().trim(),
+          canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: true),
         );
 
         final blackCard = PlayerCard(
@@ -900,6 +904,7 @@ Future<List<GamesTourModel>> _getTwicGamesFromGamebase(
           team: null,
           fideId: parseFide(row['blackFideId']),
           gamebasePlayerId: row['blackPlayerId']?.toString().trim(),
+          canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: false),
         );
 
         final tourId =
@@ -3334,6 +3339,7 @@ class PlayerProfileGamesNotifier
           (whitePlayerId != null && whitePlayerId.isNotEmpty)
               ? whitePlayerId
               : whitePlayer?.id,
+      canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: true),
     );
 
     final blackCard = PlayerCard(
@@ -3358,6 +3364,7 @@ class PlayerProfileGamesNotifier
           (blackPlayerId != null && blackPlayerId.isNotEmpty)
               ? blackPlayerId
               : blackPlayer?.id,
+      canonicalName: gamebaseRowCanonicalPlayerName(row, isWhite: false),
     );
 
     return GamesTourModel(
@@ -3409,7 +3416,6 @@ class PlayerProfileGamesNotifier
     if (raw == null) return null;
     return int.tryParse(raw.toString());
   }
-
 
   Future<Map<String, GamebasePlayer>> _fetchGamebasePlayersByIds(
     Iterable<Map<String, dynamic>> rows,

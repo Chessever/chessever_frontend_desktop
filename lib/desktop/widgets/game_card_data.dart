@@ -159,9 +159,11 @@ class GameCardData {
     );
     return GameCardData(
       id: game.gameId,
-      title: '${game.whitePlayer.name} vs ${game.blackPlayer.name}',
-      whiteName: game.whitePlayer.name,
-      blackName: game.blackPlayer.name,
+      // The FIDE spelling when Gamebase sent one ([PlayerCard.displayName]).
+      title:
+          '${game.whitePlayer.displayName} vs ${game.blackPlayer.displayName}',
+      whiteName: game.whitePlayer.displayName,
+      blackName: game.blackPlayer.displayName,
       whiteFederation: _playerFederation(game.whitePlayer),
       blackFederation: _playerFederation(game.blackPlayer),
       whiteTitle: game.whitePlayer.title,

@@ -707,6 +707,75 @@ void main() {
     expect(args.blackName, 'Nakamura');
   });
 
+  testWidgets('one player reads the same in every source spelling', (
+    tester,
+  ) async {
+    final repository = _FakeGamebaseRepository(
+      playerRows: const [
+        {'white': 'Gukesh,D', 'black': 'So,W'},
+        {'white': 'Gukesh D', 'black': 'So, Wesley'},
+        {'white': 'Gukesh D (IND)', 'black': 'Ding Liren'},
+      ],
+    );
+
+    await tester.pumpWidget(_positionGamesTableApp(repository));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Gukesh,D'), findsNWidgets(3));
+    expect(find.text('D,G'), findsNothing);
+    expect(find.text('(IND),G'), findsNothing);
+    expect(find.text('So,W'), findsNWidgets(2));
+    // No single surname to pick out: shown as written, never "Liren,D".
+    expect(find.text('Ding Liren'), findsOneWidget);
+    expect(find.text('Liren,D'), findsNothing);
+  });
+
+  testWidgets('a row with a canonical name shows and opens it', (tester) async {
+    final repository = _FakeGamebaseRepository(
+      playerRows: const [
+        {
+          'white': 'Dommaraju, Gukesh',
+          'whiteCanonicalName': 'Gukesh D',
+          'black': 'Ding Liren',
+          'blackCanonicalName': 'Ding, Liren',
+        },
+        {
+          'white': 'Dommaraju, Gukesh',
+          'black': 'Ding Liren',
+          'blackCanonicalName': null,
+        },
+      ],
+    );
+
+    await tester.pumpWidget(_positionGamesTableApp(repository));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    // The first row uses the FIDE spelling, the second falls back cleanly.
+    expect(find.text('Gukesh,D'), findsOneWidget);
+    expect(find.text('Ding,L'), findsOneWidget);
+    expect(find.text('Dommaraju,G'), findsOneWidget);
+    expect(find.text('Ding Liren'), findsOneWidget);
+
+    await tester.tap(find.text('Gukesh,D'));
+    await tester.pump(const Duration(milliseconds: 40));
+    await tester.tap(find.text('Gukesh,D'));
+    await tester.pump();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(DesktopPositionGamesTable)),
+    );
+    final args = container.read(boardTabGameArgsByTabIdProvider).values.single;
+    expect(args.gameId, 'gamebase-0');
+    expect(args.whiteName, 'Gukesh D');
+    expect(args.blackName, 'Ding, Liren');
+    expect(args.databaseGames.map((game) => game.whitePlayer), [
+      'Gukesh D',
+      'Dommaraju, Gukesh',
+    ]);
+  });
+
   testWidgets('local opening tree rows open as local PGN tabs', (tester) async {
     final repository = _FakeGamebaseRepository();
     final temp = io.Directory.systemTemp.createTempSync('chessever_local_row_');
@@ -1394,6 +1463,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     this.eventName = 'Freestyle Chess',
     this.site = 'Reykjavik',
     this.moveAggregates,
+    this.playerRows,
   }) : super(Dio(), baseUrl: 'http://localhost');
 
   final int rowCount;
@@ -1404,6 +1474,10 @@ class _FakeGamebaseRepository extends GamebaseRepository {
   final String eventName;
   final String site;
   final List<MoveAggregate>? moveAggregates;
+
+  /// One row per entry, each entry's keys (`white`, `whiteCanonicalName`,
+  /// ...) laid over the default row. Overrides [rowCount].
+  final List<Map<String, Object?>>? playerRows;
   final List<_CapturedPositionGamesQuery> positionGameCalls = [];
 
   @override
@@ -1479,9 +1553,12 @@ class _FakeGamebaseRepository extends GamebaseRepository {
     return GamebaseSearchQueryResponse(
       status: 'success',
       data: [
-        for (var i = 0; i < rowCount; i++)
+        for (var i = 0; i < (playerRows?.length ?? rowCount); i++)
           {
-            'id': rowCount == 1 ? 'gamebase-1' : 'gamebase-$i',
+            'id':
+                rowCount == 1 && playerRows == null
+                    ? 'gamebase-1'
+                    : 'gamebase-$i',
             'white': rowCount == 1 ? 'Carlsen' : 'White$i',
             'black': rowCount == 1 ? 'Nakamura' : 'Black$i',
             'whiteFed': 'NOR',
@@ -1504,6 +1581,7 @@ class _FakeGamebaseRepository extends GamebaseRepository {
             'variation': 'Four Knights',
             'eco': 'A29',
             'continuation': continuation,
+            ...?playerRows?[i],
           },
       ],
       metadata: GamebasePaginationMetadata(
@@ -1558,6 +1636,26 @@ class _DeferredPositionGamesRequest {
   void complete(GamebaseSearchQueryResponse response) {
     _completer.complete(response);
   }
+}
+
+Widget _positionGamesTableApp(GamebaseRepository repository) {
+  return ProviderScope(
+    overrides: [
+      ...desktopPremiumTestOverrides,
+      gamebaseRepositoryProvider.overrideWithValue(repository),
+      boardSettingsProviderNew.overrideWith(_TestBoardSettingsNotifier.new),
+    ],
+    child: const MaterialApp(
+      home: Scaffold(
+        backgroundColor: kBackgroundColor,
+        body: SizedBox(
+          width: 900,
+          height: 520,
+          child: DesktopPositionGamesTable(fen: _initialFen),
+        ),
+      ),
+    ),
+  );
 }
 
 GamebaseSearchQueryResponse _singlePositionGamesResponse({

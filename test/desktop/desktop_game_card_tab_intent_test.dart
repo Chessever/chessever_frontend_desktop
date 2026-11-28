@@ -22,7 +22,11 @@ void main() {
       desktopCompactPlayerName('Tabatabaei, Mohammad Amin'),
       'Tabatabaei, M.',
     );
-    expect(desktopCompactPlayerName('Leon Luke Mendonca'), 'Mendonca, L.');
+    // No comma and no single surname: shown as written, never turned around.
+    expect(
+      desktopCompactPlayerName('Leon Luke Mendonca'),
+      'Leon Luke Mendonca',
+    );
     expect(desktopCompactPlayerName('Gukesh D'), 'Gukesh, D.');
     expect(desktopCompactPlayerName('Praggnanandhaa R'), 'Praggnanandhaa, R.');
   });
@@ -83,6 +87,7 @@ void main() {
               label.data ?? '',
               lastName: 'Mendonca',
               firstInitial: 'L',
+              fullLabel: 'Leon Luke Mendonca',
             ),
           ),
           isTrue,
@@ -473,8 +478,9 @@ bool _isFullOrSingleDotName(
   String value, {
   required String lastName,
   required String firstInitial,
+  String? fullLabel,
 }) {
-  if (value == '$lastName, $firstInitial.') return true;
+  if (value == (fullLabel ?? '$lastName, $firstInitial.')) return true;
   if (!value.endsWith('.') || value.contains('...') || value.contains('…')) {
     return false;
   }

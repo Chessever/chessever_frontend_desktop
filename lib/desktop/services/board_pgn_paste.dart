@@ -1,3 +1,4 @@
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/screens/chessboard/analysis/chess_game.dart';
 
 /// How an in-board PGN paste should be applied.
@@ -64,24 +65,20 @@ String _normalizeResult(String result) {
   };
 }
 
+/// `Surname,I (rating)`, read by [desktopCompactPlayerNameParts]: "Gukesh D"
+/// and "Gukesh,D" read `Gukesh,D`. A name the rules cannot read is cited as
+/// written (`Ding Liren (2762)`), never turned around into `Liren,D`: the
+/// citation is saved into the user's PGN.
 String _compactPlayerCitation(String rawName, int rating) {
   final clean = rawName.replaceAll(RegExp(r'\s+'), ' ').trim();
   if (clean.isEmpty || RegExp(r'^\?+$').hasMatch(clean)) return '';
-  final comma = clean.indexOf(',');
-  final String last;
-  final String given;
-  if (comma >= 0) {
-    last = clean.substring(0, comma).trim();
-    given = clean.substring(comma + 1).trim();
-  } else {
-    final parts = clean.split(' ').where((p) => p.isNotEmpty).toList();
-    last = parts.isEmpty ? clean : parts.last;
-    given = parts.length >= 2 ? parts.first : '';
-  }
-  if (last.isEmpty) return '';
-  final initial = given.isEmpty ? '' : ',${given.substring(0, 1)}';
+  final parts = desktopCompactPlayerNameParts(clean, keepPlaceholders: true);
+  // ", Magnus": no surname to cite.
+  if (parts.lastName.isEmpty || parts.lastName.startsWith(',')) return '';
   final ratingText = rating > 0 ? ' ($rating)' : '';
-  return '$last$initial$ratingText';
+  if (parts.isAsWritten) return '${parts.name}$ratingText';
+  final initial = parts.firstInitial.isEmpty ? '' : ',${parts.firstInitial}';
+  return '${parts.lastName}$initial$ratingText';
 }
 
 String _yearFromDate(String rawDate) {

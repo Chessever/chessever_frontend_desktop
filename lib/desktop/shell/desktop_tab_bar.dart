@@ -11,6 +11,7 @@ import 'package:motor/motor.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/desktop_scroll_controller.dart';
 import 'package:chessever/desktop/services/board_unsaved_analysis_guard.dart';
 import 'package:chessever/desktop/shell/desktop_chrome_metrics.dart';
@@ -1335,23 +1336,9 @@ class _GameTabChipContent extends StatelessWidget {
   /// Hover-only close-button visibility; never changes the reserved slot.
   final double closeReveal;
 
-  /// Pull a "last name" out of "Last, First" or "First Last" — game
-  /// PGNs use both conventions. Falls back to the whole string when
-  /// neither shape matches.
-  static String _lastName(String name) {
-    final n = name.trim();
-    if (n.isEmpty) return '';
-    if (n.contains(',')) {
-      return n.split(',').first.trim();
-    }
-    final parts = n.split(RegExp(r'\s+'));
-    if (parts.length == 1) return parts.first;
-    // "Pranesh M": a trailing initial is not a surname.
-    if (RegExp(r'^\p{L}\.?$', unicode: true).hasMatch(parts.last)) {
-      return parts[parts.length - 2];
-    }
-    return parts.last;
-  }
+  /// The surname a narrow tab shows ([desktopPlayerSurname]): "Carlsen,
+  /// Magnus", "Gukesh D" and "Pranesh M" give Carlsen, Gukesh and Pranesh.
+  static String _lastName(String name) => desktopPlayerSurname(name);
 
   /// Normalise "Last, First" to "First Last" for wide-tab display.
   /// PGN names use either convention; show the natural form when room.

@@ -12,12 +12,15 @@ void main() {
   test(
     'formats compact table player names as last name plus first initial',
     () {
-      expect(defaultGamePlayerName('Sam Shankland'), 'Shankland, S.');
+      // No comma and no single surname: word order differs by source, so
+      // the name is shown as written rather than turned around.
+      expect(defaultGamePlayerName('Sam Shankland'), 'Sam Shankland');
       expect(
         defaultGamePlayerName('Martinez Ramirez, Leandro'),
         'Martinez Ramirez, L.',
       );
-      expect(defaultGamePlayerName('IM Fernando Peralta'), 'Peralta, F.');
+      expect(defaultGamePlayerName('IM Fernando Peralta'), 'Fernando Peralta');
+      expect(defaultGamePlayerName('Gukesh D'), 'Gukesh, D.');
       expect(defaultGamePlayerName('White0'), 'White0');
     },
   );
@@ -144,6 +147,32 @@ void main() {
     expect(find.text('SITE'), findsNothing);
     expect(find.text('EVENT'), findsOneWidget);
     expect(find.text('ECO'), findsOneWidget);
+  });
+
+  testWidgets('names a player by the FIDE spelling Gamebase sent', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final broadcast = _game(0).copyWith(
+      whitePlayer: _player(
+        'Dommaraju, Gukesh',
+      ).copyWith(canonicalName: 'Gukesh D'),
+      blackPlayer: _player('So, Wesley'),
+    );
+    // An older server sends no canonical name: the stored name shows.
+    final twic = _game(
+      1,
+    ).copyWith(whitePlayer: _player('Gukesh,D'), blackPlayer: _player('So,W'));
+
+    await tester.pumpWidget(
+      _wrap(controller: controller, onOpen: (_) {}, games: [broadcast, twic]),
+    );
+    await tester.pump();
+
+    expect(find.text('Gukesh, D.'), findsNWidgets(2));
+    expect(find.text('Dommaraju, G.'), findsNothing);
+    expect(broadcast.whitePlayer.name, 'Dommaraju, Gukesh');
   });
 
   testWidgets('renders raw FID and FIDE markers as compact-table FIDE flags', (

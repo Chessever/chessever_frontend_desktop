@@ -125,7 +125,9 @@ void main() {
 
       expect(
         clipboardPgnSourceLabel(pgn),
-        '1-0 Carlsen,M (2830)-Nepomniachtchi,I (2769) Wijk aan Zee 2024',
+        // "Magnus Carlsen" has no comma and no single surname, so it is cited
+        // as written instead of being turned around.
+        '1-0 Magnus Carlsen (2830)-Nepomniachtchi,I (2769) Wijk aan Zee 2024',
       );
     });
 

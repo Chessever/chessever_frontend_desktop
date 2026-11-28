@@ -3,6 +3,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:chessever/desktop/auth/desktop_access_admission.dart';
 import 'package:chessever/desktop/auth/desktop_access_context.dart';
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 
 /// What gets handed to a [DragTarget] when the user drags a game card off a
 /// pane and drops it on the tab strip. The payload itself is opaque — each
@@ -75,16 +76,8 @@ class GameTabDragPayload {
 /// "Carlsen vs Nepomniachtchi" for a drag chip: surnames only, so the chip
 /// stays short. Falls back to [fallback] when both names are missing.
 String gameDragLabel(String white, String black, {String fallback = 'Game'}) {
-  String surname(String name) {
-    final t = name.trim();
-    if (t.isEmpty) return '';
-    if (t.contains(',')) return t.split(',').first.trim();
-    final parts = t.split(RegExp(r'\s+'));
-    return parts.last;
-  }
-
-  final w = surname(white);
-  final b = surname(black);
+  final w = desktopPlayerSurname(white);
+  final b = desktopPlayerSurname(black);
   if (w.isEmpty && b.isEmpty) return fallback;
   if (w.isEmpty || b.isEmpty) return w.isEmpty ? b : w;
   return '$w vs $b';

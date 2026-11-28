@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:chessever/desktop/widgets/desktop_compact_player_identity.dart';
 import 'package:chessever/desktop/widgets/table_display_value.dart';
 import 'package:chessever/theme/app_theme.dart';
 import 'package:chessever/widgets/backfilled_federation_flag.dart';
@@ -28,7 +29,13 @@ bool libraryPlayerNameIsPersonal(String raw) {
   if (name.isEmpty) return false;
   if (name.contains(RegExp(r'''[/\\()\[\]{}!?<>+=*;:"“”]'''))) return false;
   if (RegExp(r'\d').hasMatch(name)) return false;
-  final tokens = name.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+  // TWIC writes "Gukesh,D" with no space: the comma still ends the surname.
+  final tokens =
+      name
+          .replaceAll(',', ', ')
+          .split(RegExp(r'\s+'))
+          .where((t) => t.isNotEmpty)
+          .toList();
   if (tokens.length > 3) return false;
   // Every word needs a letter: a stray `-` or `+` between words is a label.
   final word = RegExp(r"^[A-Za-zÀ-ÖØ-öø-ÿ'’-]+,?\.?$");
@@ -36,38 +43,31 @@ bool libraryPlayerNameIsPersonal(String raw) {
 }
 
 /// Standard-table player name abbreviation: `Carlsen, Magnus` → `Carlsen, M.`.
+///
+/// Reads the name with [desktopCompactPlayerNameParts], so "Gukesh D",
+/// "Gukesh,D" and "Gukesh D (IND)" all read `Gukesh, D.`. A name without a
+/// comma and without a single surname is shown as written ("Ding Liren",
+/// never "Liren, D."), since its word order differs by source, and anything
+/// that does not read as a person's name is left as written.
 String libraryStandardTablePlayerName(String raw) {
   final name = desktopTablePlayerValue(raw);
   if (name.isEmpty) return '';
-  if (!libraryPlayerNameIsPersonal(name)) return name;
-
-  String initial(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) return '';
-    return '${trimmed.characters.first.toUpperCase()}.';
+  if (libraryPlayerNameIsPersonal(name)) {
+    final parts = desktopCompactPlayerNameParts(name);
+    return parts.lastName.isEmpty ? name : parts.displayLabel;
   }
-
-  if (name.contains(',')) {
-    final parts = name.split(',');
-    final last = parts.first.trim();
-    final first = parts.skip(1).join(',').trim();
-    final firstInitial = initial(first);
-    if (last.isEmpty) return firstInitial.isEmpty ? name : firstInitial;
-    return firstInitial.isEmpty ? last : '$last, $firstInitial';
-  }
-
-  final tokens = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-  if (tokens.length < 2) return name;
-  // FIDE records a mononym player as "Gukesh D": the trailing letter is the
-  // initial, so the name stays "Gukesh, D.", never "D, G.".
-  final trailing = tokens.last.replaceAll('.', '');
-  if (trailing.characters.length == 1) {
-    return '${tokens.take(tokens.length - 1).join(' ')}, ${initial(trailing)}';
-  }
-  final last = tokens.last;
-  final firstInitial = initial(tokens.first);
-  return firstInitial.isEmpty ? last : '$last, $firstInitial';
+  // "Gukesh D (IND)": a federation after a name the rules read. Any other
+  // parenthesis belongs to a study label, which stays as written.
+  final federation = _kLibraryTrailingFederation.firstMatch(name);
+  final rest = federation?.group(1);
+  if (rest == null || !libraryPlayerNameIsPersonal(rest)) return name;
+  final parts = desktopCompactPlayerNameParts(rest);
+  return parts.isAsWritten || parts.lastName.isEmpty ? name : parts.fullLabel;
 }
+
+final RegExp _kLibraryTrailingFederation = RegExp(
+  r'^([^,]*\S)\s*\([A-Z]{2,4}\)$',
+);
 
 /// Federation flag + optional title + abbreviated player name (+ optional
 /// trailing inline rating). This is the canonical library player cell.
@@ -172,8 +172,9 @@ class LibraryTablePlayerCell extends StatelessWidget {
 /// The full value when the cell has room for it, `Last, F.` when it does not.
 ///
 /// Space decides, not the shape of the string: a wide column shows
-/// `Magnus Carlsen` and a narrow one `Carlsen, M.`, and a study label that was
-/// never a name (`Botvinnik / 12.Bf6`) is only ever ellipsized, never rewritten.
+/// `Carlsen, Magnus` and a narrow one `Carlsen, M.`. A name the rules cannot
+/// read (`Ding Liren`) and a study label that was never a name
+/// (`Botvinnik / 12.Bf6`) are only ever ellipsized, never rewritten.
 String _libraryFittedPlayerName({
   required String full,
   required String compact,

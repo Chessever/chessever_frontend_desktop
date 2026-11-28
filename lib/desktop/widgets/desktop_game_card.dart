@@ -372,13 +372,7 @@ class _GameDragFeedback extends StatelessWidget {
     );
   }
 
-  static String _shortName(String n) {
-    final t = n.trim();
-    if (t.isEmpty) return '';
-    if (t.contains(',')) return t.split(',').first.trim();
-    final parts = t.split(RegExp(r'\s+'));
-    return parts.length == 1 ? parts.first : parts.last;
-  }
+  static String _shortName(String n) => desktopPlayerSurname(n);
 }
 
 class _ListLayout extends StatefulWidget {
